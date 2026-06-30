@@ -78,6 +78,14 @@ sha256(item_code + createdAt + transactionType + money + quantity)
 
 If later API inspection shows collisions are possible, add the required discriminator columns through a schema migration.
 
+Known transaction fields from saved API responses:
+
+- stored now: `_id`/`id`, `itemCode`, `money`, `quantity`, `transactionType`, `createdAt`;
+- derived now: `unit_price`, `created_at_epoch`, `fetched_at`;
+- not stored in schema v1: `sellerId`, `buyerId`, `offerCreatedAt`, `updatedAt`, `__v`.
+
+Consider adding `seller_id`, `buyer_id`, `offer_created_at`, and `updated_at` before a large historical backfill if user concentration, repeat counterparties, order-fill latency, or API mutation auditing become important.
+
 ### `price_observations`
 
 Stores the current price returned by the WarEra market price endpoint each time the sync runs.
@@ -99,7 +107,7 @@ This table lets reports show price evolution even when there are few completed t
 
 ### `order_book_observations`
 
-Stores a compact top-of-book observation for each item each time the sync runs.
+Stores a compact current order-book observation for each item each time the sync runs.
 
 ```sql
 create table if not exists order_book_observations (
@@ -119,7 +127,14 @@ create index if not exists idx_order_book_observations_item_time
     on order_book_observations (item_code, observed_at_epoch desc);
 ```
 
-Store aggregate depth from the fetched top orders, not the full raw order-book payload. If full depth analysis becomes useful later, add an `order_book_levels` table by migration.
+Store aggregate depth from the fetched current best bids and best asks, not the full raw order-book payload. If full depth analysis becomes useful later, add an `order_book_levels` table by migration.
+
+Known current order-book fields from saved API responses:
+
+- aggregated now: `price`, `quantity`, side, best bid, best ask, bid depth, ask depth, spread;
+- not stored in schema v1: order `_id`, `user`, `offerAt`, `type`, `itemCode`, `__v`, and individual order levels.
+
+Consider adding `order_book_levels` before a large historical backfill if order age, depth curve, wall detection, user concentration, or top-order churn become important.
 
 ### `item_sync_state`
 
@@ -193,7 +208,7 @@ Each migration must be idempotent enough to survive a partially initialized deve
 - create new indexes with stable names;
 - avoid destructive migrations unless there is a documented backup/export path.
 
-Add CLI helpers:
+Future CLI helpers:
 
 ```text
 --db-info
@@ -282,13 +297,18 @@ Behavior:
 - fetch until no cursor, until the lookback boundary, or until `--history-pages` is reached;
 - still dedupe with `insert or ignore`.
 
-## CLI Changes
+## CLI
 
-Add these options:
+Implemented options:
 
 ```text
 --market-db PATH
 --transaction-backfill
+```
+
+Planned options:
+
+```text
 --offline
 --report-window 1D
 --report-window 7D
@@ -301,7 +321,7 @@ Add these options:
 
 Recommended behavior:
 
-- `--live` uses the market DB by default once implemented.
+- `--live` uses the market DB by default.
 - `--transaction-backfill` is valid only with `--live`.
 - `--offline` builds reports from SQLite only and does not call the API.
 - `--report-window` may be passed multiple times. Defaults are `1D`, `7D`, and `30D`.
@@ -445,7 +465,7 @@ Add `src/warera_quant/sync.py`.
 Sync layer responsibilities:
 
 - fetch current item prices;
-- fetch current top orders;
+- fetch current order-book bid/ask depth;
 - fetch paginated transactions;
 - call repositories to persist normalized data;
 - update per-item sync state;
@@ -651,6 +671,5 @@ Add report tests:
 
 ## Open Questions
 
-- Confirm the exact upstream transaction id field name. Candidates are usually `id`, `transactionId`, or `_id`.
 - Confirm whether transaction pages are returned newest-first. The current code assumes this because it treats the last item in a page as the oldest.
-- Confirm quantity fields in top buy/sell orders so `bid_depth` and `ask_depth` are computed correctly.
+- Confirm whether current order-book `quantity` always represents remaining open quantity, so `bid_depth` and `ask_depth` are computed correctly.

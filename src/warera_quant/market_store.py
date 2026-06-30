@@ -468,7 +468,7 @@ def _transaction_row(item_code: str, transaction: dict[str, Any], fetched_at: st
     money = _optional_float(transaction.get("money"))
     quantity = _optional_float(transaction.get("quantity"))
     unit_price = (money / quantity) if money is not None and quantity and quantity > 0 else None
-    transaction_id = _optional_string(_first_present(transaction, "id", "transaction_id", "transactionId"))
+    transaction_id = _optional_string(_first_present(transaction, "id", "_id", "transaction_id", "transactionId"))
     if transaction_id is None:
         transaction_id = _derive_transaction_id(item_code, created_at, transaction_type, money, quantity)
 

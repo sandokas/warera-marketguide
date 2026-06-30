@@ -67,10 +67,6 @@ def test_get_top_orders_parses_orders_and_builds_input_params():
 
     assert orders.buy_orders == [{"price": "1.20", "quantity": 10}]
     assert orders.sell_orders == [{"price": "1.35", "quantity": 5}]
-    assert orders.raw_response == _trpc({
-        "buyOrders": [{"price": "1.20", "quantity": 10}],
-        "sellOrders": [{"price": "1.35", "quantity": 5}],
-    })
     endpoint, params = client.calls[0]
     assert endpoint == TOP_ORDERS_ENDPOINT
     assert json.loads(params["input"]) == {"itemCode": "bread", "limit": 7}

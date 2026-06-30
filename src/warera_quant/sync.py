@@ -51,6 +51,7 @@ def sync_market_data(
     exclude_item_codes: set[str] | None = None,
     observed_at: datetime | None = None,
     progress: Callable[[str], None] | None = None,
+    verbose: bool = False,
 ) -> MarketSyncResult:
     """Fetch current WarEra market data and persist it to SQLite."""
 
@@ -70,6 +71,11 @@ def sync_market_data(
     if excluded:
         prices = {code: price for code, price in prices.items() if code.lower() not in excluded}
     store.insert_price_observations(prices, observed_at)
+    _log_verbose(
+        progress,
+        verbose,
+        f"Observed current prices for {len(prices)} item(s) at {_format_datetime(observed_at)}.",
+    )
 
     item_codes = list(prices)
     order_books: dict[str, TopOrders] = {}
@@ -86,6 +92,13 @@ def sync_market_data(
         try:
             orders = market_api.get_top_orders(item_code, order_limit)
             order_books[item_code] = orders
+            _log_verbose(
+                progress,
+                verbose,
+                f"[{index}/{len(item_codes)}] {item_code}: "
+                f"current order book fetched "
+                f"({len(orders.buy_orders)} best bid(s), {len(orders.sell_orders)} best ask(s))",
+            )
             result = _sync_item_transactions(
                 market_api,
                 store,
@@ -96,6 +109,7 @@ def sync_market_data(
                 backfill_boundary=backfill_boundary,
                 fetched_at=observed_at,
                 progress=progress,
+                verbose=verbose,
             )
             item_results.append(result)
             _log(
@@ -136,6 +150,7 @@ def _sync_item_transactions(
     backfill_boundary: datetime | None,
     fetched_at: datetime,
     progress: Callable[[str], None] | None,
+    verbose: bool,
 ) -> ItemSyncResult:
     state = store.get_item_state(item_code)
     high_water_epoch = None if transaction_backfill or state is None else state.newest_created_at_epoch
@@ -148,6 +163,12 @@ def _sync_item_transactions(
     page_numbers = range(history_pages) if history_pages > 0 else count()
 
     for page_index, _ in enumerate(page_numbers, start=1):
+        _log_verbose(
+            progress,
+            verbose,
+            f"{item_code}: fetching transaction page {page_index} "
+            f"(cursor={'first' if cursor is None else cursor}, limit={transaction_limit})",
+        )
         page = market_api.get_transaction_page(item_code, limit=transaction_limit, cursor=cursor)
         pages_fetched += 1
         transactions_seen += len(page.items)
@@ -156,6 +177,16 @@ def _sync_item_transactions(
         newest_summary = _newest_insert_summary(newest_summary, insert_summary)
 
         oldest_epoch = _oldest_transaction_epoch(page.items)
+        _log_verbose(
+            progress,
+            verbose,
+            f"{item_code}: page {page_index} imported "
+            f"{len(page.items)} transaction(s), inserted {insert_summary.inserted}, "
+            f"skipped {insert_summary.skipped}, "
+            f"oldest={_format_epoch(oldest_epoch)}, "
+            f"newest={insert_summary.newest_created_at or 'none'}, "
+            f"next_cursor={'yes' if page.next_cursor else 'no'}",
+        )
         if high_water_epoch is not None and oldest_epoch is not None and oldest_epoch <= high_water_epoch:
             stopped_at_high_water = True
             _log(progress, f"{item_code}: reached stored high-water mark on page {page_index}")
@@ -164,6 +195,10 @@ def _sync_item_transactions(
             _log(progress, f"{item_code}: reached backfill lookback boundary on page {page_index}")
             break
         if not page.next_cursor:
+            _log_verbose(progress, verbose, f"{item_code}: stopped because API returned no next cursor.")
+            break
+        if history_pages > 0 and page_index >= history_pages:
+            _log_verbose(progress, verbose, f"{item_code}: stopped after configured page cap ({history_pages}).")
             break
         cursor = page.next_cursor
 
@@ -253,6 +288,21 @@ def _as_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
+def _format_datetime(value: datetime) -> str:
+    return _as_utc(value).isoformat().replace("+00:00", "Z")
+
+
+def _format_epoch(value: int | None) -> str:
+    if value is None:
+        return "none"
+    return datetime.fromtimestamp(value, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def _log(progress: Callable[[str], None] | None, message: str) -> None:
     if progress:
         progress(message)
+
+
+def _log_verbose(progress: Callable[[str], None] | None, verbose: bool, message: str) -> None:
+    if verbose:
+        _log(progress, message)

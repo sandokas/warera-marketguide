@@ -92,6 +92,25 @@ def test_upsert_transactions_derives_stable_transaction_ids(tmp_path):
         assert len(rows[0]["id"]) == 64
 
 
+def test_upsert_transactions_preserves_mongo_style_upstream_id(tmp_path):
+    with _store(tmp_path) as store:
+        store.upsert_transactions(
+            "bread",
+            [
+                {
+                    "_id": "6a404dfb4b1636383179ccfc",
+                    "createdAt": "2026-06-30T09:45:00Z",
+                    "transactionType": "trading",
+                    "money": "12.5",
+                    "quantity": "5",
+                }
+            ],
+        )
+
+        rows = store.transactions_for_window("bread", 0)
+        assert rows[0]["id"] == "6a404dfb4b1636383179ccfc"
+
+
 def test_insert_price_and_order_book_observations(tmp_path):
     observed_at = datetime(2026, 6, 30, 10, 0, tzinfo=timezone.utc)
     with _store(tmp_path) as store:

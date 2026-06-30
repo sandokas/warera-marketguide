@@ -22,14 +22,12 @@ class WarEraApiError(ValueError):
 class TopOrders:
     buy_orders: list[dict[str, Any]]
     sell_orders: list[dict[str, Any]]
-    raw_response: dict[str, Any]
 
 
 @dataclass(frozen=True)
 class TransactionPage:
     items: list[dict[str, Any]]
     next_cursor: str | None
-    raw_response: dict[str, Any]
 
 
 class WarEraMarketApi:
@@ -61,7 +59,6 @@ class WarEraMarketApi:
         return TopOrders(
             buy_orders=_order_list(data.get("buyOrders"), "buyOrders"),
             sell_orders=_order_list(data.get("sellOrders"), "sellOrders"),
-            raw_response=_response_dict(response),
         )
 
     def get_transaction_page(self, item_code: str, *, limit: int, cursor: str | None = None) -> TransactionPage:
@@ -88,7 +85,6 @@ class WarEraMarketApi:
         return TransactionPage(
             items=_transaction_list(data.get("items"), "items"),
             next_cursor=next_cursor,
-            raw_response=_response_dict(response),
         )
 
 
@@ -106,12 +102,6 @@ def _trpc_data(response: Any) -> Any:
     if isinstance(data, dict) and set(data) == {"json"}:
         return data["json"]
     return data
-
-
-def _response_dict(response: Any) -> dict[str, Any]:
-    if not isinstance(response, dict):
-        raise WarEraApiError("Expected WarEra API response to be an object.")
-    return response
 
 
 def _required_float(value: Any, field_name: str) -> float:

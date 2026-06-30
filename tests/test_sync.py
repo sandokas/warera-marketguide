@@ -29,13 +29,12 @@ class FakeMarketApi:
         return TopOrders(
             buy_orders=[{"price": "3.10", "quantity": "4"}],
             sell_orders=[{"price": "3.40", "quantity": "2"}],
-            raw_response={},
         )
 
     def get_transaction_page(self, item_code: str, *, limit: int, cursor: str | None = None) -> TransactionPage:
         self.calls.append(("get_transaction_page", (item_code, limit, cursor)))
         response = self.pages[(item_code, cursor)]
-        return TransactionPage(items=response.items, next_cursor=response.next_cursor, raw_response={})
+        return TransactionPage(items=response.items, next_cursor=response.next_cursor)
 
 
 def _store(tmp_path: Path) -> MarketStore:
@@ -159,3 +158,33 @@ def test_backfill_ignores_high_water_marks_and_dedupes_transactions(tmp_path):
             "tx-old",
             "tx-new",
         ]
+
+
+def test_verbose_sync_logs_transaction_page_import_details(tmp_path):
+    observed_at = datetime(2026, 6, 30, 10, 0, tzinfo=timezone.utc)
+    api = FakeMarketApi(
+        {
+            ("bread", None): PageResponse(
+                items=[_transaction("tx-new", "2026-06-30T09:30:00Z")],
+            ),
+        }
+    )
+    messages: list[str] = []
+
+    with _store(tmp_path) as store:
+        sync_market_data(
+            api,
+            store,
+            observed_at=observed_at,
+            progress=messages.append,
+            verbose=True,
+        )
+
+    assert "Observed current prices for 1 item(s) at 2026-06-30T10:00:00Z." in messages
+    assert any("current order book fetched (1 best bid(s), 1 best ask(s))" in message for message in messages)
+    assert any("bread: fetching transaction page 1 (cursor=first, limit=100)" in message for message in messages)
+    assert any(
+        "bread: page 1 imported 1 transaction(s), inserted 1, skipped 0" in message
+        for message in messages
+    )
+    assert any("bread: stopped because API returned no next cursor." in message for message in messages)

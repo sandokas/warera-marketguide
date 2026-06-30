@@ -68,7 +68,7 @@ PYTHONPATH=src .venv/bin/python run_report.py --live --output output --top 0
 Current live mode syncs every returned market good into `data/warera_market.sqlite3` by default:
 
 - current item prices
-- top buy/sell order-book observations
+- current order-book bid/ask observations
 - recent trade history
 
 Live mode defaults to a 1-day report. The API is rate-limited locally to 1 request per second by default. You can tune the live pull:
@@ -78,11 +78,12 @@ PYTHONPATH=src .venv/bin/python run_report.py --live --lookback-days 1 --order-l
 ```
 
 `--history-pages 0` fetches transaction pages until records are older than `--lookback-days`. Use a positive number for a faster capped pull.
-`--order-limit` only controls order-book depth per good; it does not limit how many goods appear in the report.
+`--order-limit` only controls current order-book depth per good: `10` means the 10 best bids and 10 best asks right now. It does not limit historical transactions or how many goods appear in the report.
 `--min-tick` defaults to `0.001`, so a one-tick bid/ask gap is treated as non-exploitable.
 Use `--market-db path/to/market.sqlite3` to choose a different market database.
 
 Live runs print progress as they fetch each good and transaction page. Use `--quiet` to suppress progress output.
+Use `--verbose` during imports to print each transaction page, cursor state, fetched row count, inserted/skipped rows, and stop reason.
 Use `--exclude-item-code case1 --exclude-item-code case2` to remove specific non-good item codes from a live report.
 
 To render the featured trade chart from a live run:
@@ -116,6 +117,7 @@ PYTHONPATH=src .venv/bin/python run_report.py --api-endpoint "/your/custom/endpo
 Generated files:
 
 ```text
+output/market_trends.csv
 output/market_scores.csv
 output/market_report.html
 ```

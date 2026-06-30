@@ -52,7 +52,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--api-records-path",
         help="Dot path to the list of records inside the custom API JSON, such as data.items.",
     )
-    parser.add_argument("--order-limit", type=int, default=10, help="Top buy/sell orders per item in --live mode.")
+    parser.add_argument(
+        "--order-limit",
+        type=int,
+        default=10,
+        help=(
+            "Current order-book depth per item: fetch this many best bids and best asks. "
+            "Does not limit transaction history."
+        ),
+    )
     parser.add_argument(
         "--history-pages",
         type=int,
@@ -100,6 +108,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--featured-item-code", help="Item code to force as the featured chart, such as bread.")
     parser.add_argument("--quiet", action="store_true", help="Suppress progress output.")
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print detailed importer progress for each item and transaction page.",
+    )
     return parser
 
 
@@ -116,6 +129,8 @@ def main() -> None:
         raise SystemExit("--chart-ma-window must be at least 1.")
     if args.chart_min_range_pct < 0:
         raise SystemExit("--chart-min-range-pct cannot be negative.")
+    if args.quiet and args.verbose:
+        raise SystemExit("Use only one of --quiet or --verbose.")
 
     if args.live:
         client = WarEraApiClient(min_interval_seconds=args.min_interval)
@@ -123,7 +138,7 @@ def main() -> None:
         if not args.quiet:
             print(
                 f"Starting live report: lookback={args.lookback_days:g} day(s), "
-                f"history_pages={args.history_pages}, order_limit={args.order_limit}",
+                f"history_pages={args.history_pages}, order_book_depth={args.order_limit}",
                 flush=True,
             )
         with MarketStore(args.market_db) as store:
@@ -136,6 +151,7 @@ def main() -> None:
                 lookback_days=args.lookback_days,
                 exclude_item_codes=set(args.exclude_item_code),
                 progress=None if args.quiet else lambda message: print(message, flush=True),
+                verbose=args.verbose,
             )
             rows = load_market_rows(store, lookback_days=args.lookback_days)
         if not args.quiet:
