@@ -35,6 +35,26 @@ def test_one_tick_spread_is_not_exploitable():
     assert m.status == "Insufficient score data"
 
 
+def test_preserves_explicit_fair_price_fields():
+    m = calculate_metrics({
+        "item_name": "Grain",
+        "bid": 1.00,
+        "ask": 1.02,
+        "trades_7d": 20,
+        "high_7d": 1.05,
+        "low_7d": 0.98,
+        "open_7d": 1.00,
+        "close_7d": 1.02,
+        "average_7d": 1.00,
+        "vwap_7d": 0.99,
+        "rolling_average_7d": 1.01,
+    })
+
+    assert m.average_7d == 1.00
+    assert m.vwap_7d == 0.99
+    assert m.rolling_average_7d == 1.01
+
+
 def test_classify_tendency_labels_market_behavior():
     assert classify_tendency(
         open_price=10,

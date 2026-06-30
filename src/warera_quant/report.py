@@ -95,14 +95,25 @@ def _price_gap_pct(latest: float | None, fair: float | None) -> float | None:
     return (latest - fair) / fair * 100
 
 
-def _plain_action(latest: float | None, buy_below: float | None, sell_above: float | None) -> str:
-    if latest is None or buy_below is None or sell_above is None:
+def _plain_action(
+    latest: float | None,
+    buy_below: float | None,
+    sell_above: float | None,
+    fair: float | None,
+) -> str:
+    if latest is None or buy_below is None or sell_above is None or fair is None:
         return "Check live market"
     if latest <= buy_below:
         return "Good buy zone"
     if latest >= sell_above:
         return "Good sell zone"
-    return "Fair; be patient"
+    gap_pct = _price_gap_pct(latest, fair)
+    if gap_pct is not None:
+        if gap_pct <= -1:
+            return "Slightly cheap; watch buys"
+        if gap_pct >= 1:
+            return "Slightly rich; watch sells"
+    return "Fair; balanced"
 
 
 def _tomorrow_bias(row: pd.Series, window_key: str, fair: float | None) -> tuple[str, str, str]:
@@ -116,24 +127,24 @@ def _tomorrow_bias(row: pd.Series, window_key: str, fair: float | None) -> tuple
     score = 0
     reasons: list[str] = []
     if momentum is not None:
-        if momentum >= 8:
+        if momentum >= 6:
             score += 2
             reasons.append("strong recent rise")
-        elif momentum >= 2:
+        elif momentum >= 1:
             score += 1
             reasons.append("recent rise")
-        elif momentum <= -8:
+        elif momentum <= -6:
             score -= 2
             reasons.append("strong recent drop")
-        elif momentum <= -2:
+        elif momentum <= -1:
             score -= 1
             reasons.append("recent drop")
 
     if gap_pct is not None:
-        if gap_pct <= -3:
+        if gap_pct <= -2:
             score += 1
             reasons.append("below fair price")
-        elif gap_pct >= 3:
+        elif gap_pct >= 2:
             score -= 1
             reasons.append("above fair price")
 
@@ -144,14 +155,14 @@ def _tomorrow_bias(row: pd.Series, window_key: str, fair: float | None) -> tuple
         score -= 1
         reasons.append("trend label falling")
 
-    if score >= 2:
+    if score >= 1:
         direction = "Likely up"
-    elif score <= -2:
+    elif score <= -1:
         direction = "Likely down"
     else:
         direction = "Sideways"
 
-    if trades >= 10 and range_pct <= 12 and abs(score) >= 2:
+    if trades >= 10 and abs(score) >= 2 and range_pct <= 12:
         confidence = "Medium"
     elif trades >= 3 and abs(score) >= 1:
         confidence = "Low-medium"
@@ -396,7 +407,7 @@ def _swing_read(row: pd.Series) -> str:
 def generate_html_report(
     df: pd.DataFrame,
     *,
-    top: int = 10,
+    top: int = 0,
     metric_window: str = "7D",
     chart_path: str | Path | None = None,
     chart_label: str | None = None,
@@ -447,7 +458,7 @@ def generate_html_report(
                 "buy_below": buy_below,
                 "sell_above": sell_above,
                 "gap_pct": gap_pct,
-                "action": _plain_action(latest, buy_below, sell_above),
+                "action": _plain_action(latest, buy_below, sell_above, fair),
                 "tomorrow_bias": direction,
                 "confidence": confidence,
                 "why": reason,
@@ -489,21 +500,18 @@ def generate_html_report(
             fair_view = fair_view.sort_values(["gap_pct", "item_name"], na_position="last").head(display_count)
             table = fair_view[[
                 "item_name", "latest_price", "fair_price", "buy_below", "sell_above", "gap_pct",
-                "action", "tomorrow_bias", "confidence", "why", "latest_bid", "latest_ask", "tendency"
+                "action", "tomorrow_bias", "confidence", "why"
             ]].rename(columns={
                 "item_name": "Commodity",
                 "latest_price": "Now",
-                "fair_price": "Fair Price",
-                "buy_below": "Buy Below",
-                "sell_above": "Sell Above",
-                "gap_pct": "Vs Fair %",
+                "fair_price": "Fair",
+                "buy_below": "Buy",
+                "sell_above": "Sell",
+                "gap_pct": "Gap %",
                 "action": "Action",
-                "tomorrow_bias": "Tomorrow",
+                "tomorrow_bias": "Bias",
                 "confidence": "Confidence",
                 "why": "Why",
-                "latest_bid": "Bid",
-                "latest_ask": "Ask",
-                "tendency": "Tendency",
             })
             blocks.append(
                 f"""    <section>

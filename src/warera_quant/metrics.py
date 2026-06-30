@@ -17,6 +17,9 @@ class MarketMetrics:
     low_7d: Optional[float]
     open_7d: Optional[float] = None
     close_7d: Optional[float] = None
+    average_7d: Optional[float] = None
+    vwap_7d: Optional[float] = None
+    rolling_average_7d: Optional[float] = None
     mid_price: Optional[float] = None
     min_tick: float = 0.001
     spread: Optional[float] = None
@@ -76,6 +79,7 @@ def calculate_metrics(row: dict) -> MarketMetrics:
             missing.append(field_name)
 
     mid_price = spread = spread_pct = range_pct = momentum_7d_pct = trading_attractiveness = None
+    avg_price = None
     status = "OK"
 
     if missing:
@@ -97,6 +101,10 @@ def calculate_metrics(row: dict) -> MarketMetrics:
         else:
             trading_attractiveness = (spread_pct * trades_7d) / range_pct
 
+    average_7d = _float_or_none(row.get("average_7d")) or avg_price
+    rolling_average_7d = _float_or_none(row.get("rolling_average_7d")) or average_7d
+    vwap_7d = _float_or_none(row.get("vwap_7d"))
+
     return MarketMetrics(
         item_name=item_name,
         item_code=item_code,
@@ -108,6 +116,9 @@ def calculate_metrics(row: dict) -> MarketMetrics:
         low_7d=low_7d,
         open_7d=open_7d,
         close_7d=close_7d,
+        average_7d=average_7d,
+        vwap_7d=vwap_7d,
+        rolling_average_7d=rolling_average_7d,
         mid_price=mid_price,
         min_tick=min_tick,
         spread=spread,

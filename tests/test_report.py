@@ -41,6 +41,41 @@ def test_swing_lens_shows_actionable_prices_without_score():
     assert "Cheaper; consider stockpiling" in report
 
 
+def test_generate_html_report_shows_all_items_by_default():
+    df = pd.DataFrame([
+        {
+            "item_name": "Corn",
+            "latest_price": 1.2,
+            "current_price": 1.2,
+            "bid": 1.15,
+            "ask": 1.25,
+            "spread_pct": 2.0,
+            "range_pct": 5.0,
+            "momentum_7d_pct": 0.5,
+            "trades_7d": 5,
+            "status": "OK",
+        },
+        {
+            "item_name": "Rice",
+            "latest_price": 2.3,
+            "current_price": 2.3,
+            "bid": 2.25,
+            "ask": 2.35,
+            "spread_pct": 1.5,
+            "range_pct": 3.0,
+            "momentum_7d_pct": -0.7,
+            "trades_7d": 4,
+            "status": "OK",
+        },
+    ])
+
+    report = generate_html_report(df)
+
+    assert "Corn" in report
+    assert "Rice" in report
+    assert report.count("What To Pay And What To Expect") == 1
+
+
 def test_report_foregrounds_market_trends_and_writes_compatibility_csv(tmp_path):
     df = pd.DataFrame([
         {
