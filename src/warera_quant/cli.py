@@ -39,6 +39,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="With --live, ignore transaction high-water marks and backfill history while deduping.",
     )
+    parser.add_argument(
+        "--from-db",
+        action="store_true",
+        help="Load market rows from the local SQLite market DB instead of the sample CSV, without syncing live data.",
+    )
     parser.add_argument("--api-endpoint", help="Fetch custom JSON records from this API endpoint instead of reading --csv.")
     parser.add_argument(
         "--api-param",
@@ -132,6 +137,12 @@ def main() -> None:
     if args.quiet and args.verbose:
         raise SystemExit("Use only one of --quiet or --verbose.")
 
+    if not args.live and not args.api_endpoint and not args.from_db:
+        if args.csv == "data/sample_market.csv" and Path(args.market_db).exists():
+            args.from_db = True
+            if not args.quiet:
+                print(f"Using local market DB at {args.market_db} because no explicit input was provided.", flush=True)
+
     if args.live:
         client = WarEraApiClient(min_interval_seconds=args.min_interval)
         market_api = WarEraMarketApi(client)
@@ -163,6 +174,10 @@ def main() -> None:
                 f"to {args.market_db}.",
                 flush=True,
             )
+        df_in = market_json_to_dataframe(rows)
+    elif args.from_db:
+        with MarketStore(args.market_db) as store:
+            rows = load_market_rows(store, lookback_days=args.lookback_days)
         df_in = market_json_to_dataframe(rows)
     elif args.api_endpoint:
         client = WarEraApiClient(min_interval_seconds=args.min_interval)

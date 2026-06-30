@@ -201,20 +201,20 @@ def _html_page(title: str, body: str) -> str:
   <title>{escape(title)}</title>
   <style>
     :root {{
-      color-scheme: light;
-      --bg: #f7f8fa;
-      --panel: #ffffff;
-      --text: #17202a;
-      --muted: #5f6b7a;
-      --line: #d9dee7;
-      --accent: #2563eb;
-      --accent-soft: #dbeafe;
-      --good: #138a44;
-      --good-soft: #dcfce7;
-      --bad: #c24135;
-      --bad-soft: #fee2e2;
-      --amber: #b45309;
-      --amber-soft: #fef3c7;
+      color-scheme: dark;
+      --bg: #0b1120;
+      --panel: #111826;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --line: #2e3a55;
+      --accent: #7dd3fc;
+      --accent-soft: #153b57;
+      --good: #6ee7b7;
+      --good-soft: #0f766e;
+      --bad: #f87171;
+      --bad-soft: #3f1f1f;
+      --amber: #fbbf24;
+      --amber-soft: #42310d;
     }}
     * {{ box-sizing: border-box; }}
     body {{
@@ -236,7 +236,7 @@ def _html_page(title: str, body: str) -> str:
       align-items: end;
       padding: 24px;
       border-bottom: 1px solid var(--line);
-      background: linear-gradient(135deg, #ffffff 0%, #eef6ff 100%);
+      background: linear-gradient(135deg, #111826 0%, #0f172a 100%);
       border: 1px solid var(--line);
       border-radius: 8px;
     }}
@@ -298,8 +298,8 @@ def _html_page(title: str, body: str) -> str:
       display: inline-block;
       padding: 3px 6px;
       border-radius: 6px;
-      background: #eef2f7;
-      color: #1f2937;
+      background: #1e293b;
+      color: #e2e8f0;
     }}
     table {{
       width: 100%;
@@ -322,8 +322,8 @@ def _html_page(title: str, body: str) -> str:
     td:last-child {{ text-align: left; }}
     tr:last-child td {{ border-bottom: 0; }}
     th {{
-      background: #eef2f7;
-      color: #334155;
+      background: #172a45;
+      color: #e2e8f0;
       font-weight: 650;
     }}
     .table-wrap {{ overflow-x: auto; }}
@@ -331,7 +331,7 @@ def _html_page(title: str, body: str) -> str:
       width: 100%;
       max-height: 720px;
       object-fit: contain;
-      background: #fff;
+      background: #0f172a;
       border: 1px solid var(--line);
       border-radius: 8px;
     }}
@@ -346,7 +346,6 @@ def _html_page(title: str, body: str) -> str:
       border-radius: 8px;
       padding: 14px;
     }}
-    .warning {{ border-left: 4px solid var(--bad); }}
     @media (max-width: 720px) {{
       header {{ display: block; padding: 18px; }}
       h1 {{ font-size: 1.65rem; }}
@@ -698,12 +697,6 @@ def generate_html_report(
     </section>"""
         )
 
-    blocks.append(
-        """    <section class="panel warning">
-      <h2>Warning</h2>
-      <p>This is a statistical filter, not a profit guarantee. Orders may not fill, prices may move, other players may undercut, and inventory can get stuck.</p>
-    </section>"""
-    )
     return _html_page("WarEra Quantitative Market Report", "\n".join(blocks))
 
 
