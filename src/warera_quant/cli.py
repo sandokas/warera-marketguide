@@ -67,7 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=0,
         help="Maximum transaction pages per item in --live mode. Use 0 to fetch until records are older than --lookback-days.",
     )
-    parser.add_argument("--lookback-days", type=float, default=1.0, help="Transaction lookback window for --live mode.")
+    parser.add_argument("--lookback-days", type=float, default=7.0, help="Transaction lookback window for --live mode.")
     parser.add_argument(
         "--min-tick",
         type=float,
@@ -93,7 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Render stock-style price charts from DB-backed live market data.",
     )
-    parser.add_argument("--chart-interval", default="15min", help="Chart candle interval, such as 15min or 1h.")
+    parser.add_argument("--chart-interval", default="1h", help="Chart candle interval, such as 1h or 15min.")
     parser.add_argument(
         "--chart-ma-window",
         type=int,

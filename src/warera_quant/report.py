@@ -38,15 +38,138 @@ def _fmt(value: object, decimals: int = 3) -> str:
     return str(value)
 
 
-def _signal_summary(row: pd.Series, *, include_score: bool = False) -> str:
+def _number(value: object) -> float | None:
+    if value is None or pd.isna(value):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if pd.notna(parsed) else None
+
+
+def _first_number(row: pd.Series, *columns: str) -> float | None:
+    for column in columns:
+        if column and column in row.index:
+            value = _number(row.get(column))
+            if value is not None:
+                return value
+    return None
+
+
+def _fair_price(row: pd.Series, window_key: str) -> float | None:
+    bid = _first_number(row, "bid", "latest_bid")
+    ask = _first_number(row, "ask", "latest_ask")
+    midpoint = (bid + ask) / 2 if bid is not None and ask is not None else None
+    return _first_number(
+        row,
+        f"vwap_{window_key}",
+        f"average_{window_key}",
+        f"rolling_average_{window_key}",
+        "current_price",
+        "latest_price",
+        "mid_price",
+    ) or midpoint
+
+
+def _fair_price_band(row: pd.Series, window_key: str) -> tuple[float | None, float | None, float | None]:
+    fair = _fair_price(row, window_key)
+    if fair is None:
+        return None, None, None
+
+    spread = _first_number(row, "latest_spread", "spread")
+    if spread is not None and spread > 0:
+        half_band = spread / 2
+    else:
+        half_band = max(fair * 0.01, 0.001)
+    return fair, max(0.0, fair - half_band), fair + half_band
+
+
+def _latest_price(row: pd.Series) -> float | None:
+    return _first_number(row, "latest_price", "current_price")
+
+
+def _price_gap_pct(latest: float | None, fair: float | None) -> float | None:
+    if latest is None or fair is None or fair <= 0:
+        return None
+    return (latest - fair) / fair * 100
+
+
+def _plain_action(latest: float | None, buy_below: float | None, sell_above: float | None) -> str:
+    if latest is None or buy_below is None or sell_above is None:
+        return "Check live market"
+    if latest <= buy_below:
+        return "Good buy zone"
+    if latest >= sell_above:
+        return "Good sell zone"
+    return "Fair; be patient"
+
+
+def _tomorrow_bias(row: pd.Series, window_key: str, fair: float | None) -> tuple[str, str, str]:
+    latest = _latest_price(row)
+    gap_pct = _price_gap_pct(latest, fair)
+    momentum = _first_number(row, f"percent_change_{window_key}", "momentum_7d_pct")
+    trades = _first_number(row, f"trade_count_{window_key}", "trades_7d") or 0.0
+    range_pct = _first_number(row, f"range_pct_{window_key}", "range_pct") or 0.0
+    tendency = str(row.get(f"tendency_labels_{window_key}") or row.get(f"tendency_{window_key}") or "")
+
+    score = 0
+    reasons: list[str] = []
+    if momentum is not None:
+        if momentum >= 8:
+            score += 2
+            reasons.append("strong recent rise")
+        elif momentum >= 2:
+            score += 1
+            reasons.append("recent rise")
+        elif momentum <= -8:
+            score -= 2
+            reasons.append("strong recent drop")
+        elif momentum <= -2:
+            score -= 1
+            reasons.append("recent drop")
+
+    if gap_pct is not None:
+        if gap_pct <= -3:
+            score += 1
+            reasons.append("below fair price")
+        elif gap_pct >= 3:
+            score -= 1
+            reasons.append("above fair price")
+
+    if "Rising" in tendency:
+        score += 1
+        reasons.append("trend label rising")
+    elif "Falling" in tendency:
+        score -= 1
+        reasons.append("trend label falling")
+
+    if score >= 2:
+        direction = "Likely up"
+    elif score <= -2:
+        direction = "Likely down"
+    else:
+        direction = "Sideways"
+
+    if trades >= 10 and range_pct <= 12 and abs(score) >= 2:
+        confidence = "Medium"
+    elif trades >= 3 and abs(score) >= 1:
+        confidence = "Low-medium"
+    else:
+        confidence = "Low"
+
+    if not reasons:
+        reasons.append("not enough directional evidence")
+    return direction, confidence, ", ".join(reasons[:3])
+
+
+def _signal_summary(row: pd.Series) -> str:
     parts = [
         f"momentum {_fmt(row.get('momentum_7d_pct'), 2)}%",
         f"trades {_fmt(row.get('trades_7d'), 0)}",
         f"range {_fmt(row.get('range_pct'), 2)}%",
         f"spread {_fmt(row.get('spread_pct'), 2)}%",
     ]
-    if include_score:
-        parts.append(f"score {_fmt(row.get('trading_attractiveness'), 1)}")
     return ", ".join(parts)
 
 
@@ -74,8 +197,13 @@ def _html_page(title: str, body: str) -> str:
       --muted: #5f6b7a;
       --line: #d9dee7;
       --accent: #2563eb;
+      --accent-soft: #dbeafe;
       --good: #138a44;
+      --good-soft: #dcfce7;
       --bad: #c24135;
+      --bad-soft: #fee2e2;
+      --amber: #b45309;
+      --amber-soft: #fef3c7;
     }}
     * {{ box-sizing: border-box; }}
     body {{
@@ -95,14 +223,25 @@ def _html_page(title: str, body: str) -> str:
       justify-content: space-between;
       gap: 24px;
       align-items: end;
-      padding-bottom: 20px;
+      padding: 24px;
       border-bottom: 1px solid var(--line);
+      background: linear-gradient(135deg, #ffffff 0%, #eef6ff 100%);
+      border: 1px solid var(--line);
+      border-radius: 8px;
     }}
     h1, h2, h3, p {{ margin-top: 0; }}
     h1 {{ margin-bottom: 4px; font-size: 2rem; }}
     h2 {{ margin-bottom: 12px; font-size: 1.35rem; }}
     h3 {{ margin-bottom: 8px; font-size: 1rem; }}
     section {{ margin-top: 28px; }}
+    .eyebrow {{
+      margin-bottom: 8px;
+      color: var(--accent);
+      font-size: 0.78rem;
+      font-weight: 750;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }}
     .muted {{ color: var(--muted); }}
     .panel {{
       background: var(--panel);
@@ -115,6 +254,33 @@ def _html_page(title: str, body: str) -> str:
       grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
       gap: 16px;
     }}
+    .summary-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+    }}
+    .summary-card {{
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+    }}
+    .summary-card strong {{
+      display: block;
+      font-size: 1.15rem;
+    }}
+    .summary-card span {{ color: var(--muted); }}
+    .pill {{
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-weight: 700;
+      font-size: 0.78rem;
+      white-space: nowrap;
+    }}
+    .pill-up {{ background: var(--good-soft); color: var(--good); }}
+    .pill-down {{ background: var(--bad-soft); color: var(--bad); }}
+    .pill-flat {{ background: var(--amber-soft); color: var(--amber); }}
     ul {{ margin: 0; padding-left: 1.2rem; }}
     li + li {{ margin-top: 6px; }}
     code {{
@@ -170,6 +336,11 @@ def _html_page(title: str, body: str) -> str:
       padding: 14px;
     }}
     .warning {{ border-left: 4px solid var(--bad); }}
+    @media (max-width: 720px) {{
+      header {{ display: block; padding: 18px; }}
+      h1 {{ font-size: 1.65rem; }}
+      th, td {{ padding: 8px; }}
+    }}
   </style>
 </head>
 <body>
@@ -232,11 +403,7 @@ def generate_html_report(
     output_dir: str | Path = ".",
 ) -> str:
     generated = datetime.now().strftime("%Y-%m-%d %H:%M")
-    if "trading_attractiveness" in df.columns:
-        scored = df[df["trading_attractiveness"].notna()].copy()
-    else:
-        scored = pd.DataFrame()
-    display_count = len(scored) if top <= 0 else top
+    display_count = len(df) if top <= 0 else top
     swing_count = len(df) if top <= 0 else top
     trend_count = min(swing_count, 10)
     window_key = _window_key(metric_window)
@@ -245,10 +412,11 @@ def generate_html_report(
     blocks.append(
         f"""    <header>
       <div>
-        <h1>WarEra Market History And Trends</h1>
-        <p class="muted">Generated: {escape(generated)}</p>
+        <div class="eyebrow">WarEra market guide</div>
+        <h1>Fair Prices And Tomorrow Bias</h1>
+        <p class="muted">A practical read on what is cheap, what is expensive, and which way prices may lean next.</p>
       </div>
-      <div class="muted">Window: {escape(metric_window)}</div>
+      <div class="muted">Window: {escape(metric_window)}<br>Generated: {escape(generated)}</div>
     </header>"""
     )
 
@@ -264,6 +432,87 @@ def generate_html_report(
     </section>"""
         )
 
+    fair_candidates = df.copy()
+    if not fair_candidates.empty:
+        fair_rows = []
+        for _, row in fair_candidates.iterrows():
+            fair, buy_below, sell_above = _fair_price_band(row, window_key)
+            latest = _latest_price(row)
+            gap_pct = _price_gap_pct(latest, fair)
+            direction, confidence, reason = _tomorrow_bias(row, window_key, fair)
+            fair_rows.append({
+                "item_name": row.get("item_name"),
+                "latest_price": latest,
+                "fair_price": fair,
+                "buy_below": buy_below,
+                "sell_above": sell_above,
+                "gap_pct": gap_pct,
+                "action": _plain_action(latest, buy_below, sell_above),
+                "tomorrow_bias": direction,
+                "confidence": confidence,
+                "why": reason,
+                "latest_bid": row.get("latest_bid", row.get("bid")),
+                "latest_ask": row.get("latest_ask", row.get("ask")),
+                "tendency": row.get(f"tendency_labels_{window_key}"),
+            })
+        fair_view = pd.DataFrame(fair_rows)
+        fair_view = fair_view[fair_view["fair_price"].notna()].copy()
+        if not fair_view.empty:
+            summary_view = fair_view.copy()
+            cheap = summary_view[summary_view["gap_pct"].notna() & (summary_view["gap_pct"] <= -1)].sort_values("gap_pct").head(1)
+            expensive = summary_view[summary_view["gap_pct"].notna() & (summary_view["gap_pct"] >= 1)].sort_values("gap_pct", ascending=False).head(1)
+            likely_up = summary_view[summary_view["tomorrow_bias"] == "Likely up"].head(1)
+            likely_down = summary_view[summary_view["tomorrow_bias"] == "Likely down"].head(1)
+
+            def summary_card(title: str, row_df: pd.DataFrame, fallback: str) -> str:
+                if row_df.empty:
+                    return f'<div class="summary-card"><span>{escape(title)}</span><strong>{escape(fallback)}</strong></div>'
+                row = row_df.iloc[0]
+                gap = _fmt(row.get("gap_pct"), 2)
+                return (
+                    f'<div class="summary-card"><span>{escape(title)}</span>'
+                    f'<strong>{escape(str(row.get("item_name")))}</strong>'
+                    f'<span>{escape(str(row.get("action")))}; gap {escape(gap)}%</span></div>'
+                )
+
+            blocks.append(
+                """    <section>
+      <div class="summary-grid">"""
+                + summary_card("Cheapest vs fair", cheap, "No clear discount")
+                + summary_card("Richest vs fair", expensive, "No clear premium")
+                + summary_card("Best upside bias", likely_up, "No clear up bias")
+                + summary_card("Best downside bias", likely_down, "No clear down bias")
+                + """</div>
+    </section>"""
+            )
+
+            fair_view = fair_view.sort_values(["gap_pct", "item_name"], na_position="last").head(display_count)
+            table = fair_view[[
+                "item_name", "latest_price", "fair_price", "buy_below", "sell_above", "gap_pct",
+                "action", "tomorrow_bias", "confidence", "why", "latest_bid", "latest_ask", "tendency"
+            ]].rename(columns={
+                "item_name": "Commodity",
+                "latest_price": "Now",
+                "fair_price": "Fair Price",
+                "buy_below": "Buy Below",
+                "sell_above": "Sell Above",
+                "gap_pct": "Vs Fair %",
+                "action": "Action",
+                "tomorrow_bias": "Tomorrow",
+                "confidence": "Confidence",
+                "why": "Why",
+                "latest_bid": "Bid",
+                "latest_ask": "Ask",
+                "tendency": "Tendency",
+            })
+            blocks.append(
+                f"""    <section>
+      <h2>What To Pay And What To Expect</h2>
+      <p class="muted">Buy below the buy line, sell above the sell line, and treat tomorrow as a bias rather than a promise.</p>
+      {_table_html(table)}
+    </section>"""
+            )
+
     trend_candidates = df.copy()
     if not trend_candidates.empty:
         change_col = _column(df, f"percent_change_{window_key}", "momentum_7d_pct")
@@ -277,7 +526,7 @@ def generate_html_report(
         table_columns: list[tuple[str, str]] = [
             ("rank", "Rank"),
             ("item_name", "Item"),
-            (_column(df, f"tendency_labels_{window_key}", f"tendency_{window_key}", "status") or "", "Tendency"),
+            (_column(df, f"tendency_labels_{window_key}", f"tendency_{window_key}") or "", "Tendency"),
             (_column(df, "latest_price", "current_price") or "", "Latest"),
             (_column(df, f"open_{window_key}", "open_7d") or "", "Open"),
             (_column(df, f"close_{window_key}", "close_7d") or "", "Close"),
@@ -289,7 +538,6 @@ def generate_html_report(
             (volume_col or "", "Volume"),
             (liquidity_col or "", "Liquidity"),
             (_column(df, "latest_spread_pct", f"average_spread_pct_{window_key}", "spread_pct") or "", "Spread %"),
-            ("trading_attractiveness", "MM Score"),
         ]
         selected = [(source, label) for source, label in table_columns if source and source in view.columns]
         trend_table = view[[source for source, _ in selected]].rename(columns=dict(selected))
@@ -302,14 +550,6 @@ def generate_html_report(
         )
 
     signal_items: list[str] = []
-
-    if scored.empty:
-        signal_items.append("<p>No ranked market-making scores available.</p>")
-    else:
-        items = []
-        for _, row in scored.head(3).iterrows():
-            items.append(f"<li><strong>{escape(str(row['item_name']))}</strong>: {escape(_signal_summary(row, include_score=True))}</li>")
-        signal_items.append("<h3>Highest secondary scores</h3><ul>" + "".join(items) + "</ul>")
 
     momentum = df[df["momentum_7d_pct"].notna()].copy()
     if not momentum.empty:
@@ -352,12 +592,19 @@ def generate_html_report(
       <h2>Reading The Signals</h2>
       <div class="grid">
         <div class="panel">
-          <h3>Market-making score</h3>
-          <p><code>Trading Attractiveness = (Effective Spread % x {escape(metric_window)} Trades) / {escape(metric_window)} Range %</code></p>
+          <h3>Fair prices</h3>
           <ul>
-            <li><strong>Good:</strong> high effective spread, high trades, low range.</li>
-            <li><strong>Avoid:</strong> one-tick spreads, low trades, wide ranges.</li>
-            <li><strong>Use for:</strong> secondary context after the history and trend fields.</li>
+            <li><strong>Fair:</strong> {escape(metric_window)} VWAP when available, then average, then latest price.</li>
+            <li><strong>Buy Below / Sell Above:</strong> fair price adjusted by half the live spread, or 1% when no spread is available.</li>
+            <li><strong>Use for:</strong> quick limit-order levels before checking live depth.</li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h3>Tomorrow bias</h3>
+          <ul>
+            <li><strong>Likely up/down:</strong> recent momentum, fair-price gap, and tendency labels point the same way.</li>
+            <li><strong>Sideways:</strong> mixed evidence or not enough movement to call a direction.</li>
+            <li><strong>Confidence:</strong> higher when the market has more trades and less chaotic range.</li>
           </ul>
         </div>
         <div class="panel">
@@ -369,35 +616,6 @@ def generate_html_report(
           </ul>
         </div>
       </div>
-      <p class="muted">Effective spread subtracts the minimum price tick from the raw bid/ask gap. A one-tick gap is treated as non-exploitable.</p>
-    </section>"""
-    )
-
-    if scored.empty:
-        top_opportunities = "<p>No items had enough data to calculate a score.</p>"
-    else:
-        view = scored.head(display_count).copy()
-        view.insert(0, "rank", range(1, len(view) + 1))
-        table = view[[
-            "rank", "item_name", "bid", "ask", "spread_pct", "trades_7d",
-            "range_pct", "momentum_7d_pct", "trading_attractiveness"
-        ]].rename(columns={
-            "rank": "Rank",
-            "item_name": "Item",
-            "bid": "Bid",
-            "ask": "Ask",
-            "spread_pct": "Effective Spread %",
-            "trades_7d": f"{metric_window} Trades",
-            "range_pct": f"{metric_window} Range %",
-            "momentum_7d_pct": f"{metric_window} Momentum %",
-            "trading_attractiveness": "Score",
-        })
-        top_opportunities = _table_html(table)
-
-    blocks.append(
-        f"""    <section>
-      <h2>Secondary Market-Making Score</h2>
-      {top_opportunities}
     </section>"""
     )
 
@@ -446,18 +664,19 @@ def generate_html_report(
     </section>"""
             )
 
-    if not scored.empty:
+    note_rows = df.head(display_count).copy()
+    if not note_rows.empty:
         notes: list[str] = []
-        for _, row in scored.head(display_count).iterrows():
+        for _, row in note_rows.iterrows():
+            fair, buy_below, sell_above = _fair_price_band(row, window_key)
             detail_items = [
-                f"<li>Bid / Ask: <strong>{escape(_fmt(row['bid']))} / {escape(_fmt(row['ask']))}</strong></li>",
-                f"<li>Effective spread: <strong>{escape(_fmt(row['spread_pct'], 2))}%</strong></li>",
-                f"<li>{escape(metric_window)} trades: <strong>{escape(_fmt(row['trades_7d'], 0))}</strong></li>",
-                f"<li>{escape(metric_window)} range: <strong>{escape(_fmt(row['range_pct'], 2))}%</strong></li>",
+                f"<li>Fair / Buy below / Sell above: <strong>{escape(_fmt(fair))} / {escape(_fmt(buy_below))} / {escape(_fmt(sell_above))}</strong></li>",
+                f"<li>Bid / Ask: <strong>{escape(_fmt(row.get('bid')))} / {escape(_fmt(row.get('ask')))}</strong></li>",
+                f"<li>{escape(metric_window)} trades: <strong>{escape(_fmt(row.get('trades_7d'), 0))}</strong></li>",
+                f"<li>{escape(metric_window)} range: <strong>{escape(_fmt(row.get('range_pct'), 2))}%</strong></li>",
             ]
             if row.get("momentum_7d_pct") is not None and not pd.isna(row.get("momentum_7d_pct")):
                 detail_items.append(f"<li>{escape(metric_window)} momentum: <strong>{escape(_fmt(row['momentum_7d_pct'], 2))}%</strong></li>")
-            detail_items.append(f"<li>Trading attractiveness: <strong>{escape(_fmt(row['trading_attractiveness'], 2))}</strong></li>")
             notes.append(
                 f"""<article class="note">
           <h3>{escape(str(row['item_name']))}</h3>

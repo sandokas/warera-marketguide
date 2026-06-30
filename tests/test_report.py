@@ -29,7 +29,15 @@ def test_swing_lens_shows_actionable_prices_without_score():
     assert "Buy Ask" in report
     assert "Sell Bid" in report
     assert "Last" in report
-    assert "Secondary Market-Making Score" in report
+    assert "Fair Prices And Tomorrow Bias" in report
+    assert "What To Pay And What To Expect" in report
+    assert "Fair Price" in report
+    assert "Buy Below" in report
+    assert "Sell Above" in report
+    assert "Tomorrow" in report
+    assert "Confidence" in report
+    assert "Market-Making Score" not in report
+    assert "Insufficient score data" not in report
     assert "Cheaper; consider stockpiling" in report
 
 
@@ -68,7 +76,11 @@ def test_report_foregrounds_market_trends_and_writes_compatibility_csv(tmp_path)
     assert trends_path.name == "market_trends.csv"
     assert trends_path.exists()
     assert (tmp_path / "market_scores.csv").exists()
-    assert "Market History And Trends" in report
+    assert "Fair Prices And Tomorrow Bias" in report
+    assert "What To Pay And What To Expect" in report
     assert "Market Trends" in report
     assert "Rising, Volatile" in report
-    assert "Secondary Market-Making Score" in report
+    assert "5.900" in report
+    assert "Likely up" in report
+    assert "Good sell zone" in report
+    assert "Market-Making Score" not in report

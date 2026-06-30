@@ -56,7 +56,7 @@ def _spread_frame(spread_observations: Iterable[dict[str, Any]]) -> pd.DataFrame
     return df.set_index("observed_at")
 
 
-def build_ohlc(transactions: Iterable[dict[str, Any]], *, interval: str = "15min") -> pd.DataFrame:
+def build_ohlc(transactions: Iterable[dict[str, Any]], *, interval: str = "1h") -> pd.DataFrame:
     trades = _transaction_frame(transactions)
     if trades.empty:
         return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
@@ -102,7 +102,7 @@ def build_spread_series(
     spread_observations: Iterable[dict[str, Any]],
     *,
     candle_index: pd.DatetimeIndex,
-    interval: str = "15min",
+    interval: str = "1h",
 ) -> pd.Series:
     spreads = _spread_frame(spread_observations)
     if spreads.empty or candle_index.empty:
@@ -148,7 +148,7 @@ def plot_price_chart(
     *,
     item_name: str,
     output_path: str | Path,
-    interval: str = "15min",
+    interval: str = "1h",
     ma_window: int = 4,
     show_moving_average: bool = True,
     show_min_max_band: bool = True,
@@ -188,7 +188,12 @@ def plot_price_chart(
     output.parent.mkdir(parents=True, exist_ok=True)
     style = mpf.make_mpf_style(
         base_mpf_style="yahoo",
-        marketcolors=mpf.make_marketcolors(up="#16a34a", down="#dc2626", inherit=True),
+        marketcolors=mpf.make_marketcolors(
+            up="#16a34a",
+            down="#dc2626",
+            volume={"up": "#0891b2", "down": "#f97316"},
+            inherit=True,
+        ),
         gridstyle=":",
         facecolor="#ffffff",
         figcolor="#ffffff",
@@ -221,7 +226,7 @@ def render_featured_chart(
     output_path: str | Path,
     *,
     item_name: str,
-    interval: str = "15min",
+    interval: str = "1h",
     ma_window: int = 4,
     show_moving_average: bool = True,
     show_spread: bool = True,
