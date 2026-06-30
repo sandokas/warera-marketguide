@@ -1,8 +1,32 @@
 # WarEra Quant Market Report
 
-A Python tool that ranks WarEra market goods using measurable trading statistics.
+A Python tool for WarEra market analysis.
+
+The current implementation can generate reports from CSV or live API data. The next architecture target is a SQLite-backed market database that stores transactions, price observations, and order-book observations, then produces trend-oriented reports from that database.
+
+See:
+
+- [AGENTS.md](AGENTS.md) for repository architecture rules.
+- [docs/market-db-reporting-spec.md](docs/market-db-reporting-spec.md) for the market database and reporting spec.
+
+## Direction
+
+New work should follow the market database architecture:
+
+- `api_client.py`: low-level HTTP only.
+- `warera_api.py`: WarEra endpoint parsing only.
+- `sync.py`: API-to-database sync orchestration.
+- `market_store.py`: the only SQLite/database access layer.
+- `market_data.py`: read models for reports and charts.
+- `metrics.py`, `charts.py`, `report.py`: calculations and output only.
+
+SQLite is the planned source of truth for market history. Do not add new JSON snapshot-based workflows.
+
+The report direction is market history rather than day-trading picks: price evolution, min/max ranges, averages, VWAP, tendencies, volume, liquidity, spreads, and multi-window trends.
 
 ## Formula
+
+The existing report includes a market-making score:
 
 ```text
 Trading Attractiveness = (Effective Spread % × Window Trades) / Window Range %
@@ -10,6 +34,8 @@ Trading Attractiveness = (Effective Spread % × Window Trades) / Window Range %
 
 This rewards markets with exploitable spreads, frequent trades, and relatively stable prices.
 Effective spread subtracts the minimum price tick from the raw bid/ask gap before scoring.
+
+This score should become secondary to trend/history reporting as the database architecture lands.
 
 ## Setup
 
@@ -25,7 +51,7 @@ pip install -r requirements.txt
 PYTHONPATH=src python3 run_report.py --csv data/sample_market.csv --output output --top 0
 ```
 
-## Run with API data
+## Run With API Data
 
 Put your API settings in `.env`:
 
@@ -40,7 +66,7 @@ The script loads `.env` at runtime. Then run:
 PYTHONPATH=src python3 run_report.py --live --output output --top 0
 ```
 
-Live mode downloads every good returned by `itemTrading.getPrices`:
+Current live mode downloads every good returned by `itemTrading.getPrices`:
 
 - current item prices from `itemTrading.getPrices`
 - top buy/sell orders from `tradingOrder.getTopOrders`
@@ -59,16 +85,10 @@ PYTHONPATH=src python3 run_report.py --live --lookback-days 1 --order-limit 10 -
 Live runs print progress as they fetch each good and transaction page. Use `--quiet` to suppress progress output.
 Use `--exclude-item-code case1 --exclude-item-code case2` to remove specific non-good item codes from a live report.
 
-To regenerate a report from a saved snapshot without downloading again:
+To render the featured trade chart from a live run:
 
 ```bash
-PYTHONPATH=src python3 run_report.py --from-snapshot output/market_snapshot.json --lookback-days 1 --output output --top 0
-```
-
-To render the featured trade chart from a live run or saved snapshot:
-
-```bash
-PYTHONPATH=src python3 run_report.py --from-snapshot output/market_snapshot.json --lookback-days 1 --output output --charts --chart-interval 15min --chart-ma-window 4
+PYTHONPATH=src python3 run_report.py --live --lookback-days 1 --output output --charts --chart-interval 15min --chart-ma-window 4
 ```
 
 The chart is written to `output/charts/featured-trade.png`. It uses 15-minute candles by default. One-day reports show candles and volume only; longer windows also plot a moving average and mark closes that break above or below that moving average. The automatic featured item follows the report rank order.
@@ -96,10 +116,11 @@ PYTHONPATH=src python3 run_report.py --api-endpoint "/your/market/endpoint" --ap
 Generated files:
 
 ```text
-output/market_snapshot.json
 output/market_scores.csv
 output/market_report.html
 ```
+
+The current code may still emit legacy intermediate files during the database migration. New development should move report and chart inputs to SQLite-backed query methods rather than adding snapshot readers or writers.
 
 ## Input CSV columns
 
