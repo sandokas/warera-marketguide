@@ -27,6 +27,9 @@ class MarketMetrics:
     status: str = "OK"
 
 
+TREND_LABELS = ("Rising", "Falling", "Range-bound", "Volatile", "Thin", "Stable")
+
+
 def _valid_number(value: object) -> bool:
     if value is None:
         return False
@@ -114,3 +117,64 @@ def calculate_metrics(row: dict) -> MarketMetrics:
         trading_attractiveness=trading_attractiveness,
         status=status,
     )
+
+
+def classify_tendency(
+    *,
+    open_price: object = None,
+    close_price: object = None,
+    min_price: object = None,
+    max_price: object = None,
+    average_price: object = None,
+    rolling_average: object = None,
+    trade_count: object = None,
+    volume: object = None,
+    spread_pct: object = None,
+) -> list[str]:
+    """Return descriptive market tendency labels for a report window."""
+    open_value = _float_or_none(open_price)
+    close_value = _float_or_none(close_price)
+    min_value = _float_or_none(min_price)
+    max_value = _float_or_none(max_price)
+    average_value = _float_or_none(average_price)
+    rolling_value = _float_or_none(rolling_average) or average_value
+    trade_count_value = _float_or_none(trade_count) or 0.0
+    volume_value = _float_or_none(volume) or 0.0
+    spread_pct_value = _float_or_none(spread_pct)
+
+    labels: list[str] = []
+    range_pct = None
+    if min_value is not None and max_value is not None and average_value is not None and average_value > 0:
+        range_pct = (max_value - min_value) / average_value * 100
+
+    if trade_count_value < 3 or volume_value <= 0:
+        labels.append("Thin")
+
+    if (
+        open_value is not None
+        and close_value is not None
+        and rolling_value is not None
+        and open_value > 0
+    ):
+        change_pct = (close_value - open_value) / open_value * 100
+        if change_pct >= 2 and close_value >= rolling_value:
+            labels.append("Rising")
+        elif change_pct <= -2 and close_value <= rolling_value:
+            labels.append("Falling")
+
+    if range_pct is not None:
+        if range_pct >= 12:
+            labels.append("Volatile")
+        elif range_pct <= 3:
+            labels.append("Range-bound")
+
+    if (
+        range_pct is not None
+        and range_pct <= 3
+        and trade_count_value >= 3
+        and volume_value > 0
+        and (spread_pct_value is None or spread_pct_value <= 3)
+    ):
+        labels.append("Stable")
+
+    return labels or ["Stable"]

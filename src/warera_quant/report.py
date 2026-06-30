@@ -18,6 +18,18 @@ def metrics_to_dataframe(metrics: Iterable[MarketMetrics]) -> pd.DataFrame:
     return df
 
 
+def combine_market_rows_with_metrics(source: pd.DataFrame, metrics: Iterable[MarketMetrics]) -> pd.DataFrame:
+    df = source.reset_index(drop=True).copy()
+    metric_df = pd.DataFrame([asdict(m) for m in metrics])
+    for column in metric_df.columns:
+        df[column] = metric_df[column]
+    if "percent_change_7d" not in df.columns and "momentum_7d_pct" in df.columns:
+        df["percent_change_7d"] = df["momentum_7d_pct"]
+    if "trading_attractiveness" in df.columns:
+        df = df.sort_values("trading_attractiveness", ascending=False, na_position="last")
+    return df
+
+
 def _fmt(value: object, decimals: int = 3) -> str:
     if value is None or pd.isna(value):
         return "N/A"
@@ -36,6 +48,14 @@ def _signal_summary(row: pd.Series, *, include_score: bool = False) -> str:
     if include_score:
         parts.append(f"score {_fmt(row.get('trading_attractiveness'), 1)}")
     return ", ".join(parts)
+
+
+def _window_key(metric_window: str) -> str:
+    return metric_window.strip().lower()
+
+
+def _column(df: pd.DataFrame, *names: str) -> str | None:
+    return next((name for name in names if name in df.columns), None)
 
 
 def _html_page(title: str, body: str) -> str:
@@ -212,16 +232,20 @@ def generate_html_report(
     output_dir: str | Path = ".",
 ) -> str:
     generated = datetime.now().strftime("%Y-%m-%d %H:%M")
-    scored = df[df["trading_attractiveness"].notna()].copy()
+    if "trading_attractiveness" in df.columns:
+        scored = df[df["trading_attractiveness"].notna()].copy()
+    else:
+        scored = pd.DataFrame()
     display_count = len(scored) if top <= 0 else top
     swing_count = len(df) if top <= 0 else top
     trend_count = min(swing_count, 10)
+    window_key = _window_key(metric_window)
 
     blocks: list[str] = []
     blocks.append(
         f"""    <header>
       <div>
-        <h1>WarEra Quantitative Market Report</h1>
+        <h1>WarEra Market History And Trends</h1>
         <p class="muted">Generated: {escape(generated)}</p>
       </div>
       <div class="muted">Window: {escape(metric_window)}</div>
@@ -230,25 +254,62 @@ def generate_html_report(
 
     chart_src = _relative_chart_path(chart_path, Path(output_dir))
     if chart_src:
-        chart_heading = "Featured Trade Chart"
+        chart_heading = "Featured Price History"
         if chart_label:
-            chart_heading = f"Featured Trade Chart: {chart_label}"
+            chart_heading = f"Featured Price History: {chart_label}"
         blocks.append(
             f"""    <section>
       <h2>{escape(chart_heading)}</h2>
-      <img class="chart" src="{escape(chart_src)}" alt="Featured trade candlestick chart">
+      <img class="chart" src="{escape(chart_src)}" alt="Featured market history chart">
+    </section>"""
+        )
+
+    trend_candidates = df.copy()
+    if not trend_candidates.empty:
+        change_col = _column(df, f"percent_change_{window_key}", "momentum_7d_pct")
+        volume_col = _column(df, f"volume_{window_key}", f"traded_quantity_{window_key}", "trades_7d")
+        liquidity_col = _column(df, f"liquidity_{window_key}")
+        sort_cols = [col for col in [liquidity_col, volume_col] if col]
+        if sort_cols:
+            trend_candidates = trend_candidates.sort_values(sort_cols, ascending=False, na_position="last")
+        view = trend_candidates.head(swing_count).copy()
+        view.insert(0, "rank", range(1, len(view) + 1))
+        table_columns: list[tuple[str, str]] = [
+            ("rank", "Rank"),
+            ("item_name", "Item"),
+            (_column(df, f"tendency_labels_{window_key}", f"tendency_{window_key}", "status") or "", "Tendency"),
+            (_column(df, "latest_price", "current_price") or "", "Latest"),
+            (_column(df, f"open_{window_key}", "open_7d") or "", "Open"),
+            (_column(df, f"close_{window_key}", "close_7d") or "", "Close"),
+            (change_col or "", "Change %"),
+            (_column(df, f"min_{window_key}", "low_7d") or "", "Min"),
+            (_column(df, f"max_{window_key}", "high_7d") or "", "Max"),
+            (_column(df, f"average_{window_key}") or "", "Average"),
+            (_column(df, f"vwap_{window_key}") or "", "VWAP"),
+            (volume_col or "", "Volume"),
+            (liquidity_col or "", "Liquidity"),
+            (_column(df, "latest_spread_pct", f"average_spread_pct_{window_key}", "spread_pct") or "", "Spread %"),
+            ("trading_attractiveness", "MM Score"),
+        ]
+        selected = [(source, label) for source, label in table_columns if source and source in view.columns]
+        trend_table = view[[source for source, _ in selected]].rename(columns=dict(selected))
+        blocks.append(
+            f"""    <section>
+      <h2>Market Trends</h2>
+      <p class="muted">History-first view of price evolution, range, averages, volume, liquidity, spread, and descriptive tendencies.</p>
+      {_table_html(trend_table)}
     </section>"""
         )
 
     signal_items: list[str] = []
 
     if scored.empty:
-        signal_items.append("<p>No ranked market-making signals available.</p>")
+        signal_items.append("<p>No ranked market-making scores available.</p>")
     else:
         items = []
         for _, row in scored.head(3).iterrows():
             items.append(f"<li><strong>{escape(str(row['item_name']))}</strong>: {escape(_signal_summary(row, include_score=True))}</li>")
-        signal_items.append("<h3>Liquidity plays</h3><ul>" + "".join(items) + "</ul>")
+        signal_items.append("<h3>Highest secondary scores</h3><ul>" + "".join(items) + "</ul>")
 
     momentum = df[df["momentum_7d_pct"].notna()].copy()
     if not momentum.empty:
@@ -281,7 +342,7 @@ def generate_html_report(
 
     blocks.append(
         """    <section>
-      <h2>Day Trade Signals</h2>
+      <h2>Trend Highlights</h2>
       <div class="panel">""" + "\n".join(signal_items) + """</div>
     </section>"""
     )
@@ -296,15 +357,15 @@ def generate_html_report(
           <ul>
             <li><strong>Good:</strong> high effective spread, high trades, low range.</li>
             <li><strong>Avoid:</strong> one-tick spreads, low trades, wide ranges.</li>
-            <li><strong>Use for:</strong> placing buy/sell orders where capital can rotate.</li>
+            <li><strong>Use for:</strong> secondary context after the history and trend fields.</li>
           </ul>
         </div>
         <div class="panel">
-          <h3>Swing signal</h3>
+          <h3>Tendency labels</h3>
           <ul>
-            <li><strong>Good:</strong> strong {escape(metric_window)} momentum with enough trades to exit.</li>
-            <li><strong>Risk:</strong> strong momentum with high {escape(metric_window)} range can mean a late or unstable move.</li>
-            <li><strong>Use for:</strong> trend scouting, not passive market making.</li>
+            <li><strong>Rising/Falling:</strong> close moved away from open and the rolling average confirms direction.</li>
+            <li><strong>Range-bound/Volatile:</strong> price range is narrow or wide relative to average price.</li>
+            <li><strong>Thin/Stable:</strong> volume and spread describe how easy the market may be to trade.</li>
           </ul>
         </div>
       </div>
@@ -335,13 +396,16 @@ def generate_html_report(
 
     blocks.append(
         f"""    <section>
-      <h2>Top Opportunities</h2>
+      <h2>Secondary Market-Making Score</h2>
       {top_opportunities}
     </section>"""
     )
 
-    swing_price_columns = ["bid", "ask", "current_price", "low_7d", "high_7d"]
-    swing_candidates = df[df[swing_price_columns].notna().any(axis=1)].copy()
+    swing_price_columns = [
+        column for column in ["bid", "ask", "current_price", "latest_price", "low_7d", "high_7d"]
+        if column in df.columns
+    ]
+    swing_candidates = df[df[swing_price_columns].notna().any(axis=1)].copy() if swing_price_columns else pd.DataFrame()
     if not swing_candidates.empty:
         trend = swing_candidates.copy()
         if not trend.empty:
@@ -353,15 +417,21 @@ def generate_html_report(
             ).head(trend_count)
             trend.insert(0, "rank", range(1, len(trend) + 1))
             trend["swing_read"] = trend.apply(_swing_read, axis=1)
-            trend_table = trend[[
-                "rank", "item_name", "ask", "bid", "current_price", "low_7d", "high_7d",
-                "momentum_7d_pct", "trades_7d", "swing_read"
-            ]].rename(columns={
+            last_col = _column(trend, "current_price", "latest_price")
+            columns = [
+                column for column in [
+                    "rank", "item_name", "ask", "bid", last_col, "low_7d", "high_7d",
+                    "momentum_7d_pct", "trades_7d", "swing_read"
+                ]
+                if column and column in trend.columns
+            ]
+            trend_table = trend[columns].rename(columns={
                 "rank": "Rank",
                 "item_name": "Item",
                 "ask": "Buy Ask",
                 "bid": "Sell Bid",
                 "current_price": "Last",
+                "latest_price": "Last",
                 "low_7d": f"{metric_window} Low",
                 "high_7d": f"{metric_window} High",
                 "momentum_7d_pct": f"{metric_window} Momentum %",
@@ -370,8 +440,8 @@ def generate_html_report(
             })
             blocks.append(
                 f"""    <section>
-      <h2>Swing Trading Lens</h2>
-      <p class="muted">Price-first view for deciding what to ask, what to bid, and whether the item is getting more expensive.</p>
+      <h2>Price Evolution Lens</h2>
+      <p class="muted">Price-first view of bid, ask, last price, range, change, and trade count.</p>
       {_table_html(trend_table)}
     </section>"""
             )
@@ -421,9 +491,11 @@ def write_outputs(
 ) -> tuple[Path, Path]:
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
-    csv_path = out / "market_scores.csv"
+    trends_csv_path = out / "market_trends.csv"
+    scores_csv_path = out / "market_scores.csv"
     html_path = out / "market_report.html"
-    df.to_csv(csv_path, index=False)
+    df.to_csv(trends_csv_path, index=False)
+    df.to_csv(scores_csv_path, index=False)
     html_path.write_text(
         generate_html_report(
             df,
@@ -435,4 +507,4 @@ def write_outputs(
         ),
         encoding="utf-8",
     )
-    return csv_path, html_path
+    return trends_csv_path, html_path

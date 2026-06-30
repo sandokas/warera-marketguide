@@ -1,5 +1,23 @@
 # Agent Instructions
 
+## Environment and Tests
+
+Use the existing project virtual environment at `.venv` when it is present. Do not recreate it just to run commands.
+
+Preferred test command:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m pytest
+```
+
+For a focused test file:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m pytest tests/test_market_store.py
+```
+
+If `.venv` is missing, follow the setup instructions in `README.md`.
+
 ## Architecture Boundaries
 
 Keep the market database architecture layered. Do not duplicate API, database, parsing, query, or report-construction logic across modules.

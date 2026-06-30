@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 import logging
 import os
 from pathlib import Path
@@ -15,25 +16,12 @@ logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
 import mplfinance as mpf
 import pandas as pd
 
-from .live_market import _display_name, _parse_time, _price_from_transaction, _trpc_data
-
-
-def _transactions_from_pages(pages: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
-    transactions: list[dict[str, Any]] = []
-    for page in pages:
-        data = _trpc_data(page)
-        if isinstance(data, dict):
-            items = data.get("items", [])
-            if isinstance(items, list):
-                transactions.extend(item for item in items if isinstance(item, dict))
-    return transactions
-
 
 def _transaction_frame(transactions: Iterable[dict[str, Any]]) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for transaction in transactions:
-        created_at = _parse_time(transaction.get("createdAt"))
-        price = _price_from_transaction(transaction)
+        created_at = _parse_chart_time(transaction.get("created_at"))
+        price = _optional_float(transaction.get("price"))
         if created_at is None or price is None:
             continue
         quantity = transaction.get("quantity")
@@ -51,6 +39,23 @@ def _transaction_frame(transactions: Iterable[dict[str, Any]]) -> pd.DataFrame:
     return df.set_index("created_at")
 
 
+def _spread_frame(spread_observations: Iterable[dict[str, Any]]) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for observation in spread_observations:
+        observed_at = _parse_chart_time(observation.get("observed_at"))
+        spread = _optional_float(observation.get("spread"))
+        if observed_at is None or spread is None:
+            continue
+        rows.append({"observed_at": observed_at, "spread": max(spread, 0.0)})
+
+    if not rows:
+        return pd.DataFrame(columns=["spread"])
+
+    df = pd.DataFrame(rows).sort_values("observed_at")
+    df["observed_at"] = pd.to_datetime(df["observed_at"], utc=True).dt.tz_convert(None)
+    return df.set_index("observed_at")
+
+
 def build_ohlc(transactions: Iterable[dict[str, Any]], *, interval: str = "15min") -> pd.DataFrame:
     trades = _transaction_frame(transactions)
     if trades.empty:
@@ -66,6 +71,45 @@ def build_ohlc(transactions: Iterable[dict[str, Any]], *, interval: str = "15min
         candles.loc[flat, "High"] = candles.loc[flat, "High"] + padding
         candles.loc[flat, "Low"] = (candles.loc[flat, "Low"] - padding).clip(lower=0)
     return candles
+
+
+def normalize_ohlc(candles: pd.DataFrame) -> pd.DataFrame:
+    if candles.empty:
+        return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
+
+    column_map = {
+        "open": "Open",
+        "high": "High",
+        "low": "Low",
+        "close": "Close",
+        "volume": "Volume",
+    }
+    normalized = candles.rename(columns={key: value for key, value in column_map.items() if key in candles.columns})
+    required = ["Open", "High", "Low", "Close"]
+    missing = [column for column in required if column not in normalized.columns]
+    if missing:
+        raise ValueError(f"OHLC candles are missing required column(s): {', '.join(missing)}.")
+
+    normalized = normalized.copy()
+    if "Volume" not in normalized.columns:
+        normalized["Volume"] = 0.0
+    normalized = normalized[["Open", "High", "Low", "Close", "Volume"]]
+    normalized.index = pd.to_datetime(normalized.index, utc=True, errors="coerce").tz_convert(None)
+    return normalized.dropna(subset=["Open", "High", "Low", "Close"]).sort_index()
+
+
+def build_spread_series(
+    spread_observations: Iterable[dict[str, Any]],
+    *,
+    candle_index: pd.DatetimeIndex,
+    interval: str = "15min",
+) -> pd.Series:
+    spreads = _spread_frame(spread_observations)
+    if spreads.empty or candle_index.empty:
+        return pd.Series(index=candle_index, dtype="float64", name="Spread")
+
+    series = spreads["spread"].resample(interval).mean().reindex(candle_index).ffill()
+    return series.rename("Spread")
 
 
 def moving_average_breaks(candles: pd.DataFrame, *, ma_window: int = 4) -> pd.DataFrame:
@@ -107,6 +151,8 @@ def plot_price_chart(
     interval: str = "15min",
     ma_window: int = 4,
     show_moving_average: bool = True,
+    show_min_max_band: bool = True,
+    spread: pd.Series | None = None,
     min_range_pct: float = 5.0,
 ) -> Path | None:
     if candles.empty:
@@ -114,6 +160,9 @@ def plot_price_chart(
 
     flags = moving_average_breaks(candles, ma_window=ma_window) if show_moving_average else candles.copy()
     add_plots = []
+    if show_min_max_band:
+        add_plots.append(mpf.make_addplot(flags["High"], color="#94a3b8", width=0.8, linestyle="--"))
+        add_plots.append(mpf.make_addplot(flags["Low"], color="#94a3b8", width=0.8, linestyle="--"))
     if show_moving_average:
         up_markers = flags["Close"].where(flags["Break Up"])
         down_markers = flags["Close"].where(flags["Break Down"])
@@ -123,6 +172,17 @@ def plot_price_chart(
             add_plots.append(mpf.make_addplot(up_markers, type="scatter", marker="^", markersize=90, color="#16a34a"))
         if down_markers.notna().any():
             add_plots.append(mpf.make_addplot(down_markers, type="scatter", marker="v", markersize=90, color="#dc2626"))
+    if spread is not None and not spread.empty and spread.notna().any():
+        aligned_spread = spread.reindex(flags.index).ffill()
+        add_plots.append(
+            mpf.make_addplot(
+                aligned_spread,
+                panel=2,
+                color="#7c3aed",
+                width=1,
+                ylabel="Spread",
+            )
+        )
 
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -156,6 +216,56 @@ def plot_price_chart(
     return output
 
 
+def render_featured_chart(
+    chart_data: Mapping[str, Any] | pd.DataFrame | Iterable[dict[str, Any]],
+    output_path: str | Path,
+    *,
+    item_name: str,
+    interval: str = "15min",
+    ma_window: int = 4,
+    show_moving_average: bool = True,
+    show_spread: bool = True,
+    min_range_pct: float = 5.0,
+) -> Path | None:
+    candles: pd.DataFrame
+    spread = None
+
+    if isinstance(chart_data, pd.DataFrame):
+        candles = normalize_ohlc(chart_data)
+    elif isinstance(chart_data, Mapping):
+        raw_candles = chart_data.get("candles")
+        if isinstance(raw_candles, pd.DataFrame):
+            candles = normalize_ohlc(raw_candles)
+        else:
+            candles = build_ohlc(chart_data.get("trades", []), interval=interval)
+        if show_spread:
+            raw_spread = chart_data.get("spread")
+            if isinstance(raw_spread, pd.Series):
+                spread = raw_spread
+            else:
+                spread = build_spread_series(
+                    chart_data.get("spread_observations", []),
+                    candle_index=candles.index,
+                    interval=interval,
+                )
+    else:
+        candles = build_ohlc(chart_data, interval=interval)
+
+    if candles.empty:
+        return None
+
+    return plot_price_chart(
+        candles,
+        item_name=item_name,
+        output_path=output_path,
+        interval=interval,
+        ma_window=ma_window,
+        show_moving_average=show_moving_average,
+        spread=spread,
+        min_range_pct=min_range_pct,
+    )
+
+
 def featured_item_codes(df: pd.DataFrame) -> list[str]:
     if "item_code" not in df.columns:
         return []
@@ -167,44 +277,19 @@ def featured_item_codes(df: pd.DataFrame) -> list[str]:
     return [str(item_code) for item_code in candidates["item_code"].tolist()]
 
 
-def render_featured_snapshot_chart(
-    snapshot: dict[str, Any],
-    output_dir: str | Path,
-    *,
-    candidate_item_codes: Iterable[str] | None = None,
-    featured_item_code: str | None = None,
-    interval: str = "15min",
-    ma_window: int = 4,
-    show_moving_average: bool = True,
-    min_range_pct: float = 5.0,
-) -> Path | None:
-    transaction_snapshots = snapshot.get("transactions", {})
-    if not isinstance(transaction_snapshots, dict):
+def _parse_chart_time(value: Any) -> pd.Timestamp | None:
+    if not value:
         return None
+    parsed = pd.to_datetime(value, utc=True, errors="coerce")
+    if pd.isna(parsed):
+        return None
+    return parsed
 
-    selected = []
-    if featured_item_code:
-        selected.append(featured_item_code)
-    selected.extend(item_code for item_code in (candidate_item_codes or []) if item_code not in selected)
-    if not selected:
-        selected = list(transaction_snapshots)
 
-    out = Path(output_dir)
-    for item_code in selected:
-        pages = transaction_snapshots.get(item_code, [])
-        if not isinstance(pages, list):
-            continue
-        transactions = _transactions_from_pages(pages)
-        candles = build_ohlc(transactions, interval=interval)
-        chart_path = plot_price_chart(
-            candles,
-            item_name=f"Featured Trade: {_display_name(item_code)}",
-            output_path=out / "featured-trade.png",
-            interval=interval,
-            ma_window=ma_window,
-            show_moving_average=show_moving_average,
-            min_range_pct=min_range_pct,
-        )
-        if chart_path is not None:
-            return chart_path
-    return None
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None

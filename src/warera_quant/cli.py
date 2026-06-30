@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
 from .api_client import WarEraApiClient
-from .charts import featured_item_codes, render_featured_snapshot_chart
+from .charts import featured_item_codes, render_featured_chart
 from .csv_loader import load_market_csv
 from .json_loader import market_json_to_dataframe
-from .live_market import _display_name, fetch_live_market_rows, rows_from_market_snapshot
+from .market_data import load_chart_data, load_market_rows
+from .market_store import MarketStore
 from .metrics import calculate_metrics
-from .report import metrics_to_dataframe, write_outputs
+from .report import combine_market_rows_with_metrics, write_outputs
+from .sync import sync_market_data
+from .warera_api import WarEraMarketApi
 
 
 def _parse_param(value: str) -> tuple[str, str]:
@@ -27,8 +29,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generate a WarEra quantitative market report.")
     parser.add_argument("--csv", default="data/sample_market.csv", help="Input CSV with market fields.")
     parser.add_argument("--live", action="store_true", help="Fetch live WarEra market data from the API.")
-    parser.add_argument("--from-snapshot", help="Recalculate report from a saved market_snapshot.json without API calls.")
-    parser.add_argument("--api-endpoint", help="Fetch market data from this API endpoint instead of reading --csv.")
+    parser.add_argument(
+        "--market-db",
+        default="data/warera_market.sqlite3",
+        help="SQLite market database path used by --live sync.",
+    )
+    parser.add_argument(
+        "--transaction-backfill",
+        action="store_true",
+        help="With --live, ignore transaction high-water marks and backfill history while deduping.",
+    )
+    parser.add_argument("--api-endpoint", help="Fetch custom JSON records from this API endpoint instead of reading --csv.")
     parser.add_argument(
         "--api-param",
         action="append",
@@ -39,12 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--api-records-path",
-        help="Dot path to the list of market records inside the API JSON, such as data.items.",
-    )
-    parser.add_argument(
-        "--snapshot",
-        default="market_snapshot.json",
-        help="Filename for the raw API JSON snapshot inside --output when using --api-endpoint.",
+        help="Dot path to the list of records inside the custom API JSON, such as data.items.",
     )
     parser.add_argument("--order-limit", type=int, default=10, help="Top buy/sell orders per item in --live mode.")
     parser.add_argument(
@@ -77,7 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--charts",
         action="store_true",
-        help="Render stock-style price charts from live or saved transaction snapshots.",
+        help="Render stock-style price charts from DB-backed live market data.",
     )
     parser.add_argument("--chart-interval", default="15min", help="Chart candle interval, such as 15min or 1h.")
     parser.add_argument(
@@ -100,11 +106,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
     output_dir = Path(args.output)
-    snapshot = None
 
-    selected_sources = sum(bool(value) for value in (args.live, args.from_snapshot, args.api_endpoint))
+    selected_sources = sum(bool(value) for value in (args.live, args.api_endpoint))
     if selected_sources > 1:
-        raise SystemExit("Use only one of --live, --from-snapshot, or --api-endpoint.")
+        raise SystemExit("Use only one of --live or --api-endpoint.")
+    if args.transaction_backfill and not args.live:
+        raise SystemExit("--transaction-backfill requires --live.")
     if args.chart_ma_window < 1:
         raise SystemExit("--chart-ma-window must be at least 1.")
     if args.chart_min_range_pct < 0:
@@ -112,37 +119,38 @@ def main() -> None:
 
     if args.live:
         client = WarEraApiClient(min_interval_seconds=args.min_interval)
+        market_api = WarEraMarketApi(client)
         if not args.quiet:
             print(
                 f"Starting live report: lookback={args.lookback_days:g} day(s), "
                 f"history_pages={args.history_pages}, order_limit={args.order_limit}",
                 flush=True,
             )
-        rows, snapshot = fetch_live_market_rows(
-            client,
-            order_limit=args.order_limit,
-            history_pages=args.history_pages,
-            lookback_days=args.lookback_days,
-            exclude_item_codes=set(args.exclude_item_code),
-            progress=None if args.quiet else lambda message: print(message, flush=True),
-        )
-        output_dir.mkdir(parents=True, exist_ok=True)
-        snapshot_path = output_dir / args.snapshot
-        snapshot_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"Wrote {snapshot_path}")
-        df_in = market_json_to_dataframe(rows)
-    elif args.from_snapshot:
-        snapshot_path = Path(args.from_snapshot)
-        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
-        rows = rows_from_market_snapshot(snapshot, lookback_days=args.lookback_days)
+        with MarketStore(args.market_db) as store:
+            sync_result = sync_market_data(
+                market_api,
+                store,
+                order_limit=args.order_limit,
+                history_pages=args.history_pages,
+                transaction_backfill=args.transaction_backfill,
+                lookback_days=args.lookback_days,
+                exclude_item_codes=set(args.exclude_item_code),
+                progress=None if args.quiet else lambda message: print(message, flush=True),
+            )
+            rows = load_market_rows(store, lookback_days=args.lookback_days)
+        if not args.quiet:
+            print(
+                f"Synced {sync_result.prices_observed} price(s), "
+                f"{sync_result.order_books_observed} order book(s), "
+                f"{sync_result.pages_fetched} transaction page(s), "
+                f"{sync_result.transactions_inserted} new transaction(s) "
+                f"to {args.market_db}.",
+                flush=True,
+            )
         df_in = market_json_to_dataframe(rows)
     elif args.api_endpoint:
         client = WarEraApiClient(min_interval_seconds=args.min_interval)
         data = client.get_json(args.api_endpoint, params=dict(args.api_param))
-        output_dir.mkdir(parents=True, exist_ok=True)
-        snapshot_path = output_dir / args.snapshot
-        snapshot_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"Wrote {snapshot_path}")
         df_in = market_json_to_dataframe(data, records_path=args.api_records_path)
     else:
         df_in = load_market_csv(args.csv)
@@ -154,26 +162,41 @@ def main() -> None:
         metrics.append(calculate_metrics(metric_input))
     if args.live and not args.quiet:
         print(f"Calculated metrics for {len(metrics)} goods.", flush=True)
-    df_out = metrics_to_dataframe(metrics)
-    metric_window = f"{args.lookback_days:g}D" if args.live or args.from_snapshot else "7D"
+    df_out = combine_market_rows_with_metrics(df_in, metrics)
+    metric_window = f"{args.lookback_days:g}D" if args.live else "7D"
     chart_path = None
     chart_label = None
     chart_candidates = featured_item_codes(df_out)
     if args.charts:
-        if snapshot is None:
-            print("Skipped charts: charts require --live or --from-snapshot transaction data.")
+        if not args.live:
+            print("Skipped charts: charts require DB-backed --live market data.")
         else:
-            chart_label = _display_name(args.featured_item_code or chart_candidates[0]) if (args.featured_item_code or chart_candidates) else None
-            chart_path = render_featured_snapshot_chart(
-                snapshot,
-                output_dir / "charts",
-                candidate_item_codes=chart_candidates,
-                featured_item_code=args.featured_item_code,
-                interval=args.chart_interval,
-                ma_window=args.chart_ma_window,
-                show_moving_average=args.lookback_days > 1,
-                min_range_pct=args.chart_min_range_pct,
+            selected_chart_items = []
+            if args.featured_item_code:
+                selected_chart_items.append(args.featured_item_code)
+            selected_chart_items.extend(
+                item_code for item_code in chart_candidates if item_code not in selected_chart_items
             )
+            with MarketStore(args.market_db) as store:
+                for item_code in selected_chart_items:
+                    label_rows = df_out[df_out["item_code"] == item_code] if "item_code" in df_out.columns else []
+                    chart_label = (
+                        str(label_rows.iloc[0]["item_name"])
+                        if len(label_rows) and "item_name" in df_out.columns
+                        else item_code
+                    )
+                    chart_data = load_chart_data(store, item_code=item_code, window=metric_window)
+                    chart_path = render_featured_chart(
+                        chart_data,
+                        output_dir / "charts" / "featured-trade.png",
+                        item_name=f"Featured Trade: {chart_label}",
+                        interval=args.chart_interval,
+                        ma_window=args.chart_ma_window,
+                        show_moving_average=args.lookback_days > 1,
+                        min_range_pct=args.chart_min_range_pct,
+                    )
+                    if chart_path is not None:
+                        break
             if chart_path is None:
                 print("Skipped featured chart: no item had enough transaction candles.")
                 chart_label = None

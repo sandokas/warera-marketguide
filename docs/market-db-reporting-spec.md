@@ -80,7 +80,7 @@ If later API inspection shows collisions are possible, add the required discrimi
 
 ### `price_observations`
 
-Stores the current price returned by `itemTrading.getPrices` each time the sync runs.
+Stores the current price returned by the WarEra market price endpoint each time the sync runs.
 
 ```sql
 create table if not exists price_observations (
@@ -256,7 +256,7 @@ Default behavior when `--live --market-db` is enabled.
 For each item:
 
 1. Read `item_sync_state.newest_created_at_epoch`.
-2. Fetch `transaction.getPaginatedTransactions` from the first page.
+2. Fetch transaction pages from the first page.
 3. Insert each returned transaction with `insert or ignore`.
 4. Continue fetching pages until one of these conditions is met:
    - no `nextCursor` is returned;
@@ -330,15 +330,16 @@ WarEra API
 
 Raw API responses are parsed at the API boundary. They should not be persisted as JSON or passed between normal application layers.
 
-### Current Structure Gap
-
-The current code is partially separated:
+### Current Structure
 
 - `api_client.py` owns generic HTTP calls and authentication.
-- `live_market.py` currently mixes WarEra endpoint calls, pagination, response parsing, metric-row assembly, and snapshot construction.
-- `metrics.py`, `charts.py`, and `report.py` are already closer to single-purpose modules.
+- `warera_api.py` owns WarEra market endpoint names and response parsing.
+- `sync.py` orchestrates API-to-database sync.
+- `market_store.py` owns SQLite access.
+- `market_data.py` owns report and chart read models.
+- `metrics.py`, `charts.py`, and `report.py` own calculations and output rendering.
 
-The database architecture should tighten these boundaries. New code should not add direct SQL calls, direct `requests` calls, or endpoint-specific parsing outside the layers listed below.
+New code should not add direct SQL calls, direct `requests` calls, or endpoint-specific parsing outside the layers listed below.
 
 ### Dependency Rules
 
@@ -375,7 +376,7 @@ These rules are meant to prevent duplicated parsing/query logic and keep bugs fr
 
 ### API Gateway Layer
 
-Add `src/warera_quant/warera_api.py` as the only module that knows WarEra endpoint shapes.
+`src/warera_quant/warera_api.py` is the only module that knows WarEra market endpoint shapes.
 
 `api_client.py` should remain a low-level HTTP client:
 
@@ -401,7 +402,7 @@ class WarEraMarketApi:
 
 API gateway responsibilities:
 
-- know endpoint names such as `itemTrading.getPrices`, `tradingOrder.getTopOrders`, and `transaction.getPaginatedTransactions`;
+- know WarEra market endpoint names;
 - parse tRPC response wrappers;
 - normalize response fields into dataclasses or plain typed dictionaries;
 - own cursor handling data structures;
@@ -411,7 +412,7 @@ No other module should call `client.get_json()` directly for WarEra market data.
 
 ### Persistence Layer
 
-Add `src/warera_quant/market_store.py`.
+`src/warera_quant/market_store.py` owns persistence.
 
 Suggested public functions:
 
@@ -648,22 +649,8 @@ Add report tests:
 - ranks strongest risers, fallers, volatile items, stable/liquid items, and near-high/near-low items;
 - builds charts from database-backed trade and observation queries.
 
-## Rollout Plan
-
-1. Add `warera_api.py` and move endpoint-specific parsing out of `live_market.py`.
-2. Add `market_store.py` and tests.
-3. Add price and order-book observation persistence.
-4. Add `sync.py` for API-to-DB orchestration.
-5. Add `market_data.py` query functions and move report row construction behind them.
-6. Add trend/statistics functions for 1D, 7D, and 30D windows.
-7. Update report output to foreground price evolution, ranges, averages, tendencies, and volume.
-8. Update chart code to consume normalized trades or OHLC candles.
-9. Add incremental transaction fetch support behind `--market-db`.
-10. Make `--live` default to DB-backed sync after tests prove compatibility.
-11. Remove snapshot-centric README examples and document first-run, normal-run, repair/backfill, offline, and report-window examples.
-
 ## Open Questions
 
 - Confirm the exact upstream transaction id field name. Candidates are usually `id`, `transactionId`, or `_id`.
-- Confirm whether `transaction.getPaginatedTransactions` returns newest-first pages. The current code assumes this because it treats the last item in a page as the oldest.
+- Confirm whether transaction pages are returned newest-first. The current code assumes this because it treats the last item in a page as the oldest.
 - Confirm quantity fields in top buy/sell orders so `bid_depth` and `ask_depth` are computed correctly.

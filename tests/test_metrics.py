@@ -1,4 +1,4 @@
-from warera_quant.metrics import calculate_metrics
+from warera_quant.metrics import calculate_metrics, classify_tendency
 
 
 def test_calculate_metrics_basic():
@@ -33,3 +33,52 @@ def test_one_tick_spread_is_not_exploitable():
     assert m.spread_pct == 0
     assert m.trading_attractiveness is None
     assert m.status == "Insufficient score data"
+
+
+def test_classify_tendency_labels_market_behavior():
+    assert classify_tendency(
+        open_price=10,
+        close_price=13,
+        min_price=10,
+        max_price=13,
+        average_price=11.5,
+        rolling_average=11,
+        trade_count=12,
+        volume=40,
+        spread_pct=1,
+    ) == ["Rising", "Volatile"]
+
+    assert classify_tendency(
+        open_price=10,
+        close_price=9,
+        min_price=9,
+        max_price=10,
+        average_price=9.5,
+        rolling_average=9.8,
+        trade_count=12,
+        volume=40,
+        spread_pct=1,
+    ) == ["Falling"]
+
+    assert classify_tendency(
+        open_price=10,
+        close_price=10.1,
+        min_price=10,
+        max_price=10.2,
+        average_price=10.1,
+        rolling_average=10.1,
+        trade_count=8,
+        volume=50,
+        spread_pct=1,
+    ) == ["Range-bound", "Stable"]
+
+    assert "Thin" in classify_tendency(
+        open_price=10,
+        close_price=10,
+        min_price=10,
+        max_price=10,
+        average_price=10,
+        trade_count=1,
+        volume=1,
+        spread_pct=1,
+    )

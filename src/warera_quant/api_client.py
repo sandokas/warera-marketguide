@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import time
-from pathlib import Path
 from typing import Any
 
 import requests
@@ -54,12 +53,3 @@ class WarEraApiClient:
         self._last_request = time.monotonic()
         response.raise_for_status()
         return response.json()
-
-    def save_snapshot(self, endpoint: str, destination: str | Path, *, params: dict[str, Any] | None = None) -> Path:
-        import json
-
-        data = self.get_json(endpoint, params=params)
-        path = Path(destination)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        return path

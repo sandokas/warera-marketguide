@@ -2,13 +2,22 @@ from pathlib import Path
 
 import pandas as pd
 
-from warera_quant.charts import build_ohlc, chart_ylim, featured_item_codes, moving_average_breaks, plot_price_chart
+from warera_quant.charts import (
+    build_ohlc,
+    build_spread_series,
+    chart_ylim,
+    featured_item_codes,
+    moving_average_breaks,
+    normalize_ohlc,
+    plot_price_chart,
+    render_featured_chart,
+)
 
 
 def _trade(created_at: str, price: float, quantity: float = 1) -> dict:
     return {
-        "createdAt": created_at,
-        "money": price * quantity,
+        "created_at": created_at,
+        "price": price,
         "quantity": quantity,
     }
 
@@ -75,6 +84,93 @@ def test_daily_chart_can_render_without_moving_average(tmp_path: Path):
     assert output.exists()
 
 
+def test_chart_can_render_with_spread_line(tmp_path: Path):
+    output = render_featured_chart(
+        {
+            "trades": [
+                _trade("2026-06-27T10:00:00Z", 10, quantity=2),
+                _trade("2026-06-27T10:15:00Z", 11, quantity=3),
+            ],
+            "spread_observations": [
+                {"observed_at": "2026-06-27T10:00:00Z", "spread": 0.5},
+                {"observed_at": "2026-06-27T10:15:00Z", "spread": 0.25},
+            ],
+        },
+        tmp_path / "featured-trade.png",
+        item_name="Featured Trade: Bread",
+        show_moving_average=False,
+    )
+
+    assert output == tmp_path / "featured-trade.png"
+    assert output.exists()
+
+
+def test_chart_can_render_from_normalized_trades(tmp_path: Path):
+    output = render_featured_chart(
+        [
+            _trade("2026-06-27T10:00:00Z", 10, quantity=2),
+            _trade("2026-06-27T10:15:00Z", 11, quantity=3),
+        ],
+        tmp_path / "featured-trade.png",
+        item_name="Featured Trade: Bread",
+        show_moving_average=False,
+    )
+
+    assert output == tmp_path / "featured-trade.png"
+    assert output.exists()
+
+
+def test_chart_can_render_from_ohlc_candles(tmp_path: Path):
+    candles = pd.DataFrame(
+        [
+            {"open": 10, "high": 12, "low": 9, "close": 11, "volume": 5},
+            {"open": 11, "high": 13, "low": 10, "close": 12, "volume": 7},
+        ],
+        index=pd.to_datetime(["2026-06-27T10:00:00Z", "2026-06-27T10:15:00Z"]),
+    )
+
+    output = render_featured_chart(
+        candles,
+        tmp_path / "featured-trade.png",
+        item_name="Featured Trade: Bread",
+        show_moving_average=False,
+    )
+
+    assert output == tmp_path / "featured-trade.png"
+    assert output.exists()
+
+
+def test_normalize_ohlc_accepts_lowercase_candle_columns():
+    candles = pd.DataFrame(
+        [{"open": 10, "high": 12, "low": 9, "close": 11, "volume": 5}],
+        index=pd.to_datetime(["2026-06-27T10:00:00Z"]),
+    )
+
+    normalized = normalize_ohlc(candles)
+
+    assert normalized.columns.tolist() == ["Open", "High", "Low", "Close", "Volume"]
+    assert normalized.iloc[0]["Open"] == 10
+    assert normalized.index.tz is None
+
+
+def test_build_spread_series_aligns_observations_to_candles():
+    candles = build_ohlc(
+        [
+            _trade("2026-06-27T10:00:00Z", 10),
+            _trade("2026-06-27T10:15:00Z", 11),
+        ],
+        interval="15min",
+    )
+
+    spread = build_spread_series(
+        [{"observed_at": "2026-06-27T10:00:00Z", "spread": 0.5}],
+        candle_index=candles.index,
+        interval="15min",
+    )
+
+    assert spread.tolist() == [0.5, 0.5]
+
+
 def test_chart_ylim_uses_minimum_visible_range():
     candles = pd.DataFrame([
         {"Open": 36.30, "High": 36.475, "Low": 36.30, "Close": 36.40, "Volume": 10},
@@ -85,3 +181,10 @@ def test_chart_ylim_uses_minimum_visible_range():
     assert upper - lower > 1.8
     assert lower < 36.0
     assert upper > 36.7
+
+
+def test_charts_do_not_import_api_or_db_modules():
+    source = (Path(__file__).parents[1] / "src" / "warera_quant" / "charts.py").read_text(encoding="utf-8")
+
+    forbidden = ["live_market", "warera_api", "api_client", "MarketStore", "sqlite3", "requests"]
+    assert [name for name in forbidden if name in source] == []
