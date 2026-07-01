@@ -129,10 +129,19 @@ def test_report_foregrounds_market_trends_and_writes_compatibility_csv(tmp_path)
     assert "liquidity-fill" in report
     assert ">748.5B<" in report
     assert 'title="748508664657"' in report
-    assert 'class="col-spread-pct"' in report
+    assert 'class="col-spread-pct number"' in report
+    assert 'class="col-now number"' in report
+    assert "th:nth-child(2), td:nth-child(2)" not in report
+    assert "th:nth-last-child(2), td:nth-last-child(2)" not in report
+    assert "align-right" not in report
+    assert ".compact-table .report-table" in report
+    assert "width: max-content" in report
+    assert ".compact-table td.number" in report
+    assert "font-variant-numeric: tabular-nums" in report
+    assert "min-width: 220px" in report
     assert "grid-template-columns: minmax(72px, 1fr) 48px" in report
     assert "min-width: 188px" in report
-    assert ".compact-table .col-7d-trades" in report
+    assert 'class="col-7d-trades number"' in report
     assert "Market-Making Score" not in report
 
 

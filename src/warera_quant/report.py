@@ -11,13 +11,6 @@ import pandas as pd
 from .metrics import MarketMetrics
 
 
-def metrics_to_dataframe(metrics: Iterable[MarketMetrics]) -> pd.DataFrame:
-    df = pd.DataFrame([asdict(m) for m in metrics])
-    if "trading_attractiveness" in df.columns:
-        df = df.sort_values("trading_attractiveness", ascending=False, na_position="last")
-    return df
-
-
 def combine_market_rows_with_metrics(source: pd.DataFrame, metrics: Iterable[MarketMetrics]) -> pd.DataFrame:
     df = source.reset_index(drop=True).copy()
     metric_df = pd.DataFrame([asdict(m) for m in metrics])
@@ -501,20 +494,8 @@ def _html_page(title: str, body: str) -> str:
       white-space: normal;
     }}
     td {{
-      max-width: 180px;
-    }}
-    td:nth-child(1), td:nth-child(2) {{
       max-width: 220px;
     }}
-    th:nth-child(1), td:nth-child(1),
-    th:nth-child(2), td:nth-child(2),
-    th:nth-last-child(1), td:nth-last-child(1),
-    th:nth-last-child(2), td:nth-last-child(2) {{
-      text-align: left;
-    }}
-    th:first-child, td:first-child,
-    th:nth-child(2), td:nth-child(2),
-    td:last-child {{ text-align: left; }}
     tr:last-child td {{ border-bottom: 0; }}
     th {{
       background: #172a45;
@@ -522,46 +503,38 @@ def _html_page(title: str, body: str) -> str:
       font-weight: 650;
     }}
     .table-wrap {{ overflow-x: auto; }}
+    .compact-table .report-table {{
+      width: max-content;
+    }}
     .compact-table th, .compact-table td {{
       font-size: 0.88rem;
       max-width: none;
       white-space: nowrap;
     }}
-    .signal-table th:first-child,
-    .signal-table td:first-child,
-    .signal-table th:last-child,
-    .signal-table td:last-child,
-    .trend-table th:first-child,
-    .trend-table td:first-child,
-    .trend-table th:nth-child(2),
-    .trend-table td:nth-child(2),
-    .trend-table th:last-child,
-    .trend-table td:last-child {{
+    .compact-table th.number,
+    .compact-table td.number {{
+      width: 1%;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }}
+    .compact-table .col-commodity,
+    .compact-table .col-item,
+    .compact-table .col-notes,
+    .compact-table .col-read,
+    .compact-table .col-market-state {{
+      text-align: left;
       white-space: normal;
     }}
-    .signal-table th:nth-child(n+2):nth-child(-n+10),
-    .signal-table td:nth-child(n+2):nth-child(-n+10),
-    .trend-table th:nth-child(n+3):nth-child(-n+9),
-    .trend-table td:nth-child(n+3):nth-child(-n+9) {{
-      width: 1%;
-    }}
-    .signal-table td:first-child,
-    .trend-table td:nth-child(2) {{
+    .compact-table .col-commodity,
+    .compact-table .col-item {{
       min-width: 120px;
       max-width: 200px;
     }}
-    .signal-table td:last-child,
-    .trend-table td:last-child {{
-      min-width: 150px;
-      max-width: 260px;
-    }}
-    .compact-table .col-7d-trades,
-    .compact-table .col-7d-momentum-pct,
-    .compact-table .col-change-pct,
-    .compact-table .col-volume,
-    .compact-table .col-liquidity,
-    .compact-table .col-spread-pct {{
-      text-align: right;
+    .compact-table .col-notes,
+    .compact-table .col-read,
+    .compact-table .col-market-state {{
+      min-width: 220px;
+      max-width: 340px;
     }}
     .compact-table .col-liquidity {{
       width: 188px;
@@ -611,28 +584,17 @@ def _html_page(title: str, body: str) -> str:
 """
 
 
-def _table_html(df: pd.DataFrame) -> str:
-    table = df.to_html(
-        index=False,
-        escape=True,
-        border=0,
-        classes="report-table",
-        float_format=lambda value: f"{value:.3f}",
-    )
-    return '<div class="table-wrap">' + table + "</div>"
-
-
 def _compact_table_html(df: pd.DataFrame, *, table_kind: str = "trend") -> str:
     kind_class = "signal-table" if table_kind == "signal" else "trend-table"
     max_liquidity = _max_numeric(df["Liquidity"]) if "Liquidity" in df.columns else None
     header = "".join(
-        f'<th class="{_column_css_class(column)}">{escape(str(column))}</th>'
+        f'<th class="{_column_classes(column)}">{escape(str(column))}</th>'
         for column in df.columns
     )
     body_rows = []
     for _, row in df.iterrows():
         cells = "".join(
-            f'<td class="{_column_css_class(column)}">'
+            f'<td class="{_column_classes(column)}">'
             f"{_render_table_cell(column, row[column], max_liquidity=max_liquidity)}</td>"
             for column in df.columns
         )
@@ -651,6 +613,28 @@ def _column_css_class(column: str) -> str:
     slug = "".join(character.lower() if character.isalnum() else "-" for character in label)
     slug = "-".join(part for part in slug.split("-") if part)
     return f"col-{slug or 'value'}"
+
+
+def _column_classes(column: str) -> str:
+    classes = [_column_css_class(column)]
+    if _is_number_column(column):
+        classes.append("number")
+    return " ".join(classes)
+
+
+def _is_number_column(column: str) -> bool:
+    label = str(column).lower()
+    return (
+        label in {"now", "latest", "min", "max", "fair", "buy", "sell", "volume", "liquidity", "spread %"}
+        or label.endswith("trades")
+        or label.endswith("momentum %")
+        or label.endswith("low")
+        or label.endswith("high")
+        or "%" in label
+        or "ask" in label
+        or "bid" in label
+        or label == "last"
+    )
 
 
 def _render_table_cell(column: str, value: object, *, max_liquidity: float | None) -> str:
