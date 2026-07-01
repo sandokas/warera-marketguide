@@ -90,7 +90,7 @@ def test_report_foregrounds_market_trends_and_writes_compatibility_csv(tmp_path)
             "average_7d": 5.8,
             "vwap_7d": 5.9,
             "volume_7d": 100,
-            "liquidity_7d": 95,
+            "liquidity_7d": 748_508_664_657,
             "latest_spread_pct": 1.2,
             "tendency_labels_7d": "Rising, Volatile",
             "bid": 6.2,
@@ -115,6 +115,8 @@ def test_report_foregrounds_market_trends_and_writes_compatibility_csv(tmp_path)
     assert "Fair Prices And Tomorrow Bias" in report
     assert "What To Pay And What To Expect" in report
     assert "Market Trends" in report
+    assert ">Rank<" not in report
+    assert 'class="col-rank"' not in report
     assert "Rising" in report
     assert "Volatile" in report
     assert "5.900" in report
@@ -125,8 +127,12 @@ def test_report_foregrounds_market_trends_and_writes_compatibility_csv(tmp_path)
     assert "chip-hold" in report
     assert "signed-positive" in report
     assert "liquidity-fill" in report
+    assert ">748.5B<" in report
+    assert 'title="748508664657"' in report
+    assert 'class="col-spread-pct"' in report
     assert "grid-template-columns: minmax(72px, 1fr) 48px" in report
     assert "min-width: 188px" in report
+    assert ".compact-table .col-7d-trades" in report
     assert "Market-Making Score" not in report
 
 

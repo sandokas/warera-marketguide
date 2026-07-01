@@ -38,6 +38,15 @@ def _fmt(value: object, decimals: int = 3) -> str:
     return str(value)
 
 
+def _fmt_compact(value: float) -> str:
+    abs_value = abs(value)
+    for threshold, suffix in ((1_000_000_000, "B"), (1_000_000, "M"), (1_000, "K")):
+        if abs_value >= threshold:
+            compact = value / threshold
+            return f"{compact:.1f}{suffix}"
+    return _fmt(value, 0)
+
+
 def _number(value: object) -> float | None:
     if value is None or pd.isna(value):
         return None
@@ -546,6 +555,14 @@ def _html_page(title: str, body: str) -> str:
       min-width: 150px;
       max-width: 260px;
     }}
+    .compact-table .col-7d-trades,
+    .compact-table .col-7d-momentum-pct,
+    .compact-table .col-change-pct,
+    .compact-table .col-volume,
+    .compact-table .col-liquidity,
+    .compact-table .col-spread-pct {{
+      text-align: right;
+    }}
     .compact-table .col-liquidity {{
       width: 188px;
       min-width: 188px;
@@ -630,7 +647,8 @@ def _compact_table_html(df: pd.DataFrame, *, table_kind: str = "trend") -> str:
 
 
 def _column_css_class(column: str) -> str:
-    slug = "".join(character.lower() if character.isalnum() else "-" for character in str(column))
+    label = str(column).replace("%", " pct ")
+    slug = "".join(character.lower() if character.isalnum() else "-" for character in label)
     slug = "-".join(part for part in slug.split("-") if part)
     return f"col-{slug or 'value'}"
 
@@ -752,7 +770,7 @@ def _liquidity_bar(value: object, *, max_liquidity: float | None) -> str:
         '<div class="liquidity-track">'
         f'<div class="liquidity-fill" style="width: {width:.1f}%"></div>'
         '</div>'
-        f'<span class="liquidity-value">{escape(_fmt(number, 0))}</span>'
+        f'<span class="liquidity-value" title="{escape(_fmt(number, 0))}">{escape(_fmt_compact(number))}</span>'
         '</div>'
     )
 
@@ -943,9 +961,7 @@ def generate_html_report(
         if sort_cols:
             trend_candidates = trend_candidates.sort_values(sort_cols, ascending=False, na_position="last")
         view = trend_candidates.head(swing_count).copy()
-        view.insert(0, "rank", range(1, len(view) + 1))
         table_columns: list[tuple[str, str]] = [
-            ("rank", "Rank"),
             ("item_name", "Item"),
             (_column(df, "latest_price", "current_price") or "", "Latest"),
             (change_col or "", "Change %"),
@@ -1051,18 +1067,16 @@ def generate_html_report(
                 ascending=[False, False],
                 na_position="last",
             ).head(trend_count)
-            trend.insert(0, "rank", range(1, len(trend) + 1))
             trend["swing_read"] = trend.apply(_swing_read, axis=1)
             last_col = _column(trend, "current_price", "latest_price")
             columns = [
                 column for column in [
-                    "rank", "item_name", "ask", "bid", last_col, "low_7d", "high_7d",
+                    "item_name", "ask", "bid", last_col, "low_7d", "high_7d",
                     "momentum_7d_pct", "trades_7d", "swing_read"
                 ]
                 if column and column in trend.columns
             ]
             trend_table = trend[columns].rename(columns={
-                "rank": "Rank",
                 "item_name": "Item",
                 "ask": "Buy Ask",
                 "bid": "Sell Bid",
