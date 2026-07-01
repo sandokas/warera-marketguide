@@ -63,6 +63,8 @@ def _fair_price(row: pd.Series, window_key: str) -> float | None:
     midpoint = (bid + ask) / 2 if bid is not None and ask is not None else None
     return _first_number(
         row,
+        f"stable_fair_price_{window_key}",
+        "stable_fair_price_7d",
         f"vwap_{window_key}",
         f"average_{window_key}",
         f"rolling_average_{window_key}",
@@ -78,10 +80,14 @@ def _fair_price_band(row: pd.Series, window_key: str) -> tuple[float | None, flo
         return None, None, None
 
     spread = _first_number(row, "latest_spread", "spread")
+    stable_range_pct = _first_number(row, f"stable_range_pct_{window_key}", "stable_range_pct_7d")
+    volatility_band = fair * stable_range_pct / 100 * 0.35 if stable_range_pct is not None else None
     if spread is not None and spread > 0:
         half_band = spread / 2
     else:
         half_band = max(fair * 0.01, 0.001)
+    if volatility_band is not None:
+        half_band = max(half_band, volatility_band)
     return fair, max(0.0, fair - half_band), fair + half_band
 
 
@@ -95,17 +101,44 @@ def _price_gap_pct(latest: float | None, fair: float | None) -> float | None:
     return (latest - fair) / fair * 100
 
 
+def _market_quality(row: pd.Series, window_key: str) -> tuple[str, list[str]]:
+    trades = _first_number(row, f"trade_count_{window_key}", "trades_7d") or 0.0
+    volume = _first_number(row, f"volume_{window_key}", f"traded_quantity_{window_key}") or 0.0
+    stable_range_pct = _first_number(row, f"stable_range_pct_{window_key}", "stable_range_pct_7d")
+    spread_pct = _first_number(row, "latest_spread_pct", f"average_spread_pct_{window_key}", "spread_pct")
+    reasons: list[str] = []
+    if trades < 3 or volume <= 0:
+        reasons.append("few trades")
+    if spread_pct is not None and spread_pct >= 8:
+        reasons.append("wide bid/ask gap")
+    if stable_range_pct is not None and stable_range_pct >= 18:
+        reasons.append("price swings are large")
+
+    if trades >= 10 and volume > 0 and (spread_pct is None or spread_pct <= 4) and (
+        stable_range_pct is None or stable_range_pct <= 12
+    ):
+        return "strong", reasons
+    if trades >= 3 and volume > 0 and (stable_range_pct is None or stable_range_pct <= 18):
+        return "usable", reasons
+    return "weak", reasons
+
+
 def _plain_action(
     latest: float | None,
     buy_below: float | None,
     sell_above: float | None,
     fair: float | None,
+    quality: str = "usable",
 ) -> str:
     if latest is None or buy_below is None or sell_above is None or fair is None:
         return "Check live market"
     if latest <= buy_below:
+        if quality == "weak":
+            return "Possible buy; confirm depth"
         return "Good buy zone"
     if latest >= sell_above:
+        if quality == "weak":
+            return "Possible sell; confirm bids"
         return "Good sell zone"
     gap_pct = _price_gap_pct(latest, fair)
     if gap_pct is not None:
@@ -121,64 +154,95 @@ def _tomorrow_bias(row: pd.Series, window_key: str, fair: float | None) -> tuple
     gap_pct = _price_gap_pct(latest, fair)
     momentum = _first_number(row, f"percent_change_{window_key}", "momentum_7d_pct")
     trades = _first_number(row, f"trade_count_{window_key}", "trades_7d") or 0.0
-    range_pct = _first_number(row, f"range_pct_{window_key}", "range_pct") or 0.0
+    range_pct = _first_number(row, f"stable_range_pct_{window_key}", "stable_range_pct_7d", f"range_pct_{window_key}", "range_pct") or 0.0
+    spread_pct = _first_number(row, "latest_spread_pct", f"average_spread_pct_{window_key}", "spread_pct")
     tendency = str(row.get(f"tendency_labels_{window_key}") or row.get(f"tendency_{window_key}") or "")
+    quality, quality_reasons = _market_quality(row, window_key)
 
     score = 0
     reasons: list[str] = []
     if momentum is not None:
         if momentum >= 6:
             score += 2
-            reasons.append("strong recent rise")
+            reasons.append("price rose strongly")
         elif momentum >= 1:
             score += 1
-            reasons.append("recent rise")
+            reasons.append("price is rising")
         elif momentum <= -6:
             score -= 2
-            reasons.append("strong recent drop")
+            reasons.append("price fell strongly")
         elif momentum <= -1:
             score -= 1
-            reasons.append("recent drop")
+            reasons.append("price is falling")
 
     if gap_pct is not None:
         if gap_pct <= -2:
             score += 1
-            reasons.append("below fair price")
+            reasons.append("below fair value")
         elif gap_pct >= 2:
             score -= 1
-            reasons.append("above fair price")
+            reasons.append("above fair value")
 
     if "Rising" in tendency:
         score += 1
-        reasons.append("trend label rising")
+        reasons.append("history points up")
     elif "Falling" in tendency:
         score -= 1
-        reasons.append("trend label falling")
+        reasons.append("history points down")
 
     if score >= 1:
-        direction = "Likely up"
+        direction = "Up"
     elif score <= -1:
-        direction = "Likely down"
+        direction = "Down"
     else:
-        direction = "Sideways"
+        direction = "No clear move"
 
-    if trades >= 10 and abs(score) >= 2 and range_pct <= 12:
+    if quality == "strong" and abs(score) >= 2 and range_pct <= 12:
         confidence = "Medium"
-    elif trades >= 3 and abs(score) >= 1:
+    elif quality in {"strong", "usable"} and abs(score) >= 1:
         confidence = "Low-medium"
     else:
         confidence = "Low"
+    if spread_pct is not None and spread_pct >= 8 and confidence == "Medium":
+        confidence = "Low-medium"
 
     if not reasons:
-        reasons.append("not enough directional evidence")
-    return direction, confidence, ", ".join(reasons[:3])
+        reasons.append("no clear edge")
+    if quality == "weak":
+        reasons = [*quality_reasons, *reasons]
+    else:
+        reasons.extend(reason for reason in quality_reasons if reason not in reasons)
+    return direction, confidence, "; ".join(reasons[:2])
+
+
+def _trade_signal(
+    *,
+    latest: float | None,
+    buy_below: float | None,
+    sell_above: float | None,
+    expected_move: str,
+    quality: str,
+) -> str:
+    if latest is None or buy_below is None or sell_above is None:
+        return "Check market"
+    if quality == "weak":
+        return "Check depth"
+    if latest <= buy_below and expected_move != "Down":
+        return "Buy"
+    if latest >= sell_above and expected_move != "Up":
+        return "Sell"
+    if expected_move == "Up":
+        return "Hold"
+    if expected_move == "Down":
+        return "Wait"
+    return "Hold"
 
 
 def _signal_summary(row: pd.Series) -> str:
     parts = [
         f"momentum {_fmt(row.get('momentum_7d_pct'), 2)}%",
         f"trades {_fmt(row.get('trades_7d'), 0)}",
-        f"range {_fmt(row.get('range_pct'), 2)}%",
+        f"stable range {_fmt(row.get('stable_range_pct_7d', row.get('range_pct')), 2)}%",
         f"spread {_fmt(row.get('spread_pct'), 2)}%",
     ]
     return ", ".join(parts)
@@ -273,14 +337,34 @@ def _html_page(title: str, body: str) -> str:
     .summary-card {{
       background: var(--panel);
       border: 1px solid var(--line);
+      border-left: 4px solid var(--line);
       border-radius: 8px;
       padding: 14px;
     }}
+    .summary-card-up {{ border-left-color: var(--good); }}
+    .summary-card-down {{ border-left-color: var(--bad); }}
+    .summary-card-neutral {{ border-left-color: var(--amber); }}
     .summary-card strong {{
-      display: block;
+      display: flex;
+      align-items: center;
+      gap: 8px;
       font-size: 1.15rem;
     }}
     .summary-card span {{ color: var(--muted); }}
+    .summary-arrow {{
+      display: inline-grid;
+      place-items: center;
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      background: #1e293b;
+      color: var(--muted);
+      font-weight: 800;
+      flex: 0 0 auto;
+    }}
+    .summary-card-up .summary-arrow {{ background: var(--good-soft); color: var(--good); }}
+    .summary-card-down .summary-arrow {{ background: var(--bad-soft); color: var(--bad); }}
+    .summary-card-neutral .summary-arrow {{ background: var(--amber-soft); color: var(--amber); }}
     .pill {{
       display: inline-block;
       padding: 3px 8px;
@@ -292,6 +376,72 @@ def _html_page(title: str, body: str) -> str:
     .pill-up {{ background: var(--good-soft); color: var(--good); }}
     .pill-down {{ background: var(--bad-soft); color: var(--bad); }}
     .pill-flat {{ background: var(--amber-soft); color: var(--amber); }}
+    .chip {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      min-height: 24px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      font-size: 0.78rem;
+      font-weight: 750;
+      white-space: nowrap;
+    }}
+    .chip-buy, .chip-up, .chip-strong {{
+      color: var(--good);
+      background: rgba(15, 118, 110, 0.28);
+      border-color: rgba(110, 231, 183, 0.28);
+    }}
+    .chip-sell, .chip-down {{
+      color: var(--bad);
+      background: rgba(63, 31, 31, 0.72);
+      border-color: rgba(248, 113, 113, 0.28);
+    }}
+    .chip-wait, .chip-low, .chip-weak {{
+      color: var(--amber);
+      background: rgba(66, 49, 13, 0.72);
+      border-color: rgba(251, 191, 36, 0.28);
+    }}
+    .chip-hold, .chip-flat, .chip-usable, .chip-medium, .chip-low-medium {{
+      color: var(--accent);
+      background: rgba(21, 59, 87, 0.72);
+      border-color: rgba(125, 211, 252, 0.28);
+    }}
+    .chip-check {{
+      color: #cbd5e1;
+      background: rgba(71, 85, 105, 0.32);
+      border-color: rgba(148, 163, 184, 0.28);
+    }}
+    .signed-positive {{ color: var(--good); font-weight: 700; }}
+    .signed-negative {{ color: var(--bad); font-weight: 700; }}
+    .signed-neutral {{ color: var(--muted); }}
+    .liquidity-cell {{
+      display: grid;
+      grid-template-columns: 92px 48px;
+      align-items: center;
+      gap: 8px;
+      justify-content: end;
+      min-width: 148px;
+    }}
+    .liquidity-track {{
+      height: 7px;
+      width: 92px;
+      border-radius: 999px;
+      background: #1e293b;
+      overflow: hidden;
+    }}
+    .liquidity-fill {{
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--accent), var(--good));
+    }}
+    .liquidity-value {{
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }}
     ul {{ margin: 0; padding-left: 1.2rem; }}
     li + li {{ margin-top: 6px; }}
     code {{
@@ -315,7 +465,19 @@ def _html_page(title: str, body: str) -> str:
       border-bottom: 1px solid var(--line);
       text-align: right;
       vertical-align: top;
-      white-space: nowrap;
+      white-space: normal;
+    }}
+    td {{
+      max-width: 180px;
+    }}
+    td:nth-child(1), td:nth-child(2) {{
+      max-width: 220px;
+    }}
+    th:nth-child(1), td:nth-child(1),
+    th:nth-child(2), td:nth-child(2),
+    th:nth-last-child(1), td:nth-last-child(1),
+    th:nth-last-child(2), td:nth-last-child(2) {{
+      text-align: left;
     }}
     th:first-child, td:first-child,
     th:nth-child(2), td:nth-child(2),
@@ -327,6 +489,52 @@ def _html_page(title: str, body: str) -> str:
       font-weight: 650;
     }}
     .table-wrap {{ overflow-x: auto; }}
+    .compact-table th, .compact-table td {{
+      font-size: 0.88rem;
+      max-width: none;
+      white-space: nowrap;
+    }}
+    .signal-table th:first-child,
+    .signal-table td:first-child,
+    .signal-table th:last-child,
+    .signal-table td:last-child,
+    .trend-table th:first-child,
+    .trend-table td:first-child,
+    .trend-table th:nth-child(2),
+    .trend-table td:nth-child(2),
+    .trend-table th:last-child,
+    .trend-table td:last-child {{
+      white-space: normal;
+    }}
+    .signal-table th:nth-child(n+2):nth-child(-n+10),
+    .signal-table td:nth-child(n+2):nth-child(-n+10),
+    .trend-table th:nth-child(n+3):nth-child(-n+9),
+    .trend-table td:nth-child(n+3):nth-child(-n+9) {{
+      width: 1%;
+    }}
+    .signal-table td:first-child,
+    .trend-table td:nth-child(2) {{
+      min-width: 120px;
+      max-width: 200px;
+    }}
+    .signal-table td:last-child,
+    .trend-table td:last-child {{
+      min-width: 150px;
+      max-width: 260px;
+    }}
+    .compact-table .col-liquidity {{
+      width: 164px;
+      min-width: 164px;
+      max-width: 164px;
+    }}
+    .compact-table .col-spread-pct {{
+      width: 76px;
+      min-width: 76px;
+    }}
+    .compact-table .col-volume {{
+      width: 80px;
+      min-width: 80px;
+    }}
     .chart {{
       width: 100%;
       max-height: 720px;
@@ -373,6 +581,163 @@ def _table_html(df: pd.DataFrame) -> str:
     return '<div class="table-wrap">' + table + "</div>"
 
 
+def _compact_table_html(df: pd.DataFrame, *, table_kind: str = "trend") -> str:
+    kind_class = "signal-table" if table_kind == "signal" else "trend-table"
+    max_liquidity = _max_numeric(df["Liquidity"]) if "Liquidity" in df.columns else None
+    header = "".join(
+        f'<th class="{_column_css_class(column)}">{escape(str(column))}</th>'
+        for column in df.columns
+    )
+    body_rows = []
+    for _, row in df.iterrows():
+        cells = "".join(
+            f'<td class="{_column_css_class(column)}">'
+            f"{_render_table_cell(column, row[column], max_liquidity=max_liquidity)}</td>"
+            for column in df.columns
+        )
+        body_rows.append(f"<tr>{cells}</tr>")
+    table = (
+        '<table class="report-table">'
+        f"<thead><tr>{header}</tr></thead>"
+        f"<tbody>{''.join(body_rows)}</tbody>"
+        "</table>"
+    )
+    return f'<div class="table-wrap compact-table {kind_class}">{table}</div>'
+
+
+def _column_css_class(column: str) -> str:
+    slug = "".join(character.lower() if character.isalnum() else "-" for character in str(column))
+    slug = "-".join(part for part in slug.split("-") if part)
+    return f"col-{slug or 'value'}"
+
+
+def _render_table_cell(column: str, value: object, *, max_liquidity: float | None) -> str:
+    if column == "Signal":
+        return _chip(str(value), _signal_tone(value))
+    if column == "Expected Move":
+        return _chip(str(value), _move_tone(value), prefix=_move_arrow(value))
+    if column == "Trust":
+        return _chip(str(value), _trust_tone(value))
+    if column == "Market":
+        return _chip(str(value), _market_tone(value))
+    if column == "Market State":
+        return _market_state_chips(value)
+    if column == "Liquidity":
+        return _liquidity_bar(value, max_liquidity=max_liquidity)
+    if column in {"Gap %", "Change %"} or column.endswith("Momentum %"):
+        return _signed_number(value, invert=column == "Gap %")
+    return escape(_fmt(value))
+
+
+def _chip(label: str, tone: str, *, prefix: str | None = None) -> str:
+    safe_label = escape(label)
+    safe_prefix = f"<span>{prefix}</span>" if prefix else ""
+    return f'<span class="chip chip-{tone}">{safe_prefix}{safe_label}</span>'
+
+
+def _signal_tone(value: object) -> str:
+    normalized = str(value).strip().lower()
+    if normalized == "buy":
+        return "buy"
+    if normalized == "sell":
+        return "sell"
+    if normalized == "wait":
+        return "wait"
+    if normalized == "check depth" or normalized == "check market":
+        return "check"
+    return "hold"
+
+
+def _move_tone(value: object) -> str:
+    normalized = str(value).strip().lower()
+    if normalized == "up":
+        return "up"
+    if normalized == "down":
+        return "down"
+    return "flat"
+
+
+def _move_arrow(value: object) -> str:
+    normalized = str(value).strip().lower()
+    if normalized == "up":
+        return "&uarr;"
+    if normalized == "down":
+        return "&darr;"
+    return "&rarr;"
+
+
+def _summary_card_class(value: object) -> str:
+    tone = _move_tone(value)
+    if tone == "up":
+        return "summary-card-up"
+    if tone == "down":
+        return "summary-card-down"
+    return "summary-card-neutral"
+
+
+def _trust_tone(value: object) -> str:
+    return str(value).strip().lower().replace(" ", "-")
+
+
+def _market_tone(value: object) -> str:
+    return str(value).strip().lower()
+
+
+def _market_state_chips(value: object) -> str:
+    if value is None or pd.isna(value):
+        return escape(_fmt(value))
+    labels = [part.strip() for part in str(value).split(",") if part.strip()]
+    if not labels:
+        return "N/A"
+    return " ".join(_chip(label, _market_state_tone(label)) for label in labels)
+
+
+def _market_state_tone(label: str) -> str:
+    normalized = label.lower()
+    if normalized == "rising" or normalized == "stable":
+        return "up"
+    if normalized == "falling" or normalized == "volatile":
+        return "down"
+    if normalized == "thin":
+        return "weak"
+    return "flat"
+
+
+def _signed_number(value: object, *, invert: bool = False) -> str:
+    number = _number(value)
+    if number is None:
+        return escape(_fmt(value))
+    if abs(number) < 0.005:
+        css_class = "signed-neutral"
+    elif (number > 0 and not invert) or (number < 0 and invert):
+        css_class = "signed-positive"
+    else:
+        css_class = "signed-negative"
+    return f'<span class="{css_class}">{escape(_fmt(number))}</span>'
+
+
+def _liquidity_bar(value: object, *, max_liquidity: float | None) -> str:
+    number = _number(value)
+    if number is None:
+        return escape(_fmt(value))
+    width = 0.0
+    if max_liquidity is not None and max_liquidity > 0:
+        width = max(4.0, min(number / max_liquidity * 100, 100.0))
+    return (
+        '<div class="liquidity-cell">'
+        '<div class="liquidity-track">'
+        f'<div class="liquidity-fill" style="width: {width:.1f}%"></div>'
+        '</div>'
+        f'<span class="liquidity-value">{escape(_fmt(number, 0))}</span>'
+        '</div>'
+    )
+
+
+def _max_numeric(values: Iterable[object]) -> float | None:
+    numbers = [number for value in values if (number := _number(value)) is not None]
+    return max(numbers, default=None)
+
+
 def _relative_chart_path(chart_path: str | Path | None, output_dir: Path) -> str | None:
     if chart_path is None:
         return None
@@ -393,13 +758,13 @@ def _swing_read(row: pd.Series) -> str:
     has_trades = trades is not None and not pd.isna(trades) and trades > 0
 
     if has_momentum and momentum >= 2 and has_trades:
-        return "More expensive; sell into bids"
+        return "Price is high; consider selling"
     if has_momentum and momentum <= -2 and has_trades:
-        return "Cheaper; consider stockpiling"
+        return "Price is low; consider buying"
     if has_spread and spread >= 1 and has_trades:
         return "Wide bid/ask; use limit orders"
     if has_momentum:
-        return "Stable; buy near low, sell near high"
+        return "Quiet market; trade near the range edges"
     return "Check live order book"
 
 
@@ -450,6 +815,14 @@ def generate_html_report(
             latest = _latest_price(row)
             gap_pct = _price_gap_pct(latest, fair)
             direction, confidence, reason = _tomorrow_bias(row, window_key, fair)
+            quality, _ = _market_quality(row, window_key)
+            signal = _trade_signal(
+                latest=latest,
+                buy_below=buy_below,
+                sell_above=sell_above,
+                expected_move=direction,
+                quality=quality,
+            )
             fair_rows.append({
                 "item_name": row.get("item_name"),
                 "latest_price": latest,
@@ -457,10 +830,12 @@ def generate_html_report(
                 "buy_below": buy_below,
                 "sell_above": sell_above,
                 "gap_pct": gap_pct,
-                "action": _plain_action(latest, buy_below, sell_above, fair),
+                "signal": signal,
+                "action": _plain_action(latest, buy_below, sell_above, fair, quality),
                 "tomorrow_bias": direction,
                 "confidence": confidence,
                 "why": reason,
+                "market_quality": quality.title(),
                 "latest_bid": row.get("latest_bid", row.get("bid")),
                 "latest_ask": row.get("latest_ask", row.get("ask")),
                 "tendency": row.get(f"tendency_labels_{window_key}"),
@@ -471,18 +846,26 @@ def generate_html_report(
             summary_view = fair_view.copy()
             cheap = summary_view[summary_view["gap_pct"].notna() & (summary_view["gap_pct"] <= -1)].sort_values("gap_pct").head(1)
             expensive = summary_view[summary_view["gap_pct"].notna() & (summary_view["gap_pct"] >= 1)].sort_values("gap_pct", ascending=False).head(1)
-            likely_up = summary_view[summary_view["tomorrow_bias"] == "Likely up"].head(1)
-            likely_down = summary_view[summary_view["tomorrow_bias"] == "Likely down"].head(1)
+            likely_up = summary_view[summary_view["tomorrow_bias"] == "Up"].head(1)
+            likely_down = summary_view[summary_view["tomorrow_bias"] == "Down"].head(1)
 
             def summary_card(title: str, row_df: pd.DataFrame, fallback: str) -> str:
                 if row_df.empty:
-                    return f'<div class="summary-card"><span>{escape(title)}</span><strong>{escape(fallback)}</strong></div>'
+                    return (
+                        '<div class="summary-card summary-card-neutral">'
+                        f'<span>{escape(title)}</span>'
+                        f'<strong><span class="summary-arrow">&rarr;</span>{escape(fallback)}</strong>'
+                        '</div>'
+                    )
                 row = row_df.iloc[0]
                 gap = _fmt(row.get("gap_pct"), 2)
+                move = str(row.get("tomorrow_bias") or "No clear move")
+                card_class = _summary_card_class(move)
+                arrow = _move_arrow(move)
                 return (
-                    f'<div class="summary-card"><span>{escape(title)}</span>'
-                    f'<strong>{escape(str(row.get("item_name")))}</strong>'
-                    f'<span>{escape(str(row.get("action")))}; gap {escape(gap)}%</span></div>'
+                    f'<div class="summary-card {card_class}"><span>{escape(title)}</span>'
+                    f'<strong><span class="summary-arrow">{arrow}</span>{escape(str(row.get("item_name")))}</strong>'
+                    f'<span>{escape(str(row.get("signal")))}; {escape(str(row.get("tomorrow_bias")))}; gap {escape(gap)}%</span></div>'
                 )
 
             blocks.append(
@@ -499,7 +882,7 @@ def generate_html_report(
             fair_view = fair_view.sort_values(["gap_pct", "item_name"], na_position="last").head(display_count)
             table = fair_view[[
                 "item_name", "latest_price", "fair_price", "buy_below", "sell_above", "gap_pct",
-                "action", "tomorrow_bias", "confidence", "why"
+                "signal", "tomorrow_bias", "confidence", "market_quality", "why"
             ]].rename(columns={
                 "item_name": "Commodity",
                 "latest_price": "Now",
@@ -507,16 +890,17 @@ def generate_html_report(
                 "buy_below": "Buy",
                 "sell_above": "Sell",
                 "gap_pct": "Gap %",
-                "action": "Action",
-                "tomorrow_bias": "Bias",
-                "confidence": "Confidence",
-                "why": "Why",
+                "signal": "Signal",
+                "tomorrow_bias": "Expected Move",
+                "confidence": "Trust",
+                "market_quality": "Market",
+                "why": "Notes",
             })
             blocks.append(
                 f"""    <section>
       <h2>What To Pay And What To Expect</h2>
-      <p class="muted">Buy below the buy line, sell above the sell line, and treat tomorrow as a bias rather than a promise.</p>
-      {_table_html(table)}
+      <p class="muted">Buy below the buy line, sell above the sell line, and treat thin or volatile markets as confirm-live-depth signals.</p>
+      {_compact_table_html(table, table_kind="signal")}
     </section>"""
             )
 
@@ -533,26 +917,23 @@ def generate_html_report(
         table_columns: list[tuple[str, str]] = [
             ("rank", "Rank"),
             ("item_name", "Item"),
-            (_column(df, f"tendency_labels_{window_key}", f"tendency_{window_key}") or "", "Tendency"),
             (_column(df, "latest_price", "current_price") or "", "Latest"),
-            (_column(df, f"open_{window_key}", "open_7d") or "", "Open"),
-            (_column(df, f"close_{window_key}", "close_7d") or "", "Close"),
             (change_col or "", "Change %"),
             (_column(df, f"min_{window_key}", "low_7d") or "", "Min"),
             (_column(df, f"max_{window_key}", "high_7d") or "", "Max"),
-            (_column(df, f"average_{window_key}") or "", "Average"),
-            (_column(df, f"vwap_{window_key}") or "", "VWAP"),
+            (_column(df, f"stable_fair_price_{window_key}", "stable_fair_price_7d", f"vwap_{window_key}") or "", "Fair"),
             (volume_col or "", "Volume"),
             (liquidity_col or "", "Liquidity"),
             (_column(df, "latest_spread_pct", f"average_spread_pct_{window_key}", "spread_pct") or "", "Spread %"),
+            (_column(df, f"tendency_labels_{window_key}", f"tendency_{window_key}") or "", "Market State"),
         ]
         selected = [(source, label) for source, label in table_columns if source and source in view.columns]
         trend_table = view[[source for source, _ in selected]].rename(columns=dict(selected))
         blocks.append(
             f"""    <section>
       <h2>Market Trends</h2>
-      <p class="muted">History-first view of price evolution, range, averages, volume, liquidity, spread, and descriptive tendencies.</p>
-      {_table_html(trend_table)}
+      <p class="muted">Compact history view: current price, recent change, fair value, volume, liquidity, spread, and market state.</p>
+      {_compact_table_html(trend_table, table_kind="trend")}
     </section>"""
         )
 
@@ -601,25 +982,25 @@ def generate_html_report(
         <div class="panel">
           <h3>Fair prices</h3>
           <ul>
-            <li><strong>Fair:</strong> {escape(metric_window)} VWAP when available, then average, then latest price.</li>
-            <li><strong>Buy Below / Sell Above:</strong> fair price adjusted by half the live spread, or 1% when no spread is available.</li>
+            <li><strong>Fair:</strong> the report's best estimate of a normal price, smoothed so one odd trade matters less.</li>
+            <li><strong>Buy Below / Sell Above:</strong> suggested limit prices around Fair, widened when the market is jumpy.</li>
             <li><strong>Use for:</strong> quick limit-order levels before checking live depth.</li>
           </ul>
         </div>
         <div class="panel">
           <h3>Tomorrow bias</h3>
           <ul>
-            <li><strong>Likely up/down:</strong> recent momentum, fair-price gap, and tendency labels point the same way.</li>
-            <li><strong>Sideways:</strong> mixed evidence or not enough movement to call a direction.</li>
-            <li><strong>Confidence:</strong> higher when the market has more trades and less chaotic range.</li>
+            <li><strong>Expected Move:</strong> Up means prices may rise, Down means prices may fall, No clear move means mixed evidence.</li>
+            <li><strong>Signal:</strong> Buy, Sell, Hold, Wait, or Check depth based on price, direction, and market quality.</li>
+            <li><strong>Trust:</strong> higher when trades, spread, volume, and price stability support the signal.</li>
           </ul>
         </div>
         <div class="panel">
-          <h3>Tendency labels</h3>
+          <h3>Market state</h3>
           <ul>
-            <li><strong>Rising/Falling:</strong> close moved away from open and the rolling average confirms direction.</li>
-            <li><strong>Range-bound/Volatile:</strong> price range is narrow or wide relative to average price.</li>
-            <li><strong>Thin/Stable:</strong> volume and spread describe how easy the market may be to trade.</li>
+            <li><strong>Rising/Falling:</strong> recent trades moved mostly one way.</li>
+            <li><strong>Range-bound/Volatile:</strong> prices are staying tight or swinging widely.</li>
+            <li><strong>Thin/Stable:</strong> there are few trades, or enough activity to trust the prices more.</li>
           </ul>
         </div>
       </div>
@@ -667,7 +1048,7 @@ def generate_html_report(
                 f"""    <section>
       <h2>Price Evolution Lens</h2>
       <p class="muted">Price-first view of bid, ask, last price, range, change, and trade count.</p>
-      {_table_html(trend_table)}
+      {_compact_table_html(trend_table, table_kind="trend")}
     </section>"""
             )
 

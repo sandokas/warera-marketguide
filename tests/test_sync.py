@@ -160,6 +160,93 @@ def test_backfill_ignores_high_water_marks_and_dedupes_transactions(tmp_path):
         ]
 
 
+def test_incremental_sync_stops_when_duplicate_page_found_without_state(tmp_path):
+    observed_at = datetime(2026, 6, 30, 10, 0, tzinfo=timezone.utc)
+    old_transaction = _transaction("tx-old", "2026-06-30T09:00:00Z")
+    api = FakeMarketApi(
+        {
+            ("bread", None): PageResponse(
+                items=[
+                    _transaction("tx-new", "2026-06-30T09:30:00Z"),
+                    old_transaction,
+                ],
+                next_cursor="next-page",
+            ),
+            ("bread", "next-page"): PageResponse(
+                items=[_transaction("tx-older", "2026-06-30T08:30:00Z")],
+            ),
+        }
+    )
+    messages: list[str] = []
+
+    with _store(tmp_path) as store:
+        store.upsert_transactions("bread", [old_transaction], fetched_at=observed_at)
+
+        result = sync_market_data(
+            api,
+            store,
+            observed_at=observed_at,
+            progress=messages.append,
+        )
+
+        assert result.pages_fetched == 1
+        assert result.transactions_inserted == 1
+        assert result.transactions_skipped == 1
+        assert result.items[0].stopped_at_duplicate is True
+        assert ("get_transaction_page", ("bread", 100, "next-page")) not in api.calls
+        assert any("bread: found 1 duplicate transaction(s) on page 1; stopping" in message for message in messages)
+
+
+def test_incremental_sync_stops_when_duplicate_page_found_after_stale_state(tmp_path):
+    observed_at = datetime(2026, 6, 30, 10, 0, tzinfo=timezone.utc)
+    state_transaction = _transaction("tx-state", "2026-06-30T09:00:00Z")
+    crashed_transaction = _transaction("tx-crashed", "2026-06-30T09:30:00Z")
+    api = FakeMarketApi(
+        {
+            ("bread", None): PageResponse(
+                items=[
+                    _transaction("tx-new", "2026-06-30T09:45:00Z"),
+                    crashed_transaction,
+                ],
+                next_cursor="next-page",
+            ),
+            ("bread", "next-page"): PageResponse(
+                items=[state_transaction],
+            ),
+        }
+    )
+    messages: list[str] = []
+
+    with _store(tmp_path) as store:
+        store.upsert_transactions("bread", [state_transaction, crashed_transaction], fetched_at=observed_at)
+        store.mark_item_sync_success(
+            "bread",
+            SyncSummary(
+                pages_fetched=1,
+                transactions_inserted=1,
+                newest_created_at="2026-06-30T09:00:00Z",
+                newest_created_at_epoch=1782810000,
+                newest_transaction_id="tx-state",
+                synced_at=observed_at,
+            ),
+        )
+
+        result = sync_market_data(
+            api,
+            store,
+            observed_at=observed_at,
+            progress=messages.append,
+        )
+
+        assert result.pages_fetched == 1
+        assert result.transactions_inserted == 1
+        assert result.transactions_skipped == 1
+        assert result.items[0].stopped_at_duplicate is True
+        assert result.items[0].stopped_at_high_water is False
+        assert ("get_transaction_page", ("bread", 100, "next-page")) not in api.calls
+        assert any("bread: found 1 duplicate transaction(s) on page 1; stopping" in message for message in messages)
+
+
 def test_verbose_sync_logs_transaction_page_import_details(tmp_path):
     observed_at = datetime(2026, 6, 30, 10, 0, tzinfo=timezone.utc)
     api = FakeMarketApi(

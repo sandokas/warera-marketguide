@@ -86,6 +86,12 @@ Live runs print progress as they fetch each good and transaction page. Use `--qu
 Use `--verbose` during imports to print each transaction page, cursor state, fetched row count, inserted/skipped rows, and stop reason.
 Use `--exclude-item-code case1 --exclude-item-code case2` to remove specific non-good item codes from a live report.
 
+To sync the market database without generating report files:
+
+```bash
+PYTHONPATH=src .venv/bin/python run_report.py --sync --verbose
+```
+
 To render the featured trade chart from a live run:
 
 ```bash

@@ -19,12 +19,18 @@ class MarketMetrics:
     close_7d: Optional[float] = None
     average_7d: Optional[float] = None
     vwap_7d: Optional[float] = None
+    median_7d: Optional[float] = None
+    price_p10_7d: Optional[float] = None
+    price_p90_7d: Optional[float] = None
+    stable_fair_price_7d: Optional[float] = None
     rolling_average_7d: Optional[float] = None
     mid_price: Optional[float] = None
     min_tick: float = 0.001
     spread: Optional[float] = None
     spread_pct: Optional[float] = None
     range_pct: Optional[float] = None
+    stable_range_pct_7d: Optional[float] = None
+    depth_imbalance_pct: Optional[float] = None
     momentum_7d_pct: Optional[float] = None
     trading_attractiveness: Optional[float] = None
     status: str = "OK"
@@ -104,6 +110,16 @@ def calculate_metrics(row: dict) -> MarketMetrics:
     average_7d = _float_or_none(row.get("average_7d")) or avg_price
     rolling_average_7d = _float_or_none(row.get("rolling_average_7d")) or average_7d
     vwap_7d = _float_or_none(row.get("vwap_7d"))
+    median_7d = _float_or_none(row.get("median_7d"))
+    price_p10_7d = _float_or_none(row.get("price_p10_7d"))
+    price_p90_7d = _float_or_none(row.get("price_p90_7d"))
+    stable_fair_price_7d = _float_or_none(row.get("stable_fair_price_7d"))
+    stable_range_pct_7d = _float_or_none(row.get("stable_range_pct_7d"))
+    depth_imbalance_pct = _float_or_none(
+        row.get("latest_depth_imbalance_pct")
+        if row.get("latest_depth_imbalance_pct") is not None
+        else row.get("depth_imbalance_pct")
+    )
 
     return MarketMetrics(
         item_name=item_name,
@@ -118,12 +134,18 @@ def calculate_metrics(row: dict) -> MarketMetrics:
         close_7d=close_7d,
         average_7d=average_7d,
         vwap_7d=vwap_7d,
+        median_7d=median_7d,
+        price_p10_7d=price_p10_7d,
+        price_p90_7d=price_p90_7d,
+        stable_fair_price_7d=stable_fair_price_7d,
         rolling_average_7d=rolling_average_7d,
         mid_price=mid_price,
         min_tick=min_tick,
         spread=spread,
         spread_pct=spread_pct,
         range_pct=range_pct,
+        stable_range_pct_7d=stable_range_pct_7d,
+        depth_imbalance_pct=depth_imbalance_pct,
         momentum_7d_pct=momentum_7d_pct,
         trading_attractiveness=trading_attractiveness,
         status=status,
@@ -141,6 +163,7 @@ def classify_tendency(
     trade_count: object = None,
     volume: object = None,
     spread_pct: object = None,
+    stable_range_pct: object = None,
 ) -> list[str]:
     """Return descriptive market tendency labels for a report window."""
     open_value = _float_or_none(open_price)
@@ -152,11 +175,14 @@ def classify_tendency(
     trade_count_value = _float_or_none(trade_count) or 0.0
     volume_value = _float_or_none(volume) or 0.0
     spread_pct_value = _float_or_none(spread_pct)
+    stable_range_pct_value = _float_or_none(stable_range_pct)
 
     labels: list[str] = []
     range_pct = None
     if min_value is not None and max_value is not None and average_value is not None and average_value > 0:
         range_pct = (max_value - min_value) / average_value * 100
+    if stable_range_pct_value is not None:
+        range_pct = stable_range_pct_value
 
     if trade_count_value < 3 or volume_value <= 0:
         labels.append("Thin")

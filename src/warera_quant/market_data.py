@@ -217,6 +217,30 @@ def _window_stats(
     spread_pct = _number_or_none(latest_book.get("spread_pct"))
     average_price = (sum(trade_prices) / len(trade_prices)) if trade_prices else latest_price
     rolling_average = _rolling_average(trade_prices, fallback=average_price)
+    median_price = _median(trade_prices)
+    price_p10 = _percentile(trade_prices, 10)
+    price_p90 = _percentile(trade_prices, 90)
+    stable_range_pct = (
+        (price_p90 - price_p10) / median_price * 100
+        if price_p10 is not None and price_p90 is not None and median_price is not None and median_price > 0
+        else None
+    )
+    stable_fair_price = _weighted_average(
+        [
+            (stats_price, weight)
+            for stats_price, weight in [
+                ((vwap_value / vwap_quantity) if vwap_quantity > 0 else None, 0.50),
+                (median_price, 0.30),
+                (rolling_average, 0.20),
+            ]
+            if stats_price is not None
+        ],
+        fallback=average_price,
+    )
+    bid_depth = _number_or_none(latest_book.get("bid_depth")) or 0.0
+    ask_depth = _number_or_none(latest_book.get("ask_depth")) or 0.0
+    total_depth = bid_depth + ask_depth
+    depth_imbalance_pct = ((bid_depth - ask_depth) / total_depth * 100) if total_depth > 0 else None
     distance_from_rolling_average = (
         close_price - rolling_average
         if close_price is not None and rolling_average is not None
@@ -238,6 +262,11 @@ def _window_stats(
         "max": max(trade_prices, default=latest_price),
         "average": average_price,
         "vwap": (vwap_value / vwap_quantity) if vwap_quantity > 0 else None,
+        "median": median_price,
+        "price_p10": price_p10,
+        "price_p90": price_p90,
+        "stable_fair_price": stable_fair_price,
+        "stable_range_pct": stable_range_pct,
         "open": open_price,
         "close": close_price,
         "change_abs": (
@@ -249,6 +278,9 @@ def _window_stats(
         "latest_price": latest_price,
         "latest_bid": latest_book.get("best_bid"),
         "latest_ask": latest_book.get("best_ask"),
+        "latest_bid_depth": latest_book.get("bid_depth"),
+        "latest_ask_depth": latest_book.get("ask_depth"),
+        "latest_depth_imbalance_pct": depth_imbalance_pct,
         "latest_spread": latest_book.get("spread_abs"),
         "latest_spread_pct": spread_pct,
         "average_spread": _average_numeric(order.get("spread_abs") for order in orders),
@@ -268,6 +300,7 @@ def _window_stats(
         trade_count=stats["trade_count"],
         volume=stats["volume"],
         spread_pct=stats["latest_spread_pct"],
+        stable_range_pct=stats["stable_range_pct"],
     )
     stats["tendency"] = tendency_labels[0]
     stats["tendency_labels"] = ", ".join(tendency_labels)
@@ -334,6 +367,30 @@ def _rolling_average(values: list[float], *, fallback: float | None) -> float | 
         return fallback
     window = values[-min(len(values), 5):]
     return sum(window) / len(window)
+
+
+def _median(values: list[float]) -> float | None:
+    return _percentile(values, 50)
+
+
+def _percentile(values: list[float], percentile: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    rank = (len(ordered) - 1) * percentile / 100
+    lower_index = int(rank)
+    upper_index = min(lower_index + 1, len(ordered) - 1)
+    fraction = rank - lower_index
+    return ordered[lower_index] + (ordered[upper_index] - ordered[lower_index]) * fraction
+
+
+def _weighted_average(values: list[tuple[float, float]], *, fallback: float | None) -> float | None:
+    total_weight = sum(weight for _, weight in values if weight > 0)
+    if total_weight <= 0:
+        return fallback
+    return sum(value * weight for value, weight in values if weight > 0) / total_weight
 
 
 def _number_or_none(value: object) -> float | None:

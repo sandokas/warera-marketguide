@@ -29,10 +29,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generate a WarEra quantitative market report.")
     parser.add_argument("--csv", default="data/sample_market.csv", help="Input CSV with market fields.")
     parser.add_argument("--live", action="store_true", help="Fetch live WarEra market data from the API.")
+    parser.add_argument("--sync", action="store_true", help="Sync live WarEra market data into SQLite, then exit.")
     parser.add_argument(
         "--market-db",
         default="data/warera_market.sqlite3",
-        help="SQLite market database path used by --live sync.",
+        help="SQLite market database path used by live sync.",
     )
     parser.add_argument(
         "--transaction-backfill",
@@ -125,11 +126,11 @@ def main() -> None:
     args = build_parser().parse_args()
     output_dir = Path(args.output)
 
-    selected_sources = sum(bool(value) for value in (args.live, args.api_endpoint))
+    selected_sources = sum(bool(value) for value in (args.live, args.sync, args.api_endpoint))
     if selected_sources > 1:
-        raise SystemExit("Use only one of --live or --api-endpoint.")
-    if args.transaction_backfill and not args.live:
-        raise SystemExit("--transaction-backfill requires --live.")
+        raise SystemExit("Use only one of --live, --sync, or --api-endpoint.")
+    if args.transaction_backfill and not (args.live or args.sync):
+        raise SystemExit("--transaction-backfill requires --live or --sync.")
     if args.chart_ma_window < 1:
         raise SystemExit("--chart-ma-window must be at least 1.")
     if args.chart_min_range_pct < 0:
@@ -137,18 +138,18 @@ def main() -> None:
     if args.quiet and args.verbose:
         raise SystemExit("Use only one of --quiet or --verbose.")
 
-    if not args.live and not args.api_endpoint and not args.from_db:
+    if not args.live and not args.sync and not args.api_endpoint and not args.from_db:
         if args.csv == "data/sample_market.csv" and Path(args.market_db).exists():
             args.from_db = True
             if not args.quiet:
                 print(f"Using local market DB at {args.market_db} because no explicit input was provided.", flush=True)
 
-    if args.live:
+    if args.live or args.sync:
         client = WarEraApiClient(min_interval_seconds=args.min_interval)
         market_api = WarEraMarketApi(client)
         if not args.quiet:
             print(
-                f"Starting live report: lookback={args.lookback_days:g} day(s), "
+                f"Starting live {'sync' if args.sync else 'report'}: lookback={args.lookback_days:g} day(s), "
                 f"history_pages={args.history_pages}, order_book_depth={args.order_limit}",
                 flush=True,
             )
@@ -170,10 +171,13 @@ def main() -> None:
                 f"Synced {sync_result.prices_observed} price(s), "
                 f"{sync_result.order_books_observed} order book(s), "
                 f"{sync_result.pages_fetched} transaction page(s), "
-                f"{sync_result.transactions_inserted} new transaction(s) "
+                f"{sync_result.transactions_inserted} new transaction(s), "
+                f"{sync_result.transactions_skipped} duplicate transaction(s) "
                 f"to {args.market_db}.",
                 flush=True,
             )
+        if args.sync:
+            return
         df_in = market_json_to_dataframe(rows)
     elif args.from_db:
         with MarketStore(args.market_db) as store:

@@ -68,6 +68,11 @@ def test_load_market_rows_computes_window_statistics(tmp_path):
     assert stats["max"] == 6.0
     assert stats["average"] == pytest.approx((2 + 5 + 6) / 3)
     assert stats["vwap"] == pytest.approx(190 / 40)
+    assert stats["median"] == 5.0
+    assert stats["price_p10"] == pytest.approx(2.6)
+    assert stats["price_p90"] == pytest.approx(5.8)
+    assert stats["stable_fair_price"] == pytest.approx(((190 / 40) * 0.5) + (5 * 0.3) + (((2 + 5 + 6) / 3) * 0.2))
+    assert stats["stable_range_pct"] == pytest.approx((5.8 - 2.6) / 5 * 100)
     assert stats["open"] == 2.0
     assert stats["close"] == 6.0
     assert stats["change_abs"] == 4.0
@@ -77,6 +82,9 @@ def test_load_market_rows_computes_window_statistics(tmp_path):
     assert stats["latest_price"] == 6.5
     assert stats["latest_bid"] == 6.0
     assert stats["latest_ask"] == 7.0
+    assert stats["latest_bid_depth"] == 10.0
+    assert stats["latest_ask_depth"] == 20.0
+    assert stats["latest_depth_imbalance_pct"] == pytest.approx(-33.333333)
     assert stats["latest_spread"] == 1.0
     assert stats["latest_spread_pct"] == pytest.approx(15.384615)
     assert stats["average_spread"] == 1.0
@@ -87,6 +95,8 @@ def test_load_market_rows_computes_window_statistics(tmp_path):
     assert stats["tendency_labels"] == "Rising, Volatile"
     assert row["min_1d"] == 2.0
     assert row["vwap_1d"] == pytest.approx(190 / 40)
+    assert row["stable_fair_price_1d"] == pytest.approx(stats["stable_fair_price"])
+    assert row["stable_range_pct_1d"] == pytest.approx(stats["stable_range_pct"])
     assert row["tendency_labels_1d"] == "Rising, Volatile"
     assert row["latest_price"] == 6.5
     assert row["latest_bid"] == 6.0
@@ -134,6 +144,30 @@ def test_load_market_rows_keeps_legacy_metric_fields_for_current_report(tmp_path
     assert row["low_7d"] == 3.0
     assert row["open_7d"] == 3.0
     assert row["close_7d"] == 3.0
+
+
+def test_load_market_rows_uses_percentile_range_to_reduce_outlier_noise(tmp_path):
+    with _store(tmp_path) as store:
+        store.upsert_transactions(
+            "copper",
+            [
+                _transaction("tx-1", "2026-06-30T08:00:00Z", money=10, quantity=10),
+                _transaction("tx-2", "2026-06-30T09:00:00Z", money=100, quantity=10),
+                _transaction("tx-3", "2026-06-30T10:00:00Z", money=101, quantity=10),
+                _transaction("tx-4", "2026-06-30T11:00:00Z", money=102, quantity=10),
+                _transaction("tx-5", "2026-06-30T11:30:00Z", money=1000, quantity=10),
+            ],
+            fetched_at=NOW,
+        )
+        store.insert_price_observations({"copper": 10.2}, NOW)
+
+        row = load_market_rows(store, windows=["1D"], now=NOW)[0]
+
+    stats = row["windows"]["1D"]
+    raw_range = 100.0 - 1.0
+    stable_range = stats["price_p90"] - stats["price_p10"]
+    assert stable_range < raw_range
+    assert stats["stable_fair_price"] < 30
 
 
 def test_load_chart_trades_returns_normalized_priced_trades_inside_window(tmp_path):

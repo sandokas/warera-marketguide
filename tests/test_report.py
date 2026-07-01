@@ -34,11 +34,12 @@ def test_swing_lens_shows_actionable_prices_without_score():
     assert "Fair Price" in report
     assert "Buy Below" in report
     assert "Sell Above" in report
-    assert "Tomorrow" in report
-    assert "Confidence" in report
+    assert "Expected Move" in report
+    assert "Signal" in report
+    assert "Trust" in report
     assert "Market-Making Score" not in report
     assert "Insufficient score data" not in report
-    assert "Cheaper; consider stockpiling" in report
+    assert "Price is low; consider buying" in report
 
 
 def test_generate_html_report_shows_all_items_by_default():
@@ -114,8 +115,48 @@ def test_report_foregrounds_market_trends_and_writes_compatibility_csv(tmp_path)
     assert "Fair Prices And Tomorrow Bias" in report
     assert "What To Pay And What To Expect" in report
     assert "Market Trends" in report
-    assert "Rising, Volatile" in report
+    assert "Rising" in report
+    assert "Volatile" in report
     assert "5.900" in report
-    assert "Likely up" in report
-    assert "Good sell zone" in report
+    assert "Up" in report
+    assert "Hold" in report
+    assert "chip-up" in report
+    assert "chip-hold" in report
+    assert "signed-positive" in report
+    assert "liquidity-fill" in report
     assert "Market-Making Score" not in report
+
+
+def test_report_uses_stable_fair_price_and_softens_thin_market_actions():
+    df = pd.DataFrame([
+        {
+            "item_name": "Copper",
+            "latest_price": 8.0,
+            "current_price": 8.0,
+            "stable_fair_price_7d": 10.0,
+            "vwap_7d": 20.0,
+            "stable_range_pct_7d": 10.0,
+            "trade_count_7d": 1,
+            "volume_7d": 1,
+            "latest_spread": 0.2,
+            "latest_spread_pct": 2.0,
+            "tendency_labels_7d": "Thin",
+            "bid": 7.9,
+            "ask": 8.1,
+            "trades_7d": 1,
+            "high_7d": 20.0,
+            "low_7d": 1.0,
+            "spread_pct": 2.0,
+            "range_pct": 190.0,
+            "momentum_7d_pct": -1.0,
+            "status": "OK",
+        }
+    ])
+
+    report = generate_html_report(df, top=0)
+
+    assert "10.000" in report
+    assert "Check depth" in report
+    assert "chip-check" in report
+    assert "Weak" in report
+    assert "few trades" in report

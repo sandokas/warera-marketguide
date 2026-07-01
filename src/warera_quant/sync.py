@@ -14,8 +14,10 @@ class ItemSyncResult:
     item_code: str
     pages_fetched: int
     transactions_inserted: int
+    transactions_skipped: int
     transactions_seen: int
     stopped_at_high_water: bool = False
+    stopped_at_duplicate: bool = False
     error: str | None = None
 
 
@@ -33,6 +35,10 @@ class MarketSyncResult:
     @property
     def transactions_inserted(self) -> int:
         return sum(item.transactions_inserted for item in self.items)
+
+    @property
+    def transactions_skipped(self) -> int:
+        return sum(item.transactions_skipped for item in self.items)
 
     @property
     def error_count(self) -> int:
@@ -124,6 +130,7 @@ def sync_market_data(
                     item_code=item_code,
                     pages_fetched=0,
                     transactions_inserted=0,
+                    transactions_skipped=0,
                     transactions_seen=0,
                     error=str(exc),
                 )
@@ -158,7 +165,9 @@ def _sync_item_transactions(
     pages_fetched = 0
     transactions_seen = 0
     transactions_inserted = 0
+    transactions_skipped = 0
     stopped_at_high_water = False
+    stopped_at_duplicate = False
     newest_summary: InsertSummary | None = None
     page_numbers = range(history_pages) if history_pages > 0 else count()
 
@@ -174,6 +183,7 @@ def _sync_item_transactions(
         transactions_seen += len(page.items)
         insert_summary = store.upsert_transactions(item_code, page.items, fetched_at=fetched_at)
         transactions_inserted += insert_summary.inserted
+        transactions_skipped += insert_summary.skipped
         newest_summary = _newest_insert_summary(newest_summary, insert_summary)
 
         oldest_epoch = _oldest_transaction_epoch(page.items)
@@ -190,6 +200,13 @@ def _sync_item_transactions(
         if high_water_epoch is not None and oldest_epoch is not None and oldest_epoch <= high_water_epoch:
             stopped_at_high_water = True
             _log(progress, f"{item_code}: reached stored high-water mark on page {page_index}")
+            break
+        if not transaction_backfill and insert_summary.skipped > 0:
+            stopped_at_duplicate = True
+            _log(
+                progress,
+                f"{item_code}: found {insert_summary.skipped} duplicate transaction(s) on page {page_index}; stopping",
+            )
             break
         if backfill_boundary is not None and oldest_epoch is not None and oldest_epoch <= int(backfill_boundary.timestamp()):
             _log(progress, f"{item_code}: reached backfill lookback boundary on page {page_index}")
@@ -223,8 +240,10 @@ def _sync_item_transactions(
         item_code=item_code,
         pages_fetched=pages_fetched,
         transactions_inserted=transactions_inserted,
+        transactions_skipped=transactions_skipped,
         transactions_seen=transactions_seen,
         stopped_at_high_water=stopped_at_high_water,
+        stopped_at_duplicate=stopped_at_duplicate,
     )
 
 
