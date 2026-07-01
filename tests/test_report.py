@@ -125,6 +125,8 @@ def test_report_foregrounds_market_trends_and_writes_compatibility_csv(tmp_path)
     assert "chip-hold" in report
     assert "signed-positive" in report
     assert "liquidity-fill" in report
+    assert "grid-template-columns: minmax(72px, 1fr) 48px" in report
+    assert "min-width: 188px" in report
     assert "Market-Making Score" not in report
 
 

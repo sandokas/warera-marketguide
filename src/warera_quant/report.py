@@ -441,15 +441,17 @@ def _html_page(title: str, body: str) -> str:
     .signed-neutral {{ color: var(--muted); }}
     .liquidity-cell {{
       display: grid;
-      grid-template-columns: 92px 48px;
+      grid-template-columns: minmax(72px, 1fr) 48px;
       align-items: center;
       gap: 8px;
       justify-content: end;
-      min-width: 148px;
+      width: 100%;
+      min-width: 0;
     }}
     .liquidity-track {{
       height: 7px;
-      width: 92px;
+      width: 100%;
+      min-width: 72px;
       border-radius: 999px;
       background: #1e293b;
       overflow: hidden;
@@ -545,9 +547,9 @@ def _html_page(title: str, body: str) -> str:
       max-width: 260px;
     }}
     .compact-table .col-liquidity {{
-      width: 164px;
-      min-width: 164px;
-      max-width: 164px;
+      width: 188px;
+      min-width: 188px;
+      max-width: 188px;
     }}
     .compact-table .col-spread-pct {{
       width: 76px;
