@@ -238,6 +238,28 @@ def _trade_signal(
     return "Hold"
 
 
+def _next_step_note(
+    *,
+    signal: str,
+    buy_below: float | None,
+    sell_above: float | None,
+    reason: str,
+) -> str:
+    if signal == "Buy":
+        return "Already at buy zone"
+    if signal == "Sell":
+        return "Already at sell zone"
+    if signal == "Hold" and sell_above is not None:
+        return f"Sell near {_fmt(sell_above)}"
+    if signal == "Wait" and buy_below is not None:
+        return f"Buy near {_fmt(buy_below)}"
+    if signal == "Check depth":
+        return reason
+    if buy_below is not None and sell_above is not None:
+        return f"Trade near {_fmt(buy_below)}-{_fmt(sell_above)}"
+    return reason
+
+
 def _signal_summary(row: pd.Series) -> str:
     parts = [
         f"momentum {_fmt(row.get('momentum_7d_pct'), 2)}%",
@@ -823,6 +845,12 @@ def generate_html_report(
                 expected_move=direction,
                 quality=quality,
             )
+            next_step = _next_step_note(
+                signal=signal,
+                buy_below=buy_below,
+                sell_above=sell_above,
+                reason=reason,
+            )
             fair_rows.append({
                 "item_name": row.get("item_name"),
                 "latest_price": latest,
@@ -834,7 +862,7 @@ def generate_html_report(
                 "action": _plain_action(latest, buy_below, sell_above, fair, quality),
                 "tomorrow_bias": direction,
                 "confidence": confidence,
-                "why": reason,
+                "why": next_step,
                 "market_quality": quality.title(),
                 "latest_bid": row.get("latest_bid", row.get("bid")),
                 "latest_ask": row.get("latest_ask", row.get("ask")),

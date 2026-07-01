@@ -120,6 +120,7 @@ def test_report_foregrounds_market_trends_and_writes_compatibility_csv(tmp_path)
     assert "5.900" in report
     assert "Up" in report
     assert "Hold" in report
+    assert "Sell near" in report
     assert "chip-up" in report
     assert "chip-hold" in report
     assert "signed-positive" in report
@@ -160,3 +161,33 @@ def test_report_uses_stable_fair_price_and_softens_thin_market_actions():
     assert "chip-check" in report
     assert "Weak" in report
     assert "few trades" in report
+
+
+def test_wait_signal_notes_show_buy_target():
+    df = pd.DataFrame([
+        {
+            "item_name": "Coal",
+            "latest_price": 10.0,
+            "current_price": 10.0,
+            "stable_fair_price_7d": 10.0,
+            "latest_spread": 0.4,
+            "trade_count_7d": 12,
+            "volume_7d": 40,
+            "latest_spread_pct": 2.0,
+            "tendency_labels_7d": "Falling",
+            "bid": 11.8,
+            "ask": 12.2,
+            "trades_7d": 12,
+            "high_7d": 13.0,
+            "low_7d": 9.5,
+            "spread_pct": 2.0,
+            "range_pct": 20.0,
+            "momentum_7d_pct": -3.0,
+            "status": "OK",
+        }
+    ])
+
+    report = generate_html_report(df, top=0)
+
+    assert "Wait" in report
+    assert "Buy near" in report
