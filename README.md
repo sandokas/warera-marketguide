@@ -9,6 +9,10 @@ See:
 - [AGENTS.md](AGENTS.md) for repository architecture rules.
 - [docs/market-db-reporting-spec.md](docs/market-db-reporting-spec.md) for the market database and reporting spec.
 
+## License
+
+This project is shared under the MIT License. See [LICENSE](LICENSE) for the full text.
+
 ## Architecture
 
 The market database architecture is layered:
