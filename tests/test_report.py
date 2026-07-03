@@ -24,6 +24,7 @@ def test_swing_lens_shows_actionable_prices_without_score():
     report = generate_html_report(df, top=0)
 
     assert "<!doctype html>" in report
+    assert "WarEra Market Guide" in report
     assert "Market Trends" in report
     assert "Price Evolution Lens" in report
     assert "Buy Ask" in report

@@ -1,4 +1,4 @@
-# WarEra Quant Market Report
+# WarEra Market Guide
 
 A Python tool for WarEra market analysis.
 

@@ -26,7 +26,7 @@ def _parse_param(value: str) -> tuple[str, str]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Generate a WarEra quantitative market report.")
+    parser = argparse.ArgumentParser(description="Generate a WarEra Market Guide report.")
     parser.add_argument("--csv", default="data/sample_market.csv", help="Input CSV with market fields.")
     parser.add_argument("--live", action="store_true", help="Fetch live WarEra market data from the API.")
     parser.add_argument("--sync", action="store_true", help="Sync live WarEra market data into SQLite, then exit.")

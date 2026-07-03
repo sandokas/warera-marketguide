@@ -813,7 +813,7 @@ def generate_html_report(
     blocks.append(
         f"""    <header>
       <div>
-        <div class="eyebrow">WarEra market guide</div>
+        <div class="eyebrow">WarEra Market Guide</div>
         <h1>Fair Prices And Tomorrow Bias</h1>
         <p class="muted">A practical read on what is cheap, what is expensive, and which way prices may lean next.</p>
       </div>
@@ -1106,7 +1106,7 @@ def generate_html_report(
     </section>"""
         )
 
-    return _html_page("WarEra Quantitative Market Report", "\n".join(blocks))
+    return _html_page("WarEra Market Guide", "\n".join(blocks))
 
 
 def write_outputs(
