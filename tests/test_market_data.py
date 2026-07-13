@@ -79,7 +79,11 @@ def test_load_market_rows_computes_window_statistics(tmp_path):
     assert stats["percent_change"] == pytest.approx(200.0)
     assert stats["volume"] == 40.0
     assert stats["traded_value"] == 190.0
-    assert stats["latest_price"] == 6.5
+    assert stats["last_trade_price"] == 6.0
+    assert stats["quote_price"] == 6.5
+    assert stats["mid_price"] == 6.5
+    assert stats["current_price"] == 6.0
+    assert stats["latest_price"] == 6.0
     assert stats["latest_bid"] == 6.0
     assert stats["latest_ask"] == 7.0
     assert stats["latest_bid_depth"] == 10.0
@@ -98,7 +102,7 @@ def test_load_market_rows_computes_window_statistics(tmp_path):
     assert row["stable_fair_price_1d"] == pytest.approx(stats["stable_fair_price"])
     assert row["stable_range_pct_1d"] == pytest.approx(stats["stable_range_pct"])
     assert row["tendency_labels_1d"] == "Rising, Volatile"
-    assert row["latest_price"] == 6.5
+    assert row["latest_price"] == 6.0
     assert row["latest_bid"] == 6.0
     assert row["latest_ask"] == 7.0
     assert row["latest_spread"] == 1.0
@@ -168,6 +172,88 @@ def test_load_market_rows_uses_percentile_range_to_reduce_outlier_noise(tmp_path
     stable_range = stats["price_p90"] - stats["price_p10"]
     assert stable_range < raw_range
     assert stats["stable_fair_price"] < 30
+
+
+def test_load_market_rows_prefers_trade_history_for_current_price(tmp_path):
+    with _store(tmp_path) as store:
+        store.upsert_transactions(
+            "paper",
+            [_transaction("tx-1", "2026-06-30T11:00:00Z", money=18.6, quantity=100)],
+            fetched_at=NOW,
+        )
+        store.insert_price_observations({"paper": 0.2}, NOW)
+        store.insert_order_book_observations(
+            {
+                "paper": {
+                    "buyOrders": [{"price": 0.19, "quantity": 10}],
+                    "sellOrders": [{"price": 0.21, "quantity": 10}],
+                }
+            },
+            datetime(2026, 6, 30, 11, 30, tzinfo=timezone.utc),
+        )
+
+        row = load_market_rows(store, windows=["1D"], now=NOW)[0]
+
+    assert row["last_trade_price"] == pytest.approx(0.186)
+    assert row["quote_price"] == pytest.approx(0.2)
+    assert row["mid_price"] == pytest.approx(0.2)
+    assert row["current_price"] == pytest.approx(0.186)
+    assert row["latest_price"] == pytest.approx(0.186)
+    assert row["quote_gap_pct"] == pytest.approx(7.526881720430108)
+
+
+def test_load_market_rows_falls_back_to_quote_price_when_no_trade_exists(tmp_path):
+    with _store(tmp_path) as store:
+        store.insert_price_observations({"gold": 97.5}, NOW)
+        store.insert_order_book_observations(
+            {
+                "gold": {
+                    "buyOrders": [{"price": 97.0, "quantity": 5}],
+                    "sellOrders": [{"price": 98.0, "quantity": 8}],
+                }
+            },
+            datetime(2026, 6, 30, 11, 30, tzinfo=timezone.utc),
+        )
+
+        row = load_market_rows(store, windows=["1D"], now=NOW)[0]
+
+    assert row["last_trade_price"] is None
+    assert row["quote_price"] == pytest.approx(97.5)
+    assert row["mid_price"] == pytest.approx(97.5)
+    assert row["current_price"] == pytest.approx(97.5)
+    assert row["latest_price"] == pytest.approx(97.5)
+    assert row["quote_gap_pct"] is None
+
+
+def test_load_market_rows_tracks_quote_divergence_and_depth_imbalance(tmp_path):
+    with _store(tmp_path) as store:
+        store.upsert_transactions(
+            "silver",
+            [_transaction("tx-1", "2026-06-30T11:00:00Z", money=105.0, quantity=5)],
+            fetched_at=NOW,
+        )
+        store.insert_price_observations({"silver": 110.0}, NOW)
+        store.insert_order_book_observations(
+            {
+                "silver": {
+                    "buyOrders": [{"price": 108.0, "quantity": 20}],
+                    "sellOrders": [{"price": 112.0, "quantity": 10}],
+                }
+            },
+            datetime(2026, 6, 30, 11, 30, tzinfo=timezone.utc),
+        )
+
+        row = load_market_rows(store, windows=["1D"], now=NOW)[0]
+
+    assert row["last_trade_price"] == pytest.approx(21.0)
+    assert row["quote_price"] == pytest.approx(110.0)
+    assert row["mid_price"] == pytest.approx(110.0)
+    assert row["current_price"] == pytest.approx(21.0)
+    assert row["quote_gap_pct"] == pytest.approx(423.8095238095238)
+    assert row["latest_bid"] == pytest.approx(108.0)
+    assert row["latest_ask"] == pytest.approx(112.0)
+    assert row["latest_depth_imbalance_pct"] == pytest.approx(33.33333333333333)
+    assert row["depth_imbalance_pct"] == pytest.approx(33.33333333333333)
 
 
 def test_load_chart_trades_returns_normalized_priced_trades_inside_window(tmp_path):

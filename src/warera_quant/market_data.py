@@ -64,10 +64,17 @@ def load_market_rows(
         latest_price = latest_prices.get(item_code, {})
         latest_book = latest_books.get(item_code, {})
 
+        last_trade_price = _latest_trade_price(trades)
+        quote_price = _latest_quote_price(price_observations, latest_price)
+        mid_price = _mid_price(latest_book)
+        current_price = _select_current_price(last_trade_price, quote_price, mid_price)
+        quote_gap_pct = _quote_gap_pct(last_trade_price, quote_price)
+        depth_imbalance_pct = _depth_imbalance_pct(latest_book)
+
         row: dict[str, Any] = {
             "item_name": _display_name(item_code),
             "item_code": item_code,
-            "latest_price": latest_price.get("current_price"),
+            "latest_price": current_price,
             "latest_price_observed_at": latest_price.get("observed_at"),
             "latest_bid": latest_book.get("best_bid"),
             "latest_ask": latest_book.get("best_ask"),
@@ -75,7 +82,13 @@ def load_market_rows(
             "latest_spread_pct": latest_book.get("spread_pct"),
             "bid": latest_book.get("best_bid"),
             "ask": latest_book.get("best_ask"),
-            "current_price": latest_price.get("current_price"),
+            "last_trade_price": last_trade_price,
+            "quote_price": quote_price,
+            "mid_price": mid_price,
+            "current_price": current_price,
+            "quote_gap_pct": quote_gap_pct,
+            "latest_depth_imbalance_pct": depth_imbalance_pct,
+            "depth_imbalance_pct": depth_imbalance_pct,
         }
 
         window_stats: dict[str, dict[str, Any]] = {}
@@ -84,8 +97,13 @@ def load_market_rows(
                 trades=_rows_since(trades, since_epochs[window.label], "created_at_epoch"),
                 prices=_rows_since(price_observations, since_epochs[window.label], "observed_at_epoch"),
                 orders=_rows_since(order_observations, since_epochs[window.label], "observed_at_epoch"),
-                latest_price=latest_price.get("current_price"),
+                latest_price=quote_price,
                 latest_book=latest_book,
+                last_trade_price=last_trade_price,
+                quote_price=quote_price,
+                mid_price=mid_price,
+                quote_gap_pct=quote_gap_pct,
+                depth_imbalance_pct=depth_imbalance_pct,
             )
             window_stats[window.label] = stats
             _add_flattened_window_stats(row, window, stats)
@@ -191,6 +209,11 @@ def _window_stats(
     orders: list[dict[str, Any]],
     latest_price: float | None,
     latest_book: dict[str, Any],
+    last_trade_price: float | None = None,
+    quote_price: float | None = None,
+    mid_price: float | None = None,
+    quote_gap_pct: float | None = None,
+    depth_imbalance_pct: float | None = None,
 ) -> dict[str, Any]:
     priced_trades = [trade for trade in trades if trade.get("unit_price") is not None]
     trade_prices = [float(trade["unit_price"]) for trade in priced_trades]
@@ -216,6 +239,7 @@ def _window_stats(
     )
     spread_pct = _number_or_none(latest_book.get("spread_pct"))
     average_price = (sum(trade_prices) / len(trade_prices)) if trade_prices else latest_price
+    current_price = _select_current_price(last_trade_price, quote_price, mid_price)
     rolling_average = _rolling_average(trade_prices, fallback=average_price)
     median_price = _median(trade_prices)
     price_p10 = _percentile(trade_prices, 10)
@@ -275,12 +299,18 @@ def _window_stats(
             else None
         ),
         "percent_change": percent_change,
-        "latest_price": latest_price,
+        "latest_price": current_price,
+        "last_trade_price": last_trade_price,
+        "quote_price": quote_price,
+        "mid_price": mid_price,
+        "current_price": current_price,
+        "quote_gap_pct": quote_gap_pct,
         "latest_bid": latest_book.get("best_bid"),
         "latest_ask": latest_book.get("best_ask"),
         "latest_bid_depth": latest_book.get("bid_depth"),
         "latest_ask_depth": latest_book.get("ask_depth"),
         "latest_depth_imbalance_pct": depth_imbalance_pct,
+        "depth_imbalance_pct": depth_imbalance_pct,
         "latest_spread": latest_book.get("spread_abs"),
         "latest_spread_pct": spread_pct,
         "average_spread": _average_numeric(order.get("spread_abs") for order in orders),
@@ -340,6 +370,54 @@ def _liquidity_score(trade_count: int, volume: float, spread_pct: float | None) 
 def _display_name(item_code: str) -> str:
     spaced = re.sub(r"(?<!^)(?=[A-Z])", " ", item_code).replace("_", " ").replace("-", " ")
     return spaced.title()
+
+
+def _latest_trade_price(trades: list[dict[str, Any]]) -> float | None:
+    for trade in reversed(trades):
+        price = _number_or_none(trade.get("unit_price"))
+        if price is not None:
+            return price
+    return None
+
+
+def _latest_quote_price(price_observations: list[dict[str, Any]], latest_price: dict[str, Any]) -> float | None:
+    if price_observations:
+        for observation in reversed(price_observations):
+            price = _number_or_none(observation.get("current_price"))
+            if price is not None:
+                return price
+    return _number_or_none(latest_price.get("current_price"))
+
+
+def _mid_price(latest_book: dict[str, Any]) -> float | None:
+    bid = _number_or_none(latest_book.get("best_bid"))
+    ask = _number_or_none(latest_book.get("best_ask"))
+    if bid is None or ask is None:
+        return None
+    return (bid + ask) / 2
+
+
+def _select_current_price(last_trade_price: float | None, quote_price: float | None, mid_price: float | None) -> float | None:
+    if last_trade_price is not None:
+        return last_trade_price
+    if quote_price is not None:
+        return quote_price
+    return mid_price
+
+
+def _quote_gap_pct(last_trade_price: float | None, quote_price: float | None) -> float | None:
+    if last_trade_price is None or quote_price is None or last_trade_price == 0:
+        return None
+    return (quote_price - last_trade_price) / last_trade_price * 100
+
+
+def _depth_imbalance_pct(latest_book: dict[str, Any]) -> float | None:
+    bid_depth = _number_or_none(latest_book.get("bid_depth")) or 0.0
+    ask_depth = _number_or_none(latest_book.get("ask_depth")) or 0.0
+    total_depth = bid_depth + ask_depth
+    if total_depth <= 0:
+        return None
+    return (bid_depth - ask_depth) / total_depth * 100
 
 
 def _as_utc(value: datetime) -> datetime:

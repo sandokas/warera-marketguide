@@ -59,7 +59,13 @@ def calculate_metrics(row: dict) -> MarketMetrics:
     item_code = str(item_code) if item_code is not None else None
     bid = _float_or_none(row.get("bid"))
     ask = _float_or_none(row.get("ask"))
-    current_price = _float_or_none(row.get("current_price") or row.get("price") or row.get("last_trade_price"))
+    current_price = _float_or_none(
+        row.get("current_price")
+        or row.get("last_trade_price")
+        or row.get("price")
+        or row.get("quote_price")
+        or row.get("latest_price")
+    )
     trades_7d = _float_or_none(row.get("trades_7d"))
     trades_24h = _float_or_none(row.get("trades_24h"))
     if trades_7d is None and trades_24h is not None:

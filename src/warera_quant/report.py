@@ -31,6 +31,23 @@ def _fmt(value: object, decimals: int = 3) -> str:
     return str(value)
 
 
+def _fmt_report_value(value: object, *, column: str | None = None) -> str:
+    if value is None or pd.isna(value):
+        return "N/A"
+    if isinstance(value, (int, float)):
+        label = str(column or "").lower()
+        if any(token in label for token in ("volume", "trade")) or label in {"liquidity"}:
+            return _fmt(value, 0)
+        if "%" in label:
+            return _fmt(value, 2)
+        if label in {"now", "latest", "min", "max", "fair", "buy", "sell", "last"} or label.endswith(("low", "high")):
+            return _fmt(value, 3)
+        if "price" in label or label in {"open", "close", "vwap", "average", "median", "rolling average"}:
+            return _fmt(value, 3)
+        return _fmt(value, 3)
+    return str(value)
+
+
 def _fmt_compact(value: float) -> str:
     abs_value = abs(value)
     for threshold, suffix in ((1_000_000_000, "B"), (1_000_000, "M"), (1_000, "K")):
@@ -70,8 +87,10 @@ def _fair_price(row: pd.Series, window_key: str) -> float | None:
         f"vwap_{window_key}",
         f"average_{window_key}",
         f"rolling_average_{window_key}",
+        "last_trade_price",
         "current_price",
         "latest_price",
+        "quote_price",
         "mid_price",
     ) or midpoint
 
@@ -94,7 +113,7 @@ def _fair_price_band(row: pd.Series, window_key: str) -> tuple[float | None, flo
 
 
 def _latest_price(row: pd.Series) -> float | None:
-    return _first_number(row, "latest_price", "current_price")
+    return _first_number(row, "last_trade_price", "current_price", "latest_price", "quote_price")
 
 
 def _price_gap_pct(latest: float | None, fair: float | None) -> float | None:
@@ -652,7 +671,7 @@ def _render_table_cell(column: str, value: object, *, max_liquidity: float | Non
         return _liquidity_bar(value, max_liquidity=max_liquidity)
     if column in {"Gap %", "Change %"} or column.endswith("Momentum %"):
         return _signed_number(value, invert=column == "Gap %")
-    return escape(_fmt(value))
+    return escape(_fmt_report_value(value, column=column))
 
 
 def _chip(label: str, tone: str, *, prefix: str | None = None) -> str:
@@ -732,7 +751,7 @@ def _market_state_tone(label: str) -> str:
 def _signed_number(value: object, *, invert: bool = False) -> str:
     number = _number(value)
     if number is None:
-        return escape(_fmt(value))
+        return escape(_fmt_report_value(value))
     if abs(number) < 0.005:
         css_class = "signed-neutral"
     elif (number > 0 and not invert) or (number < 0 and invert):

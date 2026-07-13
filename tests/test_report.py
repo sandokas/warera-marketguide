@@ -181,6 +181,60 @@ def test_report_uses_stable_fair_price_and_softens_thin_market_actions():
     assert "few trades" in report
 
 
+def test_report_formats_volume_and_trade_counts_without_decimal_suffix():
+    df = pd.DataFrame([
+        {
+            "item_name": "Iron",
+            "latest_price": 12.345,
+            "current_price": 12.345,
+            "stable_fair_price_7d": 12.345,
+            "volume_7d": 31641,
+            "trades_7d": 31641,
+            "trade_count_7d": 31641,
+            "spread_pct": 1.2,
+            "range_pct": 3.4,
+            "momentum_7d_pct": 1.5,
+            "status": "OK",
+        }
+    ])
+
+    report = generate_html_report(df, top=0)
+
+    assert "12.345" in report
+    assert "31641" in report
+    assert "31641.000" not in report
+
+
+def test_generate_html_report_keeps_compatibility_with_price_precedence_fields():
+    df = pd.DataFrame([
+        {
+            "item_name": "Copper",
+            "last_trade_price": 10.0,
+            "quote_price": 10.5,
+            "mid_price": 10.25,
+            "current_price": 10.0,
+            "quote_gap_pct": 5.0,
+            "depth_imbalance_pct": -20.0,
+            "bid": 10.1,
+            "ask": 10.4,
+            "latest_spread_pct": 2.9,
+            "trades_7d": 8,
+            "high_7d": 10.8,
+            "low_7d": 9.7,
+            "spread_pct": 2.9,
+            "range_pct": 11.3,
+            "momentum_7d_pct": 1.6,
+            "status": "OK",
+        }
+    ])
+
+    report = generate_html_report(df, top=0)
+
+    assert "Copper" in report
+    assert "What To Pay And What To Expect" in report
+    assert "Fair Prices And Tomorrow Bias" in report
+
+
 def test_wait_signal_notes_show_buy_target():
     df = pd.DataFrame([
         {
