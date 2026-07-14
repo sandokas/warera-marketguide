@@ -1,97 +1,55 @@
-# Standard Market-Style Reporting Spec
+# Report and Liquidity Semantics
 
-## Goal
+## Report focus
 
-Update the report so it presents liquidity and volume in a way that resembles normal market data displays, while preserving the liquidity bar because it is useful for quick scanning.
+The HTML report presents market history and market quality: latest execution, fair value, change, range, volume, activity, spread, liquidity, and tendency. Trade-action labels are supporting interpretations, not guarantees or financial advice.
 
-## Desired presentation
+## Display conventions
 
-The report should present the following concepts clearly and separately:
+- Price-like values use three decimal places.
+- Volume is total traded quantity for the selected window.
+- Trades is the number of completed transactions for that window.
+- Counts and quantities do not receive a `.000` suffix.
+- Large quantities may use compact notation such as `31.6K`.
+- Signed changes use visual direction cues consistently.
 
-- Price fields: current/latest/fair/buy/sell values should keep three decimal places.
-- Volume: total traded quantity for the selected window.
-- Trades: number of completed transactions for the selected window.
-- Liquidity: a relative measure based on order-book depth and spread, shown as a bar.
+## Liquidity
 
-## Semantics
-
-### Price formatting
-
-- Display price-like values with three decimal places.
-- Do not append `.000` to non-price values such as volume or trade counts.
-- Keep formatting consistent across the compact table and the detail cards.
-
-### Volume
-
-- Volume should represent the sum of traded quantity over the selected window.
-- Display values as whole numbers for small values and compact notation for large values where helpful.
-- Do not use a synthetic large-scale score for volume.
-
-### Trades
-
-- Trades should be the count of completed transactions.
-- Keep it separate from volume.
-
-### Liquidity
-
-Liquidity should be derived from market structure, not from trade count multiplied by quantity.
-
-Recommended inputs:
-
-- best bid depth
-- best ask depth
-- current spread percentage (or spread absolute if percentage is unavailable)
-
-Recommended formula:
+Liquidity is based on current fetched order-book depth and spread, not trade count multiplied by volume:
 
 ```text
 depth = bid_depth + ask_depth
-spread_penalty = max(spread_pct, 0.5) / 100 + 1
-liquidity_score = depth / spread_penalty
+spread_penalty = 1 + max(spread_pct, 0.5) / 100
+liquidity = depth / spread_penalty
 ```
 
-Interpretation:
+Higher depth and a tighter spread increase the value. Missing depth produces a low value rather than an invented proxy.
 
-- higher depth and tighter spreads increase liquidity
-- wider spreads reduce the apparent liquidity score
+The horizontal liquidity bar is relative to the rows currently displayed:
 
-### Liquidity bar
+```text
+bar width = row liquidity / maximum displayed liquidity * 100
+```
 
-- Keep the horizontal bar.
-- Use it to show relative liquidity across items in the report.
-- Normalize the liquidity score across the current report rows so the bar reflects relative strength rather than an absolute, inflated number.
-- The bar should be visually comparable across rows.
+It supports quick comparison within one report and should not be compared as an absolute scale across separate reports.
 
-## Reporting columns
+## Compact market table
 
-Recommended columns for the compact report:
+The main table keeps these concepts separate:
 
-- Item
-- Latest
-- Change %
-- Min
-- Max
-- Fair
-- Volume
-- Trades
-- Spread %
-- Liquidity
-- Market State
+- item;
+- latest price;
+- percentage change;
+- historical minimum and maximum;
+- stable fair price;
+- traded volume;
+- completed trade count;
+- latest spread percentage;
+- relative liquidity;
+- market state.
 
-## Display rules
+The detail sections add fair-price thresholds, tomorrow bias, action context, and item notes where enough data is available.
 
-- Prices should use three decimals.
-- Volume and trades should not include trailing `.000`.
-- Liquidity should be displayed as a bar plus a compact textual value for the tooltip or summary, not as an inflated large-number score.
-- If depth data is missing, fall back to a neutral or low liquidity state rather than inventing a large score.
+## Output behavior
 
-## Acceptance criteria
-
-A report follows this spec when:
-
-1. Price values render with three decimal places.
-2. Volume values render without `.000`.
-3. Trade counts render as whole numbers.
-4. Liquidity is driven by depth and spread rather than a trade-count × quantity score.
-5. The liquidity bar remains present and is comparable across items.
-6. The numbers look plausible for a normal market report.
+`--top 0` displays all items; a positive value limits ranked HTML sections. CSV outputs retain the full calculated data frame. The report rank follows the metric sort order, and the automatic featured chart candidate follows that same order.

@@ -1,166 +1,173 @@
 # WarEra Market Guide
 
-A Python tool for WarEra market analysis.
+WarEra Market Guide is a local Python reporting tool for market history, price trends, liquidity, and order-book conditions. It can read the included sample CSV, sync live WarEra market data into SQLite, or build a report from an existing market database.
 
-The current implementation can generate reports from CSV or live API data. Live market runs sync current prices, order-book observations, and transaction history into SQLite, then build reports and charts from that database.
+Live data is normalized at the API boundary and stored in SQLite. Reports and charts read from that database; raw WarEra responses are not persisted.
 
-See:
+## Quick start
 
-- [AGENTS.md](AGENTS.md) for repository architecture rules.
-- [docs/market-db-reporting-spec.md](docs/market-db-reporting-spec.md) for the market database and reporting spec.
-
-## License
-
-This project is shared under the MIT License. See [LICENSE](LICENSE) for the full text.
-
-## Architecture
-
-The market database architecture is layered:
-
-- `api_client.py`: low-level HTTP only.
-- `warera_api.py`: WarEra endpoint parsing only.
-- `sync.py`: API-to-database sync orchestration.
-- `market_store.py`: the only SQLite/database access layer.
-- `market_data.py`: read models for reports and charts.
-- `metrics.py`, `charts.py`, `report.py`: calculations and output only.
-
-SQLite is the source of truth for live market history. Do not add JSON snapshot-based market workflows.
-
-The report direction is market history rather than day-trading picks: price evolution, min/max ranges, averages, VWAP, tendencies, volume, liquidity, spreads, and multi-window trends.
-
-## Formula
-
-The existing report includes a market-making score:
-
-```text
-Trading Attractiveness = (Effective Spread % × Window Trades) / Window Range %
-```
-
-This rewards markets with exploitable spreads, frequent trades, and relatively stable prices.
-Effective spread subtracts the minimum price tick from the raw bid/ask gap before scoring.
-
-This score is secondary to trend/history reporting.
-
-## Setup
+Create a virtual environment and install the dependencies:
 
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 ```
 
-## Run with sample data
+Generate a report from the included sample data:
 
 ```bash
-PYTHONPATH=src .venv/bin/python run_report.py --csv data/sample_market.csv --output output --top 0
-```
-
-## Run With API Data
-
-Put your API settings in `.env`:
-
-```text
-WARERA_API_KEY=your_key_here
-WARERA_API_BASE_URL=https://api2.warera.io/trpc
-```
-
-The script loads `.env` at runtime. Then run:
-
-```bash
-PYTHONPATH=src .venv/bin/python run_report.py --live --output output --top 0
-```
-
-Current live mode syncs every returned market good into `data/warera_market.sqlite3` by default:
-
-- current item prices
-- current order-book bid/ask observations
-- recent trade history
-
-Live mode defaults to a 1-day report. The API is rate-limited locally to 1 request per second by default. You can tune the live pull:
-
-```bash
-PYTHONPATH=src .venv/bin/python run_report.py --live --lookback-days 1 --order-limit 10 --history-pages 0 --min-interval 1
-```
-
-`--history-pages 0` fetches transaction pages until records are older than `--lookback-days`. Use a positive number for a faster capped pull.
-`--order-limit` only controls current order-book depth per good: `10` means the 10 best bids and 10 best asks right now. It does not limit historical transactions or how many goods appear in the report.
-`--min-tick` defaults to `0.001`, so a one-tick bid/ask gap is treated as non-exploitable.
-Use `--market-db path/to/market.sqlite3` to choose a different market database.
-
-Live runs print progress as they fetch each good and transaction page. Use `--quiet` to suppress progress output.
-Use `--verbose` during imports to print each transaction page, cursor state, fetched row count, inserted/skipped rows, and stop reason.
-Use `--exclude-item-code case1 --exclude-item-code case2` to remove specific non-good item codes from a live report.
-
-To sync the market database without generating report files:
-
-```bash
-PYTHONPATH=src .venv/bin/python run_report.py --sync --verbose
-```
-
-To render the featured trade chart from a live run:
-
-```bash
-PYTHONPATH=src .venv/bin/python run_report.py --live --lookback-days 1 --output output --charts --chart-interval 15min --chart-ma-window 4
-```
-
-The chart is written to `output/charts/featured-trade.png`. It uses 15-minute candles by default. One-day reports show candles and volume only; longer windows also plot a moving average and mark closes that break above or below that moving average. The automatic featured item follows the report rank order.
-Use `--featured-item-code bread` to force a specific item as the featured chart.
-Use `--chart-min-range-pct 5` to control the minimum visible y-axis range and avoid over-zooming tiny price moves.
-
-For custom non-market JSON records, use `--api-endpoint`:
-
-```bash
-PYTHONPATH=src .venv/bin/python run_report.py --api-endpoint "/your/custom/endpoint" --output output --top 0
-```
-
-If the API returns records nested inside a wrapper object, point the loader at the list:
-
-```bash
-PYTHONPATH=src .venv/bin/python run_report.py --api-endpoint "/your/custom/endpoint" --api-records-path "result.data.items"
-```
-
-You can also pass query parameters:
-
-```bash
-PYTHONPATH=src .venv/bin/python run_report.py --api-endpoint "/your/custom/endpoint" --api-param limit=100
+PYTHONPATH=src .venv/bin/python run_report.py --csv ./data/sample_market.csv --output output
 ```
 
 Generated files:
 
 ```text
+output/market_report.html
 output/market_trends.csv
 output/market_scores.csv
-output/market_report.html
 ```
 
-## Input CSV columns
+`market_scores.csv` is a compatibility copy of `market_trends.csv`.
 
-Minimum recommended columns:
+## Live market data
 
-```text
-item_name,bid,ask,trades_7d,high_7d,low_7d,current_price,open_7d,close_7d
-```
-
-`open_7d`, `close_7d`, and `current_price` are useful but optional.
-
-## API key
-
-Do not hardcode your key. Put these in `.env`:
+Copy `.env.example` to `.env` and set your API key:
 
 ```text
 WARERA_API_KEY=your_key_here
 WARERA_API_BASE_URL=https://api2.warera.io/trpc
 ```
 
-The API client uses:
+Do not commit or hardcode the key. Requests authenticate with the `X-Api-Key` header.
 
-```http
-X-Api-Key: <WARERA_API_KEY>
+Sync current quotes, order-book observations, and transactions, then generate a report:
+
+```bash
+PYTHONPATH=src .venv/bin/python run_report.py --live --output output
 ```
 
-It sleeps 1 second between requests by default, keeping usage below 200 requests/minute.
+The default database is `data/warera_market.sqlite3`, the report lookback is 7 days, the order-book depth is 10 orders per side, and requests are spaced at least 1 second apart. Override those values when needed:
 
-## Tests
+```bash
+PYTHONPATH=src .venv/bin/python run_report.py \
+  --live \
+  --market-db data/warera_market.sqlite3 \
+  --lookback-days 30 \
+  --order-limit 20 \
+  --min-interval 1 \
+  --output output
+```
+
+On incremental runs, transaction pagination stops at stored transactions or the per-item high-water mark. On a new database it continues until the API returns no cursor unless `--history-pages` sets a page cap.
+
+Use an explicit backfill to ignore high-water marks and stop at the lookback boundary:
+
+```bash
+PYTHONPATH=src .venv/bin/python run_report.py \
+  --sync \
+  --transaction-backfill \
+  --lookback-days 30
+```
+
+Useful sync options:
+
+- `--sync` updates SQLite without generating report files.
+- `--history-pages N` caps transaction pages per item; `0` means no page cap.
+- `--exclude-item-code CODE` excludes an item and may be repeated.
+- `--quiet` suppresses progress; `--verbose` shows page-level import details.
+- `--min-tick` changes the price increment removed from the raw spread when calculating trading attractiveness. It defaults to `0.001`.
+
+## Reports from an existing database
+
+Generate a report without making API calls:
+
+```bash
+PYTHONPATH=src .venv/bin/python run_report.py \
+  --from-db \
+  --market-db data/warera_market.sqlite3 \
+  --lookback-days 7 \
+  --output output
+```
+
+When no input option is supplied, the CLI uses the default market database if it exists; otherwise it uses `data/sample_market.csv`. Prefer `--from-db` or an explicit CSV path in scripts so the input is clear.
+
+## Charts
+
+Charts are currently available during a live report run:
+
+```bash
+PYTHONPATH=src .venv/bin/python run_report.py \
+  --live \
+  --charts \
+  --chart-interval 15min \
+  --chart-ma-window 4 \
+  --output output
+```
+
+The featured chart is written to `output/charts/featured-trade.png` and embedded in the HTML report. Use `--featured-item-code bread` to prefer a particular item and `--chart-min-range-pct 5` to set the minimum visible price range. A moving average is shown only when `--lookback-days` is greater than 1.
+
+## Other input modes
+
+### CSV
+
+The minimum useful CSV fields are:
+
+```text
+item_name,bid,ask,trades_7d,high_7d,low_7d
+```
+
+`current_price`, `open_7d`, and `close_7d` improve the report but are optional. See `data/sample_market.csv` for a complete example.
+
+### Custom JSON endpoint
+
+`--api-endpoint` supports non-market JSON records through the generic API client:
+
+```bash
+PYTHONPATH=src .venv/bin/python run_report.py \
+  --api-endpoint /your/custom/endpoint \
+  --api-records-path result.data.items \
+  --api-param limit=100 \
+  --output output
+```
+
+`--api-param` may be repeated. This compatibility path does not sync data into the market database.
+
+Run `PYTHONPATH=src .venv/bin/python run_report.py --help` for the complete option list.
+
+## Market semantics
+
+Executed transactions are the primary price source. The report distinguishes:
+
+- `last_trade_price`: newest execution in the queried window;
+- `quote_price`: newest price-endpoint observation;
+- `mid_price`: midpoint of the newest best bid and ask;
+- `current_price`: last trade, then quote, then midpoint as fallback.
+
+Transaction history drives open, high, low, close, VWAP, median, percentiles, volume, and trend metrics. Order-book depth and spread drive liquidity. The trading-attractiveness score remains a secondary compatibility metric:
+
+```text
+Trading Attractiveness = (Effective Spread % x Window Trades) / Window Range %
+```
+
+Effective spread subtracts the minimum price tick from the raw bid/ask gap.
+
+More detail is available in:
+
+- [Market database and architecture](docs/market-db-reporting-spec.md)
+- [Market data semantics](docs/market-data-model-spec.md)
+- [Report and liquidity semantics](docs/market-reporting-liquidity-spec.md)
+- [Repository architecture rules](AGENTS.md)
+
+## Development
+
+Run the test suite with the existing virtual environment:
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m pytest
 ```
+
+Only `market_store.py` accesses SQLite, only `api_client.py` performs HTTP requests, and only `warera_api.py` knows WarEra market endpoint names and payload shapes. Keep new work within those boundaries.
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE).
