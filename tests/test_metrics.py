@@ -1,4 +1,27 @@
-from warera_quant.metrics import calculate_metrics, classify_tendency
+import pytest
+
+from warera_quant.metrics import calculate_liquidity_score, calculate_metrics, classify_tendency
+
+
+def test_liquidity_score_uses_depth_and_spread_penalty():
+    assert calculate_liquidity_score(
+        bid_depth=40,
+        ask_depth=60,
+        spread_pct=2,
+    ) == pytest.approx(100 / 1.02)
+
+
+def test_liquidity_score_uses_spread_floor_and_low_fallback_for_missing_depth():
+    assert calculate_liquidity_score(
+        bid_depth=40,
+        ask_depth=60,
+        spread_pct=None,
+    ) == pytest.approx(100 / 1.005)
+    assert calculate_liquidity_score(
+        bid_depth=None,
+        ask_depth=None,
+        spread_pct=2,
+    ) == 0.0
 
 
 def test_calculate_metrics_basic():

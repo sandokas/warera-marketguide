@@ -53,6 +53,24 @@ def _float_or_none(value: object) -> Optional[float]:
     return float(value) if _valid_number(value) else None
 
 
+def calculate_liquidity_score(
+    *,
+    bid_depth: object,
+    ask_depth: object,
+    spread_pct: object = None,
+) -> float:
+    """Return a depth-based liquidity score penalized by the current spread."""
+    bid = _float_or_none(bid_depth)
+    ask = _float_or_none(ask_depth)
+    depth = max(bid or 0.0, 0.0) + max(ask or 0.0, 0.0)
+    if depth <= 0:
+        return 0.0
+
+    spread = _float_or_none(spread_pct)
+    spread_floor = max(spread or 0.0, 0.5)
+    return depth / (1 + spread_floor / 100)
+
+
 def calculate_metrics(row: dict) -> MarketMetrics:
     item_name = str(row.get("item_name") or row.get("name") or row.get("item") or "Unknown")
     item_code = row.get("item_code")

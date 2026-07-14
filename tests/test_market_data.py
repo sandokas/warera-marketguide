@@ -92,7 +92,7 @@ def test_load_market_rows_computes_window_statistics(tmp_path):
     assert stats["latest_spread"] == 1.0
     assert stats["latest_spread_pct"] == pytest.approx(15.384615)
     assert stats["average_spread"] == 1.0
-    assert stats["liquidity"] == pytest.approx(3 * 40 / (1 + 15.384615 / 100))
+    assert stats["liquidity"] == pytest.approx(30 / (1 + 15.384615 / 100))
     assert stats["rolling_average"] == pytest.approx((2 + 5 + 6) / 3)
     assert stats["distance_from_rolling_average"] == pytest.approx(6 - ((2 + 5 + 6) / 3))
     assert stats["tendency"] == "Rising"
@@ -223,6 +223,21 @@ def test_load_market_rows_falls_back_to_quote_price_when_no_trade_exists(tmp_pat
     assert row["current_price"] == pytest.approx(97.5)
     assert row["latest_price"] == pytest.approx(97.5)
     assert row["quote_gap_pct"] is None
+
+
+def test_load_market_rows_uses_low_liquidity_fallback_when_depth_is_missing(tmp_path):
+    with _store(tmp_path) as store:
+        store.upsert_transactions(
+            "gold",
+            [_transaction("tx-1", "2026-06-30T11:00:00Z", money=100, quantity=10)],
+            fetched_at=NOW,
+        )
+
+        row = load_market_rows(store, windows=["1D"], now=NOW)[0]
+
+    assert row["volume_1d"] == 10
+    assert row["trade_count_1d"] == 1
+    assert row["liquidity_1d"] == 0
 
 
 def test_load_market_rows_tracks_quote_divergence_and_depth_imbalance(tmp_path):

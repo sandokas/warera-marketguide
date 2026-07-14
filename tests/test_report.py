@@ -91,7 +91,7 @@ def test_report_foregrounds_market_trends_and_writes_compatibility_csv(tmp_path)
             "average_7d": 5.8,
             "vwap_7d": 5.9,
             "volume_7d": 100,
-            "liquidity_7d": 748_508_664_657,
+            "liquidity_7d": 250,
             "latest_spread_pct": 1.2,
             "tendency_labels_7d": "Rising, Volatile",
             "bid": 6.2,
@@ -128,8 +128,8 @@ def test_report_foregrounds_market_trends_and_writes_compatibility_csv(tmp_path)
     assert "chip-hold" in report
     assert "signed-positive" in report
     assert "liquidity-fill" in report
-    assert ">748.5B<" in report
-    assert 'title="748508664657"' in report
+    assert ">250<" in report
+    assert 'title="250"' in report
     assert 'class="col-spread-pct number"' in report
     assert 'class="col-now number"' in report
     assert "th:nth-child(2), td:nth-child(2)" not in report
@@ -143,6 +143,7 @@ def test_report_foregrounds_market_trends_and_writes_compatibility_csv(tmp_path)
     assert "grid-template-columns: minmax(72px, 1fr) 48px" in report
     assert "min-width: 188px" in report
     assert 'class="col-7d-trades number"' in report
+    assert 'class="col-trades number"' in report
     assert "Market-Making Score" not in report
 
 
@@ -203,6 +204,43 @@ def test_report_formats_volume_and_trade_counts_without_decimal_suffix():
     assert "12.345" in report
     assert "31641" in report
     assert "31641.000" not in report
+    assert ">31.6K<" in report
+    assert ">Volume<" in report
+    assert ">Trades<" in report
+
+
+def test_report_normalizes_liquidity_bars_across_current_rows():
+    df = pd.DataFrame([
+        {
+            "item_name": "Deep Market",
+            "latest_price": 10,
+            "volume_7d": 100,
+            "trade_count_7d": 8,
+            "trades_7d": 8,
+            "liquidity_7d": 200,
+            "latest_spread_pct": 1,
+            "momentum_7d_pct": 1,
+            "range_pct": 2,
+        },
+        {
+            "item_name": "Shallow Market",
+            "latest_price": 5,
+            "volume_7d": 50,
+            "trade_count_7d": 3,
+            "trades_7d": 3,
+            "liquidity_7d": 50,
+            "latest_spread_pct": 2,
+            "momentum_7d_pct": -1,
+            "range_pct": 3,
+        },
+    ])
+
+    report = generate_html_report(df, top=0)
+
+    assert 'class="liquidity-fill" style="width: 100.0%"' in report
+    assert 'class="liquidity-fill" style="width: 25.0%"' in report
+    assert "200.000" not in report
+    assert "50.000" not in report
 
 
 def test_generate_html_report_keeps_compatibility_with_price_precedence_fields():

@@ -669,6 +669,11 @@ def _render_table_cell(column: str, value: object, *, max_liquidity: float | Non
         return _market_state_chips(value)
     if column == "Liquidity":
         return _liquidity_bar(value, max_liquidity=max_liquidity)
+    if column == "Volume":
+        number = _number(value)
+        if number is None:
+            return escape(_fmt_report_value(value, column=column))
+        return f'<span title="{escape(_fmt(number, 0))}">{escape(_fmt_compact(number))}</span>'
     if column in {"Gap %", "Change %"} or column.endswith("Momentum %"):
         return _signed_number(value, invert=column == "Gap %")
     return escape(_fmt_report_value(value, column=column))
@@ -958,7 +963,8 @@ def generate_html_report(
     trend_candidates = df.copy()
     if not trend_candidates.empty:
         change_col = _column(df, f"percent_change_{window_key}", "momentum_7d_pct")
-        volume_col = _column(df, f"volume_{window_key}", f"traded_quantity_{window_key}", "trades_7d")
+        volume_col = _column(df, f"volume_{window_key}", f"traded_quantity_{window_key}")
+        trades_col = _column(df, f"trade_count_{window_key}", "trades_7d")
         liquidity_col = _column(df, f"liquidity_{window_key}")
         sort_cols = [col for col in [liquidity_col, volume_col] if col]
         if sort_cols:
@@ -972,8 +978,9 @@ def generate_html_report(
             (_column(df, f"max_{window_key}", "high_7d") or "", "Max"),
             (_column(df, f"stable_fair_price_{window_key}", "stable_fair_price_7d", f"vwap_{window_key}") or "", "Fair"),
             (volume_col or "", "Volume"),
-            (liquidity_col or "", "Liquidity"),
+            (trades_col or "", "Trades"),
             (_column(df, "latest_spread_pct", f"average_spread_pct_{window_key}", "spread_pct") or "", "Spread %"),
+            (liquidity_col or "", "Liquidity"),
             (_column(df, f"tendency_labels_{window_key}", f"tendency_{window_key}") or "", "Market State"),
         ]
         selected = [(source, label) for source, label in table_columns if source and source in view.columns]
@@ -981,7 +988,7 @@ def generate_html_report(
         blocks.append(
             f"""    <section>
       <h2>Market Trends</h2>
-      <p class="muted">Compact history view: current price, recent change, fair value, volume, liquidity, spread, and market state.</p>
+      <p class="muted">Compact history view: prices, traded volume, completed trades, spread, relative liquidity, and market state.</p>
       {_compact_table_html(trend_table, table_kind="trend")}
     </section>"""
         )
@@ -1104,10 +1111,14 @@ def generate_html_report(
         notes: list[str] = []
         for _, row in note_rows.iterrows():
             fair, buy_below, sell_above = _fair_price_band(row, window_key)
+            volume = _first_number(row, f"volume_{window_key}", f"traded_quantity_{window_key}")
+            trades = _first_number(row, f"trade_count_{window_key}", "trades_7d")
+            liquidity = _first_number(row, f"liquidity_{window_key}")
             detail_items = [
                 f"<li>Fair / Buy below / Sell above: <strong>{escape(_fmt(fair))} / {escape(_fmt(buy_below))} / {escape(_fmt(sell_above))}</strong></li>",
                 f"<li>Bid / Ask: <strong>{escape(_fmt(row.get('bid')))} / {escape(_fmt(row.get('ask')))}</strong></li>",
-                f"<li>{escape(metric_window)} trades: <strong>{escape(_fmt(row.get('trades_7d'), 0))}</strong></li>",
+                f"<li>{escape(metric_window)} volume / trades: <strong>{escape(_fmt(volume, 0))} / {escape(_fmt(trades, 0))}</strong></li>",
+                f"<li>Liquidity depth score: <strong>{escape(_fmt(liquidity, 1))}</strong></li>",
                 f"<li>{escape(metric_window)} range: <strong>{escape(_fmt(row.get('range_pct'), 2))}%</strong></li>",
             ]
             if row.get("momentum_7d_pct") is not None and not pd.isna(row.get("momentum_7d_pct")):

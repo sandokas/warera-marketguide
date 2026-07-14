@@ -7,7 +7,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from .market_store import MarketStore
-from .metrics import classify_tendency
+from .metrics import calculate_liquidity_score, classify_tendency
 
 
 SUPPORTED_REPORT_WINDOWS = ("1D", "7D", "30D", "90D", "1Y")
@@ -319,7 +319,11 @@ def _window_stats(
         "distance_from_rolling_average": distance_from_rolling_average,
         "distance_from_rolling_average_pct": distance_from_rolling_average_pct,
     }
-    stats["liquidity"] = _liquidity_score(stats["trade_count"], volume, spread_pct)
+    stats["liquidity"] = calculate_liquidity_score(
+        bid_depth=stats["latest_bid_depth"],
+        ask_depth=stats["latest_ask_depth"],
+        spread_pct=spread_pct,
+    )
     tendency_labels = classify_tendency(
         open_price=stats["open"],
         close_price=stats["close"],
@@ -358,13 +362,6 @@ def _add_legacy_metric_fields(
 
 def _rows_since(rows: list[dict[str, Any]], since_epoch: int, field: str) -> list[dict[str, Any]]:
     return [row for row in rows if row[field] >= since_epoch]
-
-
-def _liquidity_score(trade_count: int, volume: float, spread_pct: float | None) -> float:
-    if trade_count <= 0 or volume <= 0:
-        return 0.0
-    spread_penalty = 1 + max(spread_pct or 0.0, 0.0) / 100
-    return trade_count * volume / spread_penalty
 
 
 def _display_name(item_code: str) -> str:
