@@ -35,7 +35,8 @@ def test_swing_lens_explains_quotes_without_making_momentum_trade_recommendation
     assert "Last" in report
     assert "Fair Prices And Tomorrow Bias" in report
     assert "Flip Board" in report
-    assert "Break-even Exit VWAP" in report
+    assert "Break-even Exit VWAP" not in report
+    assert ">Entry<" not in report
     assert "Evidence" in report
     assert "Unavailable" in report
     assert "Trust" not in report
@@ -144,6 +145,10 @@ def test_report_foregrounds_market_trends_and_writes_compatibility_csv(tmp_path)
     assert "align-right" not in report
     assert ".compact-table .report-table" in report
     assert "width: max-content" in report
+    assert ".table-wrap { overflow-x: auto; }" in report
+    assert ".flip-board .report-table" in report
+    assert "table-layout: fixed" in report
+    assert "overflow-x: clip" not in report
     assert ".compact-table td.number" in report
     assert "font-variant-numeric: tabular-nums" in report
     assert "min-width: 220px" in report
@@ -340,7 +345,7 @@ def test_fair_price_table_distinguishes_thresholds_from_historical_range():
 
     report = generate_html_report(df, top=0, metric_window="7D")
 
-    assert ">Break-even Exit VWAP<" in report
+    assert ">Break-even Exit VWAP<" not in report
     assert "Historical fair context" in report
     assert "Insufficient" in report
 
@@ -378,6 +383,45 @@ def test_profit_first_board_ranks_supported_row_and_displays_downside_and_assump
     assert report.index("Supported Item") < report.index("Watch Item")
     assert "Fees assumed: 1.50% per side" in report
     assert "Downside P10 net margin: -5.00%" in report
-    assert "Best supported net margin" in report
+    assert ">Entry<" in report
+    assert ">Forecast Exit<" in report
+    assert ">Expected Net<" in report
+    assert ">Qty<" not in report
+    assert ">Ask VWAP<" not in report
+    assert ">Median Net Profit<" not in report
+    assert 'class="chip chip-strong"><span>↗</span>Potential flip</span>' in report
+    assert 'class="chip chip-wait"><span>◷</span>Watch</span>' in report
+    assert '<span class="metric-label">BE</span> 10.700' in report
+    assert '<span class="metric-label">P10</span> 9.800' in report
+    assert "Best Supported Net Margin" in report
+    assert "Lowest Break-even Exit" in report
+    assert "Best Downside Profile" in report
+    assert "Avoid / Data Problem" in report
+    assert report.count('<article class="summary-card') == 4
+
+
+def test_flip_board_collapses_empty_metrics_and_explains_quantity_gap():
+    report = generate_html_report(pd.DataFrame([{
+        "item_name": "Heavy Ammo",
+        "flip_verdict": "Unavailable",
+        "flip_reason_codes": "missing_execution_interval",
+        "flip_quantity": 100,
+        "flip_forecast_evidence": "Weak",
+        "flip_forecast_samples": 30,
+        "forecast_execution_evaluable_samples": 0,
+        "flip_quote_age_minutes": 0.83,
+        "flip_passive_limit_price": 2.39,
+    }]), assumptions=FlipAssumptions(quantity=100))
+
+    assert "No quantity-100 flip can be evaluated yet" in report
+    assert "Historical order books do not contain enough fully executable entry/exit observations at that size" in report
+    assert "0 executable · 30 forecasts" in report
+    assert "Quote age 0.8m" in report
+    assert report.count("Not enough same-size historical fills") == 1
+    assert "Limit idea" not in report
+    assert ">Entry<" not in report
+    assert ">Forecast Exit<" not in report
+    assert ">Net<" not in report
+    assert "Best Supported Net Margin" in report
     assert "Trend Highlights" not in report
     assert "Immediate Loss" not in report

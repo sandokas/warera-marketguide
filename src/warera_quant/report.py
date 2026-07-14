@@ -15,7 +15,7 @@ _FLIP_REASON_LABELS = {
     "missing_order_book": "Current order-book levels are unavailable",
     "missing_timestamp": "The quote timestamp is unavailable",
     "missing_forecast": "A current validated forecast is unavailable",
-    "missing_execution_interval": "Same-quantity historical entry/exit evidence is unavailable",
+    "missing_execution_interval": "Not enough same-size historical fills",
     "stale_quote": "The quote is older than the configured maximum",
     "insufficient_ask_depth": "The requested quantity cannot be fully filled from current asks",
     "invalid_book": "The order book or calculated prices are invalid",
@@ -228,6 +228,7 @@ def _html_page(title: str, body: str) -> str:
     .summary-card-up {{ border-left-color: var(--good); }}
     .summary-card-down {{ border-left-color: var(--bad); }}
     .summary-card-neutral {{ border-left-color: var(--amber); }}
+    .summary-card-info {{ border-left-color: var(--accent); }}
     .summary-card strong {{
       display: flex;
       align-items: center;
@@ -249,6 +250,7 @@ def _html_page(title: str, body: str) -> str:
     .summary-card-up .summary-arrow {{ background: var(--good-soft); color: var(--good); }}
     .summary-card-down .summary-arrow {{ background: var(--bad-soft); color: var(--bad); }}
     .summary-card-neutral .summary-arrow {{ background: var(--amber-soft); color: var(--amber); }}
+    .summary-card-info .summary-arrow {{ background: var(--accent-soft); color: var(--accent); }}
     .pill {{
       display: inline-block;
       padding: 3px 8px;
@@ -409,6 +411,58 @@ def _html_page(title: str, body: str) -> str:
       width: 80px;
       min-width: 80px;
     }}
+    .flip-board {{
+      width: 100%;
+      overflow: visible;
+    }}
+    .flip-board .report-table {{
+      width: 100%;
+      table-layout: fixed;
+    }}
+    .flip-board th,
+    .flip-board td {{
+      padding: 12px 10px;
+      max-width: none;
+      text-align: left;
+      overflow-wrap: break-word;
+    }}
+    .flip-board .col-item {{ width: 12%; }}
+    .flip-board .col-verdict {{ width: 11%; }}
+    .flip-board .col-entry {{ width: 16%; }}
+    .flip-board .col-forecast-exit {{ width: 16%; }}
+    .flip-board .col-expected-net {{ width: 11%; }}
+    .flip-board .col-evidence {{ width: 16%; }}
+    .flip-board .col-why {{ width: 18%; }}
+    .flip-item {{
+      color: #f8fafc;
+      font-weight: 750;
+      line-height: 1.25;
+    }}
+    .metric-primary {{
+      color: var(--text);
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      line-height: 1.3;
+    }}
+    .metric-detail {{
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-variant-numeric: tabular-nums;
+      line-height: 1.35;
+    }}
+    .metric-label {{ color: #cbd5e1; font-weight: 650; }}
+    .flip-board .chip {{ white-space: normal; text-align: center; }}
+    .flip-why {{ color: #cbd5e1; font-size: 0.82rem; line-height: 1.4; }}
+    .flip-board-notice {{
+      margin: 12px 0;
+      padding: 12px 14px;
+      border: 1px solid rgba(251, 191, 36, 0.35);
+      border-left: 4px solid var(--amber);
+      border-radius: 8px;
+      background: rgba(66, 49, 13, 0.34);
+      color: #fde68a;
+    }}
     .chart {{
       width: 100%;
       max-height: 720px;
@@ -432,6 +486,53 @@ def _html_page(title: str, body: str) -> str:
       header {{ display: block; padding: 18px; }}
       h1 {{ font-size: 1.65rem; }}
       th, td {{ padding: 8px; }}
+    }}
+    @media (max-width: 860px) {{
+      .flip-board thead {{
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+      }}
+      .flip-board .report-table,
+      .flip-board tbody {{ display: block; }}
+      .flip-board tr {{
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        margin-bottom: 12px;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+      }}
+      .flip-board td,
+      .flip-board .col-item,
+      .flip-board .col-verdict,
+      .flip-board .col-entry,
+      .flip-board .col-forecast-exit,
+      .flip-board .col-expected-net,
+      .flip-board .col-evidence,
+      .flip-board .col-why {{
+        display: block;
+        width: auto;
+        border-bottom: 1px solid var(--line);
+      }}
+      .flip-board td::before {{
+        display: block;
+        margin-bottom: 5px;
+        color: var(--muted);
+        content: attr(data-label);
+        font-size: 0.68rem;
+        font-weight: 750;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }}
+    }}
+    @media (max-width: 520px) {{
+      main {{ width: min(100% - 20px, 1180px); padding-top: 10px; }}
+      .flip-board tr {{ grid-template-columns: 1fr; }}
     }}
   </style>
 </head>
@@ -466,6 +567,148 @@ def _compact_table_html(df: pd.DataFrame, *, table_kind: str = "trend") -> str:
         "</table>"
     )
     return f'<div class="table-wrap compact-table {kind_class}">{table}</div>'
+
+
+def _flip_verdict_chip(verdict: object) -> str:
+    label = str(verdict)
+    tone, icon = {
+        "Potential flip": ("strong", "↗"),
+        "Watch": ("wait", "◷"),
+        "No trade": ("sell", "×"),
+        "Unavailable": ("weak", "!"),
+    }.get(label, ("check", "•"))
+    return _chip(label, tone, prefix=icon)
+
+
+def _evidence_chip(evidence: object) -> str:
+    label = str(evidence)
+    normalized = label.strip().lower()
+    tone = {
+        "supported": "strong",
+        "strong": "strong",
+        "usable": "usable",
+        "medium": "medium",
+        "limited": "low",
+        "low": "low",
+        "weak": "weak",
+        "insufficient": "weak",
+    }.get(normalized, "check")
+    return _chip(label, tone)
+
+
+def _flip_board_html(
+    rows: list[dict[str, object]],
+    *,
+    show_entry: bool,
+    show_forecast: bool,
+    show_net: bool,
+    suppress_execution_reason: bool,
+) -> str:
+    columns = ["Item", "Verdict"]
+    if show_entry:
+        columns.append("Entry")
+    if show_forecast:
+        columns.append("Forecast Exit")
+    if show_net:
+        columns.append("Expected Net")
+    columns.extend(["Evidence", "Why"])
+
+    header = "".join(
+        f'<th class="{_column_css_class(column)}" scope="col">{escape(column)}</th>'
+        for column in columns
+    )
+    body_rows: list[str] = []
+    for row in rows:
+        item = f'<strong class="flip-item">{escape(str(row["Item"]))}</strong>'
+        verdict = _flip_verdict_chip(row["Verdict"])
+
+        entry_average = _number(row.get("_entry_average"))
+        entry_cost = _number(row.get("_entry_cost"))
+        break_even = _number(row.get("Break-even Exit VWAP"))
+        quantity = _number(row.get("Qty"))
+        entry = '<span class="metric-primary">—</span>'
+        if entry_average is not None:
+            qty_text = f'{quantity:g} @ ' if quantity is not None else ""
+            entry = f'<div class="metric-primary">{escape(qty_text + _fmt(entry_average))}</div>'
+        details = []
+        if entry_cost is not None:
+            details.append(f'<span class="metric-label">Cost</span> {escape(_fmt(entry_cost))}')
+        if break_even is not None:
+            details.append(f'<span class="metric-label">BE</span> {escape(_fmt(break_even))}')
+        if details:
+            entry += f'<div class="metric-detail">{" · ".join(details)}</div>'
+
+        exit_p10 = _number(row.get("_exit_p10"))
+        exit_median = _number(row.get("_exit_median"))
+        exit_p90 = _number(row.get("_exit_p90"))
+        forecast = '<span class="metric-primary">—</span>'
+        if exit_median is not None:
+            forecast = (
+                f'<div class="metric-primary"><span class="metric-label">Median</span> '
+                f'{escape(_fmt(exit_median))}</div>'
+            )
+        forecast_details = []
+        if exit_p10 is not None:
+            forecast_details.append(f'<span class="metric-label">P10</span> {escape(_fmt(exit_p10))}')
+        if exit_p90 is not None:
+            forecast_details.append(f'<span class="metric-label">P90</span> {escape(_fmt(exit_p90))}')
+        if forecast_details:
+            forecast += f'<div class="metric-detail">{" · ".join(forecast_details)}</div>'
+
+        margin = _number(row.get("_margin"))
+        profit = _number(row.get("_profit"))
+        net = '<span class="metric-primary">—</span>'
+        if margin is not None:
+            tone = "positive" if margin > 0 else "negative" if margin < 0 else "neutral"
+            net = f'<div class="metric-primary signed-{tone}">{margin:+.2f}%</div>'
+        if profit is not None:
+            tone = "positive" if profit > 0 else "negative" if profit < 0 else "neutral"
+            net += (
+                f'<div class="metric-detail"><span class="metric-label">Profit</span> '
+                f'<span class="signed-{tone}">{escape(_fmt(profit))}</span></div>'
+            )
+
+        execution_samples = _number(row.get("_execution_samples"))
+        forecast_samples = int(_number(row.get("_samples")) or 0)
+        execution_text = "—" if execution_samples is None else str(int(execution_samples))
+        evidence = _evidence_chip(row["Evidence"])
+        evidence += (
+            f'<div class="metric-detail">{execution_text} executable · '
+            f'{forecast_samples} forecasts</div>'
+        )
+        quote_age = _number(row.get("Quote Age"))
+        if quote_age is not None:
+            evidence += f'<div class="metric-detail">Quote age {_fmt(quote_age, 1)}m</div>'
+
+        reason_labels = list(row.get("_reason_labels", []))
+        if suppress_execution_reason:
+            reason_labels = [
+                label for code, label in zip(row.get("_codes", []), reason_labels)
+                if code != "missing_execution_interval"
+            ]
+        why_parts = [*reason_labels, *list(row.get("_why_addenda", []))]
+        why = escape(". ".join(part for part in why_parts if part)) if why_parts else "—"
+        cells = {
+            "Item": item,
+            "Verdict": verdict,
+            "Entry": entry,
+            "Forecast Exit": forecast,
+            "Expected Net": net,
+            "Evidence": evidence,
+            "Why": f'<span class="flip-why">{why}</span>',
+        }
+        body_rows.append("<tr>" + "".join(
+            f'<td class="{_column_css_class(column)}" data-label="{escape(column)}">{cells[column]}</td>'
+            for column in columns
+        ) + "</tr>")
+
+    return (
+        '<div class="flip-board">'
+        '<table class="report-table">'
+        f'<thead><tr>{header}</tr></thead>'
+        f'<tbody>{"".join(body_rows)}</tbody>'
+        '</table></div>'
+    )
 
 
 def _column_css_class(column: str) -> str:
@@ -651,33 +894,58 @@ def generate_html_report(
         verdict = str(_present(row.get("flip_verdict"), "Unavailable"))
         reason_value = _present(row.get("flip_reason_codes"), "missing_order_book")
         codes = [code.strip() for code in str(reason_value).split(",") if code.strip()]
-        why = "; ".join(_FLIP_REASON_LABELS.get(code, code.replace("_", " ")) for code in codes)
+        reason_labels = [_FLIP_REASON_LABELS.get(code, code.replace("_", " ")) for code in codes]
+        why_addenda: list[str] = []
         if "insufficient_ask_depth" in codes:
             filled = _number(row.get("flip_entry_filled_quantity")) or 0.0
-            why += f" ({filled:g} of {assumptions.quantity:g} available)"
+            index = codes.index("insufficient_ask_depth")
+            reason_labels[index] += f" ({filled:g} of {assumptions.quantity:g} available)"
         passive = _number(row.get("flip_passive_limit_price"))
-        if passive is not None:
-            why += f". Limit idea — fill not estimated: {_fmt(passive)}"
+        if passive is not None and verdict != "Unavailable":
+            why_addenda.append(f"Limit idea — fill not estimated: {_fmt(passive)}")
         downside = _number(row.get("flip_net_margin_p10_pct"))
         if downside is not None:
-            why += f". Downside P10 net margin: {downside:.2f}%"
+            why_addenda.append(f"Downside P10 net margin: {downside:.2f}%")
+        quantity = _number(row.get("flip_quantity")) or assumptions.quantity
+        entry_average = _number(row.get("flip_entry_average_price"))
+        entry_cost = _number(row.get("flip_total_entry_cost"))
+        break_even = _number(row.get("flip_break_even_exit_vwap"))
+        exit_p10 = _number(row.get("flip_forecast_exit_vwap_p10"))
+        exit_median = _number(row.get("flip_forecast_exit_vwap_median"))
+        exit_p90 = _number(row.get("flip_forecast_exit_vwap_p90"))
+        margin = _number(row.get("flip_net_margin_median_pct"))
+        profit = _number(row.get("flip_net_profit_median"))
+        forecast_samples = int(_number(row.get("flip_forecast_samples")) or 0)
+        execution_sample_value = _number(row.get("forecast_execution_evaluable_samples"))
+        quote_age = _number(row.get("flip_quote_age_minutes"))
+
+        evidence = str(_present(
+            row.get("flip_forecast_evidence"),
+            _present(row.get("forecast_evidence"), "Insufficient"),
+        ))
+        why = ". ".join([*reason_labels, *why_addenda])
+
         opportunity_rows.append({
             "Item": row.get("item_name", "Unknown"), "Verdict": verdict,
-            "Qty": row.get("flip_quantity", assumptions.quantity),
-            "Ask VWAP": row.get("flip_entry_average_price"),
-            "Entry Cost": row.get("flip_total_entry_cost"),
+            "Evidence": evidence,
+            "Why": why,
+            "Qty": quantity,
             "Break-even Exit VWAP": row.get("flip_break_even_exit_vwap"),
-            f"{assumptions.forecast_horizon_hours:g}h Exit VWAP P10": row.get("flip_forecast_exit_vwap_p10"),
-            f"{assumptions.forecast_horizon_hours:g}h Exit VWAP Median": row.get("flip_forecast_exit_vwap_median"),
-            f"{assumptions.forecast_horizon_hours:g}h Exit VWAP P90": row.get("flip_forecast_exit_vwap_p90"),
             "Median Net Margin %": row.get("flip_net_margin_median_pct"),
-            "Median Net Profit": row.get("flip_net_profit_median"),
-            "Evidence": _present(row.get("flip_forecast_evidence"), _present(row.get("forecast_evidence"), "Insufficient")),
-            "Samples": _present(row.get("flip_forecast_samples"), _present(row.get("forecast_evaluable_samples"), 0)),
-            "Quote Age": row.get("flip_quote_age_minutes"), "Why": why,
-            "_margin": _number(row.get("flip_net_margin_median_pct")),
+            "Quote Age": quote_age,
+            "_codes": codes,
+            "_reason_labels": reason_labels,
+            "_why_addenda": why_addenda,
+            "_entry_average": entry_average,
+            "_entry_cost": entry_cost,
+            "_exit_p10": exit_p10,
+            "_exit_median": exit_median,
+            "_exit_p90": exit_p90,
+            "_margin": margin,
+            "_profit": profit,
             "_p10": _number(row.get("flip_net_margin_p10_pct")),
-            "_samples": _number(row.get("flip_forecast_samples")) or 0,
+            "_samples": forecast_samples,
+            "_execution_samples": execution_sample_value,
         })
     verdict_order = {"Potential flip": 0, "Watch": 1, "No trade": 2, "Unavailable": 3}
     opportunity_rows.sort(key=lambda row: (
@@ -686,34 +954,79 @@ def generate_html_report(
         -float(row["_samples"]), str(row["Item"]),
     ))
     opportunity_rows = opportunity_rows[:display_count]
-    visible_columns = [
-        "Item", "Verdict", "Qty", "Ask VWAP", "Entry Cost", "Break-even Exit VWAP",
-        f"{assumptions.forecast_horizon_hours:g}h Exit VWAP P10",
-        f"{assumptions.forecast_horizon_hours:g}h Exit VWAP Median",
-        f"{assumptions.forecast_horizon_hours:g}h Exit VWAP P90",
-        "Median Net Margin %", "Median Net Profit", "Evidence", "Samples", "Quote Age", "Why",
-    ]
-    flip_table = pd.DataFrame(opportunity_rows, columns=visible_columns)
+    show_entry = any(
+        row.get("_entry_average") is not None
+        or row.get("_entry_cost") is not None
+        or _number(row.get("Break-even Exit VWAP")) is not None
+        for row in opportunity_rows
+    )
+    show_forecast = any(
+        row.get("_exit_p10") is not None
+        or row.get("_exit_median") is not None
+        or row.get("_exit_p90") is not None
+        for row in opportunity_rows
+    )
+    show_net = any(
+        row.get("_margin") is not None or row.get("_profit") is not None
+        for row in opportunity_rows
+    )
+    has_execution_gap = bool(opportunity_rows) and all(
+        "missing_execution_interval" in row["_codes"] for row in opportunity_rows
+    )
+    execution_notice = ""
+    if has_execution_gap:
+        execution_notice = (
+            f'<div class="flip-board-notice"><strong>No quantity-{assumptions.quantity:g} flip can be evaluated yet.</strong> '
+            'Historical order books do not contain enough fully executable entry/exit observations at that size.</div>'
+        )
+    flip_board = _flip_board_html(
+        opportunity_rows,
+        show_entry=show_entry,
+        show_forecast=show_forecast,
+        show_net=show_net,
+        suppress_execution_reason=has_execution_gap,
+    )
     blocks.append(f"""    <section>
       <h2>Flip Board</h2>
-      <p class="muted">Only fully executable, fresh, supported opportunities are ranked as Potential flip. P10 is the displayed downside estimate.</p>
-      {_compact_table_html(flip_table, table_kind="signal")}
+      <p class="muted">Only fully executable, fresh, supported opportunities are ranked as Potential flip. Entry combines quantity, ask VWAP, cost, and break-even; forecast exit combines median and P10–P90.</p>
+      {execution_notice}
+      {flip_board}
     </section>""")
 
     potential = [row for row in opportunity_rows if row["Verdict"] == "Potential flip"]
-    def card(title: str, selected: dict[str, object] | None, detail: str) -> str:
+    def card(
+        title: str,
+        selected: dict[str, object] | None,
+        detail: str,
+        *,
+        tone: str,
+        icon: str,
+        empty_detail: str,
+    ) -> str:
         name = str(selected["Item"]) if selected else "No supported opportunity"
-        value = detail.format(**selected) if selected else ""
-        return f'<div class="summary-card summary-card-neutral"><span>{escape(title)}</span><strong>{escape(name)}</strong><span>{escape(value)}</span></div>'
-    best_margin = max(potential, key=lambda row: float(row["_margin"]), default=None)
-    lowest_break_even = min(potential, key=lambda row: float(row["Break-even Exit VWAP"]), default=None)
-    best_downside = max(potential, key=lambda row: float(row["_p10"]), default=None)
+        value = detail.format(**selected) if selected else empty_detail
+        return (
+            f'<article class="summary-card summary-card-{tone}">'
+            f'<span>{escape(title)}</span>'
+            f'<strong><span class="summary-arrow" aria-hidden="true">{escape(icon)}</span>{escape(name)}</strong>'
+            f'<span>{escape(value)}</span></article>'
+        )
+    margin_candidates = [row for row in potential if row["_margin"] is not None]
+    break_even_candidates = [row for row in potential if _number(row["Break-even Exit VWAP"]) is not None]
+    downside_candidates = [row for row in potential if row["_p10"] is not None]
+    best_margin = max(margin_candidates, key=lambda row: float(row["_margin"]), default=None)
+    lowest_break_even = min(
+        break_even_candidates,
+        key=lambda row: float(row["Break-even Exit VWAP"]),
+        default=None,
+    )
+    best_downside = max(downside_candidates, key=lambda row: float(row["_p10"]), default=None)
     problem = next((row for row in opportunity_rows if row["Verdict"] in {"No trade", "Unavailable"}), None)
     blocks.append("    <section><div class=\"summary-grid\">" +
-        card("Best supported net margin", best_margin, "{Median Net Margin %:.2f}%") +
-        card("Lowest break-even cost", lowest_break_even, "{Break-even Exit VWAP:.3f}") +
-        card("Best downside profile", best_downside, "P10 margin {_p10:.2f}%") +
-        card("Avoid / data problem", problem, "{Why}") + "</div></section>")
+        card("Best Supported Net Margin", best_margin, "{Median Net Margin %:.2f}% median", tone="up", icon="↗", empty_detail="No positive, supported margin") +
+        card("Lowest Break-even Exit", lowest_break_even, "{Break-even Exit VWAP:.3f} exit VWAP", tone="info", icon="↓", empty_detail="Break-even evidence unavailable") +
+        card("Best Downside Profile", best_downside, "P10 margin {_p10:.2f}%", tone="up", icon="◇", empty_detail="Downside evidence unavailable") +
+        card("Avoid / Data Problem", problem, "{Why}", tone="down", icon="!", empty_detail="No blocked or rejected row") + "</div></section>")
 
     blocks.append(f"""    <section>
       <h2>How to read the Flip Board</h2>
