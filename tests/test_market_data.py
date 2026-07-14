@@ -1,13 +1,22 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
 from warera_quant.charts import render_featured_chart
-from warera_quant.market_data import load_chart_data, load_chart_trades, load_market_rows, parse_report_window
+from warera_quant.market_data import (
+    build_forecast_features,
+    estimate_latest_execution,
+    evaluate_item_forecast,
+    load_chart_data,
+    load_chart_trades,
+    load_market_rows,
+    parse_report_window,
+)
 from warera_quant.market_store import MarketStore
+from warera_quant.warera_api import OrderLevel, TopOrders
 
 
 NOW = datetime(2026, 6, 30, 12, 0, tzinfo=timezone.utc)
@@ -17,6 +26,98 @@ def _store(tmp_path: Path) -> MarketStore:
     store = MarketStore(tmp_path / "market.sqlite3")
     store.initialize()
     return store
+
+
+def test_estimate_latest_execution_includes_snapshot_age_and_sweep(tmp_path):
+    with _store(tmp_path) as store:
+        store.insert_order_book_observations(
+            {"bread": TopOrders(
+                buy_orders=[OrderLevel(3, 10)],
+                sell_orders=[OrderLevel(4, 2), OrderLevel(5, 4)],
+            )},
+            datetime(2026, 6, 30, 11, 59, tzinfo=timezone.utc),
+        )
+
+        estimate = estimate_latest_execution(
+            store, item_code="bread", side="buy", quantity=5, now=NOW
+        )
+
+    assert estimate is not None
+    assert estimate["levels_available"] is True
+    assert estimate["snapshot_age_seconds"] == 60
+    assert estimate["execution"].gross_value == 23
+    assert estimate["execution"].fully_filled is True
+
+
+def test_forecast_features_exclude_future_transactions():
+    observations = [{
+        "observation_id": 1,
+        "observed_at": "2026-06-30T12:00:00Z",
+        "observed_at_epoch": int(NOW.timestamp()),
+        "best_bid": 10,
+        "best_ask": 12,
+        "bid_depth": 2,
+        "ask_depth": 1,
+        "bids": [],
+        "asks": [],
+        "levels_available": False,
+    }]
+    transactions = [
+        {"id": "before", "created_at_epoch": int(NOW.timestamp()) - 60, "unit_price": 10, "quantity": 1},
+        {"id": "future", "created_at_epoch": int(NOW.timestamp()) + 60, "unit_price": 1000, "quantity": 1},
+    ]
+
+    feature = build_forecast_features(observations, transactions)[0]
+
+    assert feature["trailing_count"] == 1
+    assert feature["trailing_close"] == 10
+    assert feature["stable_fair_price"] == 10
+
+
+def test_walk_forward_uses_first_target_and_rejects_late_next_target(tmp_path):
+    t0 = datetime(2026, 6, 1, 12, tzinfo=timezone.utc)
+    with _store(tmp_path) as store:
+        store.upsert_transactions(
+            "bread",
+            [
+                _transaction("open", "2026-05-31T10:00:00Z", money=10, quantity=1),
+                _transaction("close", "2026-06-01T10:00:00Z", money=11, quantity=1),
+            ],
+            fetched_at=t0,
+        )
+        _insert_book(store, t0, bid=10, ask=11, quantity=5)
+        _insert_book(store, t0 + timedelta(hours=25), bid=12, ask=13, quantity=5)
+        _insert_book(store, t0 + timedelta(hours=56), bid=14, ask=15, quantity=5)
+
+        result = evaluate_item_forecast(store, item_code="bread", min_samples=1)
+
+    assert result.candidate_samples == 1
+    assert result.evaluable_samples == 1
+    assert result.evaluated_rows[0].target_timestamp_epoch == int((t0 + timedelta(hours=25)).timestamp())
+    assert result.evaluated_rows[0].outcome == "Up"
+    assert result.execution_evaluable_samples == 1
+    assert result.evaluated_rows[0].gross_flip_return_pct == pytest.approx((12 - 11) / 11 * 100)
+
+
+def test_walk_forward_quantity_excludes_partial_entry_and_exit_depth(tmp_path):
+    t0 = datetime(2026, 6, 1, 12, tzinfo=timezone.utc)
+    with _store(tmp_path) as store:
+        store.upsert_transactions(
+            "bread",
+            [
+                _transaction("open", "2026-05-31T10:00:00Z", money=10, quantity=1),
+                _transaction("close", "2026-06-01T10:00:00Z", money=11, quantity=1),
+            ],
+            fetched_at=t0,
+        )
+        _insert_book(store, t0, bid=10, ask=11, quantity=1)
+        _insert_book(store, t0 + timedelta(hours=24), bid=12, ask=13, quantity=1)
+        one = evaluate_item_forecast(store, item_code="bread", quantity=1)
+        two = evaluate_item_forecast(store, item_code="bread", quantity=2)
+
+    assert one.execution_evaluable_samples == 1
+    assert two.execution_evaluable_samples == 0
+    assert two.evaluated_rows[0].gross_flip_return_pct is None
 
 
 def test_parse_report_window_accepts_supported_windows():
@@ -50,10 +151,10 @@ def test_load_market_rows_computes_window_statistics(tmp_path):
         )
         store.insert_order_book_observations(
             {
-                "iron_ore": {
-                    "buyOrders": [{"price": 6.0, "quantity": 10}],
-                    "sellOrders": [{"price": 7.0, "quantity": 20}],
-                }
+                "iron_ore": TopOrders(
+                    buy_orders=[OrderLevel(6.0, 10)],
+                    sell_orders=[OrderLevel(7.0, 20)],
+                )
             },
             datetime(2026, 6, 30, 11, 45, tzinfo=timezone.utc),
         )
@@ -106,6 +207,11 @@ def test_load_market_rows_computes_window_statistics(tmp_path):
     assert row["latest_bid"] == 6.0
     assert row["latest_ask"] == 7.0
     assert row["latest_spread"] == 1.0
+    assert row["flip_quantity"] == 1.0
+    assert row["flip_quote_age_minutes"] == 15.0
+    assert row["flip_entry_fully_filled"] is True
+    assert row["flip_verdict"] == "Unavailable"
+    assert row["flip_reason_codes"] == "missing_execution_interval"
 
 
 def test_load_market_rows_applies_each_window_boundary(tmp_path):
@@ -184,10 +290,10 @@ def test_load_market_rows_prefers_trade_history_for_current_price(tmp_path):
         store.insert_price_observations({"paper": 0.2}, NOW)
         store.insert_order_book_observations(
             {
-                "paper": {
-                    "buyOrders": [{"price": 0.19, "quantity": 10}],
-                    "sellOrders": [{"price": 0.21, "quantity": 10}],
-                }
+                "paper": TopOrders(
+                    buy_orders=[OrderLevel(0.19, 10)],
+                    sell_orders=[OrderLevel(0.21, 10)],
+                )
             },
             datetime(2026, 6, 30, 11, 30, tzinfo=timezone.utc),
         )
@@ -207,10 +313,10 @@ def test_load_market_rows_falls_back_to_quote_price_when_no_trade_exists(tmp_pat
         store.insert_price_observations({"gold": 97.5}, NOW)
         store.insert_order_book_observations(
             {
-                "gold": {
-                    "buyOrders": [{"price": 97.0, "quantity": 5}],
-                    "sellOrders": [{"price": 98.0, "quantity": 8}],
-                }
+                "gold": TopOrders(
+                    buy_orders=[OrderLevel(97.0, 5)],
+                    sell_orders=[OrderLevel(98.0, 8)],
+                )
             },
             datetime(2026, 6, 30, 11, 30, tzinfo=timezone.utc),
         )
@@ -250,10 +356,10 @@ def test_load_market_rows_tracks_quote_divergence_and_depth_imbalance(tmp_path):
         store.insert_price_observations({"silver": 110.0}, NOW)
         store.insert_order_book_observations(
             {
-                "silver": {
-                    "buyOrders": [{"price": 108.0, "quantity": 20}],
-                    "sellOrders": [{"price": 112.0, "quantity": 10}],
-                }
+                "silver": TopOrders(
+                    buy_orders=[OrderLevel(108.0, 20)],
+                    sell_orders=[OrderLevel(112.0, 10)],
+                )
             },
             datetime(2026, 6, 30, 11, 30, tzinfo=timezone.utc),
         )
@@ -306,10 +412,10 @@ def test_load_chart_data_returns_trades_and_spread_observations(tmp_path):
         )
         store.insert_order_book_observations(
             {
-                "bread": {
-                    "buyOrders": [{"price": 2.8, "quantity": 4}],
-                    "sellOrders": [{"price": 3.2, "quantity": 4}],
-                }
+                "bread": TopOrders(
+                    buy_orders=[OrderLevel(2.8, 4)],
+                    sell_orders=[OrderLevel(3.2, 4)],
+                )
             },
             datetime(2026, 6, 30, 11, 30, tzinfo=timezone.utc),
         )
@@ -354,10 +460,10 @@ def test_db_backed_chart_data_can_render(tmp_path):
         )
         store.insert_order_book_observations(
             {
-                "bread": {
-                    "buyOrders": [{"price": 2.8, "quantity": 4}],
-                    "sellOrders": [{"price": 3.2, "quantity": 4}],
-                }
+                "bread": TopOrders(
+                    buy_orders=[OrderLevel(2.8, 4)],
+                    sell_orders=[OrderLevel(3.2, 4)],
+                )
             },
             datetime(2026, 6, 30, 11, 30, tzinfo=timezone.utc),
         )
@@ -383,3 +489,15 @@ def _transaction(transaction_id: str, created_at: str, *, money: float, quantity
         "money": money,
         "quantity": quantity,
     }
+
+
+def _insert_book(
+    store: MarketStore, observed_at: datetime, *, bid: float, ask: float, quantity: float
+) -> None:
+    store.insert_order_book_observations(
+        {"bread": TopOrders(
+            buy_orders=[OrderLevel(bid, quantity)],
+            sell_orders=[OrderLevel(ask, quantity)],
+        )},
+        observed_at,
+    )

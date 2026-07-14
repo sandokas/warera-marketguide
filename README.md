@@ -151,12 +151,33 @@ Trading Attractiveness = (Effective Spread % x Window Trades) / Window Range %
 
 Effective spread subtracts the minimum price tick from the raw bid/ask gap.
 
+Database-backed reports also evaluate the fixed `direction-v1` model with walk-forward order-book
+history. The default target is the first snapshot at least 24 hours later and no more than 6 hours
+late. Configure the audit with `--forecast-horizon-hours`,
+`--forecast-target-max-lag-hours`, and `--forecast-min-samples`. Directional accuracy excludes
+no-signal and flat outcomes; execution return intervals require complete historical ask and bid
+sweeps for the same evaluation quantity. CSV and custom JSON inputs have no normalized history and
+therefore report the forecast as `Unavailable` with `Insufficient` evidence.
+
+The Flip Board ranks only fresh, fully executable opportunities with same-quantity historical exit
+evidence. Configure its visible assumptions with `--trade-quantity` (default `1`),
+`--trade-fee-pct` (default `0` per side), `--min-net-margin-pct` (default `1`), and
+`--max-quote-age-minutes` (default `30`). CSV and custom JSON inputs remain usable for descriptive
+history, but their Flip Board verdict is `Unavailable` because normalized depth and validated
+execution forecasts are absent.
+
 More detail is available in:
 
 - [Market database and architecture](docs/market-db-reporting-spec.md)
 - [Market data semantics](docs/market-data-model-spec.md)
 - [Report and liquidity semantics](docs/market-reporting-liquidity-spec.md)
 - [Repository architecture rules](AGENTS.md)
+
+Profit-first implementation specs, in dependency order:
+
+1. [Order-book levels and executable cost](docs/01-execution-cost-spec.md)
+2. [Walk-forward tomorrow-bias validation](docs/02-forecast-validation-spec.md)
+3. [Profit-first Flip Board and report](docs/03-profit-first-flip-report-spec.md)
 
 ## Development
 

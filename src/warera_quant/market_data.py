@@ -1,17 +1,233 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+import math
+from bisect import bisect_left, bisect_right
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from collections.abc import Iterable
 from typing import Any
 
 from .market_store import MarketStore
-from .metrics import calculate_liquidity_score, classify_tendency
+from .metrics import (
+    FORECAST_MODEL_VERSION,
+    ForecastEvaluationRow,
+    ForecastValidationResult,
+    FlipAssumptions,
+    calculate_book_sweep,
+    calculate_direction_signal,
+    calculate_flip_opportunity,
+    calculate_liquidity_score,
+    classify_future_bid_outcome,
+    classify_tendency,
+    summarize_forecast_evaluations,
+)
 
 
 SUPPORTED_REPORT_WINDOWS = ("1D", "7D", "30D", "90D", "1Y")
 DEFAULT_REPORT_WINDOWS = ("1D", "7D", "30D")
+FORECAST_TRAILING_SECONDS = 7 * 24 * 60 * 60
+
+
+def evaluate_item_forecast(
+    store: MarketStore,
+    *,
+    item_code: str,
+    horizon_hours: float = 24.0,
+    target_max_lag_hours: float = 6.0,
+    min_samples: int = 30,
+    quantity: float = 1.0,
+    min_tick: float = 0.001,
+) -> ForecastValidationResult:
+    if not math.isfinite(horizon_hours) or horizon_hours <= 0:
+        raise ValueError("horizon_hours must be positive.")
+    if not math.isfinite(target_max_lag_hours) or target_max_lag_hours < 0:
+        raise ValueError("target_max_lag_hours cannot be negative.")
+    if min_samples < 1:
+        raise ValueError("min_samples must be at least 1.")
+    # Validate quantity before a sparse history can bypass sweep calculation.
+    calculate_book_sweep([], side="buy", quantity=quantity)
+
+    observations = store.order_book_history_with_levels(item_code)
+    if not observations:
+        return summarize_forecast_evaluations(
+            item_code=item_code,
+            horizon_hours=horizon_hours,
+            rows=(),
+            current_signal="Unavailable",
+            min_samples=min_samples,
+        )
+    earliest_epoch = int(observations[0]["observed_at_epoch"]) - FORECAST_TRAILING_SECONDS
+    transactions = store.transactions_for_window(item_code, earliest_epoch)
+    features = build_forecast_features(observations, transactions)
+
+    newest_observation = observations[-1]
+    current_feature = next(
+        (feature for feature in reversed(features) if feature["observation_id"] == newest_observation["observation_id"]),
+        None,
+    )
+    current_signal = (
+        calculate_direction_signal(
+            momentum_pct=current_feature["momentum_pct"],
+            fair_gap_pct=current_feature["fair_gap_pct"],
+        )
+        if current_feature is not None
+        else None
+    )
+
+    horizon_seconds = horizon_hours * 60 * 60
+    max_lag_seconds = target_max_lag_hours * 60 * 60
+    observation_epochs = [int(observation["observed_at_epoch"]) for observation in observations]
+    evaluated: list[ForecastEvaluationRow] = []
+    for feature in features:
+        target_epoch = feature["observed_at_epoch"] + horizon_seconds
+        target_index = bisect_left(observation_epochs, target_epoch)
+        if target_index >= len(observations):
+            continue
+        target = observations[target_index]
+        if target["observed_at_epoch"] > target_epoch + max_lag_seconds:
+            continue
+        future_bid = _positive_float(target.get("best_bid"))
+        if future_bid is None:
+            continue
+        direction = calculate_direction_signal(
+            momentum_pct=feature["momentum_pct"], fair_gap_pct=feature["fair_gap_pct"]
+        )
+        outcome, future_return = classify_future_bid_outcome(
+            current_bid=feature["best_bid"], future_bid=future_bid, min_tick=min_tick
+        )
+        gross_flip_return = _realized_gross_flip_return(
+            feature=feature,
+            target=target,
+            quantity=quantity,
+        )
+        correct = direction.signal == outcome if direction.signal in {"Up", "Down"} and outcome in {"Up", "Down"} else None
+        evaluated.append(ForecastEvaluationRow(
+            model_version=FORECAST_MODEL_VERSION,
+            feature_timestamp=str(feature["observed_at"]),
+            feature_timestamp_epoch=int(feature["observed_at_epoch"]),
+            target_timestamp=str(target["observed_at"]),
+            target_timestamp_epoch=int(target["observed_at_epoch"]),
+            prediction=direction.signal,
+            outcome=outcome,
+            correct=correct,
+            future_bid_return_pct=future_return,
+            gross_flip_return_pct=gross_flip_return,
+        ))
+
+    return summarize_forecast_evaluations(
+        item_code=item_code,
+        horizon_hours=horizon_hours,
+        rows=evaluated,
+        current_signal=current_signal.signal if current_signal is not None else "Unavailable",
+        current_reason_codes=current_signal.reason_codes if current_signal is not None else (),
+        min_samples=min_samples,
+        current_observed_at=str(newest_observation["observed_at"]),
+    )
+
+
+def build_forecast_features(
+    observations: list[dict[str, Any]], transactions: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Build chronological seven-day features without reading beyond each feature time."""
+    ordered_observations = sorted(
+        observations, key=lambda row: (int(row["observed_at_epoch"]), int(row["observation_id"]))
+    )
+    ordered_transactions = sorted(
+        transactions, key=lambda row: (int(row["created_at_epoch"]), str(row.get("id", "")))
+    )
+    transaction_epochs = [int(row["created_at_epoch"]) for row in ordered_transactions]
+    features: list[dict[str, Any]] = []
+    for observation in ordered_observations:
+        best_bid = _positive_float(observation.get("best_bid"))
+        best_ask = _positive_float(observation.get("best_ask"))
+        if best_bid is None or best_ask is None:
+            continue
+        feature_epoch = int(observation["observed_at_epoch"])
+        start = bisect_left(transaction_epochs, feature_epoch - FORECAST_TRAILING_SECONDS)
+        end = bisect_right(transaction_epochs, feature_epoch)
+        trailing = ordered_transactions[start:end]
+        priced = [
+            (float(row["unit_price"]), _positive_float(row.get("quantity")))
+            for row in trailing
+            if _positive_float(row.get("unit_price")) is not None
+        ]
+        prices = [price for price, _ in priced]
+        vwap_quantity = sum(quantity for _, quantity in priced if quantity is not None)
+        vwap_value = sum(price * quantity for price, quantity in priced if quantity is not None)
+        vwap = vwap_value / vwap_quantity if vwap_quantity > 0 else None
+        median = _percentile(prices, 50)
+        p10 = _percentile(prices, 10)
+        p90 = _percentile(prices, 90)
+        rolling_average = sum(prices[-5:]) / len(prices[-5:]) if prices else None
+        fair_inputs = [
+            (value, weight) for value, weight in ((vwap, 0.5), (median, 0.3), (rolling_average, 0.2))
+            if value is not None
+        ]
+        fair = _weighted_average(fair_inputs, fallback=None)
+        midpoint = (best_bid + best_ask) / 2
+        momentum = (prices[-1] - prices[0]) / prices[0] * 100 if len(prices) >= 2 and prices[0] > 0 else None
+        fair_gap = (midpoint - fair) / fair * 100 if fair is not None and fair > 0 else None
+        bid_depth = _number_or_none(observation.get("bid_depth")) or 0.0
+        ask_depth = _number_or_none(observation.get("ask_depth")) or 0.0
+        total_depth = bid_depth + ask_depth
+        features.append({
+            **observation,
+            "best_bid": best_bid,
+            "best_ask": best_ask,
+            "midpoint": midpoint,
+            "spread_pct": (best_ask - best_bid) / midpoint * 100 if midpoint > 0 else None,
+            "depth_imbalance_pct": (bid_depth - ask_depth) / total_depth * 100 if total_depth > 0 else None,
+            "trailing_open": prices[0] if prices else None,
+            "trailing_close": prices[-1] if prices else None,
+            "trailing_vwap": vwap,
+            "trailing_median": median,
+            "trailing_p10": p10,
+            "trailing_p90": p90,
+            "trailing_volume": sum(_positive_float(row.get("quantity")) or 0.0 for row in trailing),
+            "trailing_count": len(trailing),
+            "momentum_pct": momentum,
+            "stable_fair_price": fair,
+            "fair_gap_pct": fair_gap,
+        })
+    return features
+
+
+def _realized_gross_flip_return(
+    *, feature: dict[str, Any], target: dict[str, Any], quantity: float
+) -> float | None:
+    if not feature.get("levels_available") or not target.get("levels_available"):
+        return None
+    entry = calculate_book_sweep(feature.get("asks", ()), side="buy", quantity=quantity)
+    exit_sweep = calculate_book_sweep(target.get("bids", ()), side="sell", quantity=quantity)
+    if not entry.fully_filled or not exit_sweep.fully_filled or entry.gross_value <= 0:
+        return None
+    return (exit_sweep.gross_value - entry.gross_value) / entry.gross_value * 100
+
+
+def estimate_latest_execution(
+    store: MarketStore,
+    *,
+    item_code: str,
+    side: str,
+    quantity: float,
+    now: datetime | None = None,
+) -> dict[str, Any] | None:
+    snapshot = store.latest_order_book_with_levels(item_code)
+    if snapshot is None:
+        return None
+    observed_at = datetime.fromtimestamp(snapshot["observed_at_epoch"], tz=timezone.utc)
+    reference_time = _as_utc(now or datetime.now(timezone.utc))
+    result = dict(snapshot)
+    result["snapshot_age_seconds"] = max(0.0, (reference_time - observed_at).total_seconds())
+    result["execution"] = None
+    if snapshot["levels_available"]:
+        levels = snapshot["asks"] if side == "buy" else snapshot["bids"]
+        result["execution"] = calculate_book_sweep(levels, side=side, quantity=quantity)
+    else:
+        # Validate caller inputs consistently even when a legacy snapshot has no levels.
+        calculate_book_sweep([], side=side, quantity=quantity)
+    return result
 
 
 @dataclass(frozen=True)
@@ -41,12 +257,22 @@ def load_market_rows(
     windows: list[str] | tuple[str, ...] | None = None,
     lookback_days: float | None = None,
     now: datetime | None = None,
+    forecast_horizon_hours: float = 24.0,
+    forecast_target_max_lag_hours: float = 6.0,
+    forecast_min_samples: int = 30,
+    forecast_quantity: float = 1.0,
+    min_tick: float = 0.001,
+    flip_assumptions: FlipAssumptions | None = None,
 ) -> list[dict[str, Any]]:
     if lookback_days is not None and lookback_days < 0:
         raise ValueError("lookback_days cannot be negative.")
 
     report_windows = _resolve_windows(windows, lookback_days)
     now = _as_utc(now or datetime.now(timezone.utc))
+    assumptions = flip_assumptions or FlipAssumptions(
+        quantity=forecast_quantity,
+        forecast_horizon_hours=forecast_horizon_hours,
+    )
     since_epochs = {
         window.label: int((now - timedelta(days=window.days)).timestamp())
         for window in report_windows
@@ -110,9 +336,81 @@ def load_market_rows(
 
         row["windows"] = window_stats
         _add_legacy_metric_fields(row, report_windows, window_stats)
+        forecast = evaluate_item_forecast(
+            store,
+            item_code=item_code,
+            horizon_hours=assumptions.forecast_horizon_hours,
+            target_max_lag_hours=forecast_target_max_lag_hours,
+            min_samples=forecast_min_samples,
+            quantity=assumptions.quantity,
+            min_tick=min_tick,
+        )
+        row.update({
+            "forecast_model_version": forecast.model_version,
+            "forecast_horizon_hours": forecast.horizon_hours,
+            "forecast_candidate_samples": forecast.candidate_samples,
+            "forecast_evaluable_samples": forecast.evaluable_samples,
+            "forecast_execution_evaluable_samples": forecast.execution_evaluable_samples,
+            "forecast_up_predictions": forecast.up_predictions,
+            "forecast_down_predictions": forecast.down_predictions,
+            "forecast_correct_predictions": forecast.correct_predictions,
+            "forecast_accuracy_pct": forecast.accuracy_pct,
+            "forecast_baseline_accuracy_pct": forecast.baseline_accuracy_pct,
+            "forecast_median_future_bid_return_pct": forecast.median_future_bid_return_pct,
+            "forecast_p10_future_bid_return_pct": forecast.p10_future_bid_return_pct,
+            "forecast_p90_future_bid_return_pct": forecast.p90_future_bid_return_pct,
+            "forecast_gross_flip_return_p10_pct": forecast.gross_flip_return_p10_pct,
+            "forecast_gross_flip_return_median_pct": forecast.gross_flip_return_median_pct,
+            "forecast_gross_flip_return_p90_pct": forecast.gross_flip_return_p90_pct,
+            "forecast_current_signal": forecast.current_signal,
+            "forecast_current_reason_codes": ", ".join(forecast.current_reason_codes),
+            "forecast_evidence": forecast.evidence_label,
+            "forecast_current_observed_at": forecast.current_observed_at,
+        })
+        snapshot = store.latest_order_book_with_levels(item_code)
+        snapshot_at = str(snapshot["observed_at"]) if snapshot is not None else None
+        quote_age_minutes = None
+        entry_sweep = None
+        asks = None
+        best_bid = None
+        best_ask = None
+        if snapshot is not None:
+            best_bid = snapshot.get("best_bid")
+            best_ask = snapshot.get("best_ask")
+            observed = datetime.fromtimestamp(int(snapshot["observed_at_epoch"]), tz=timezone.utc)
+            quote_age_minutes = max(0.0, (now - observed).total_seconds() / 60)
+            if snapshot.get("levels_available"):
+                asks = snapshot.get("asks", ())
+                entry_sweep = calculate_book_sweep(asks, side="buy", quantity=assumptions.quantity)
+        opportunity = calculate_flip_opportunity({
+            "item_code": item_code,
+            "item_name": row["item_name"],
+            "snapshot_at": snapshot_at,
+            "quote_age_minutes": quote_age_minutes,
+            "best_bid": best_bid,
+            "best_ask": best_ask,
+            "asks": asks,
+            "entry_sweep": entry_sweep,
+            "min_tick": min_tick,
+            "forecast_signal": forecast.current_signal,
+            "forecast_evidence": forecast.evidence_label,
+            "forecast_samples": forecast.evaluable_samples,
+            "gross_flip_return_p10_pct": forecast.gross_flip_return_p10_pct,
+            "gross_flip_return_median_pct": forecast.gross_flip_return_median_pct,
+            "gross_flip_return_p90_pct": forecast.gross_flip_return_p90_pct,
+        }, assumptions)
+        row.update(opportunity_fields(opportunity))
         rows.append(row)
 
     return rows
+
+
+def opportunity_fields(opportunity: object) -> dict[str, Any]:
+    values = asdict(opportunity)  # type: ignore[arg-type]
+    return {
+        "flip_reason_codes": ",".join(values.pop("reason_codes")),
+        **{f"flip_{key}": value for key, value in values.items() if key not in {"item_code", "item_name"}},
+    }
 
 
 def load_chart_trades(
@@ -480,3 +778,10 @@ def _number_or_none(value: object) -> float | None:
 def _positive_number(value: object) -> bool:
     number = _number_or_none(value)
     return number is not None and number > 0
+
+
+def _positive_float(value: object) -> float | None:
+    number = _number_or_none(value)
+    if number is None or not math.isfinite(number) or number <= 0:
+        return None
+    return number

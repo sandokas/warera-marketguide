@@ -1,6 +1,207 @@
 import pytest
 
-from warera_quant.metrics import calculate_liquidity_score, calculate_metrics, classify_tendency
+from warera_quant.metrics import (
+    FORECAST_MODEL_VERSION,
+    ForecastEvaluationRow,
+    FlipAssumptions,
+    calculate_book_sweep,
+    calculate_flip_opportunity,
+    calculate_direction_signal,
+    calculate_liquidity_score,
+    calculate_metrics,
+    classify_future_bid_outcome,
+    classify_tendency,
+    forecast_evidence_label,
+    summarize_forecast_evaluations,
+)
+from warera_quant.warera_api import OrderLevel
+
+
+def test_book_sweep_calculates_multilevel_buy_vwap_without_mutating_input():
+    levels = [OrderLevel(11, 5), OrderLevel(10, 5)]
+
+    result = calculate_book_sweep(levels, side="buy", quantity=8)
+
+    assert levels == [OrderLevel(11, 5), OrderLevel(10, 5)]
+    assert result.filled_quantity == 8
+    assert result.fully_filled is True
+    assert result.gross_value == 83
+    assert result.average_price == pytest.approx(10.375)
+    assert result.best_price == 10
+    assert result.worst_price == 11
+    assert result.slippage_abs == pytest.approx(0.375)
+    assert result.slippage_pct == pytest.approx(3.75)
+
+
+def test_book_sweep_calculates_sell_and_partial_fill():
+    result = calculate_book_sweep(
+        [{"price": 9, "quantity": 2}, {"price": 10, "quantity": 3}],
+        side="sell",
+        quantity=8,
+    )
+
+    assert result.filled_quantity == 5
+    assert result.unfilled_quantity == 3
+    assert result.fully_filled is False
+    assert result.gross_value == 48
+    assert result.average_price == pytest.approx(9.6)
+    assert result.slippage_pct == pytest.approx(4)
+
+
+def test_book_sweep_empty_and_invalid_inputs():
+    empty = calculate_book_sweep([], side="buy", quantity=1)
+    assert empty.filled_quantity == 0
+    assert empty.average_price is None
+    assert empty.best_price is None
+    assert empty.worst_price is None
+
+    for quantity in (0, -1, float("inf"), float("nan")):
+        with pytest.raises(ValueError):
+            calculate_book_sweep([], side="buy", quantity=quantity)
+    with pytest.raises(ValueError):
+        calculate_book_sweep([], side="hold", quantity=1)
+    with pytest.raises(ValueError):
+        calculate_book_sweep([{"price": 1, "quantity": 0}], side="buy", quantity=1)
+
+
+def _flip_input(**changes):
+    values = {
+        "item_code": "bread",
+        "item_name": "Bread",
+        "snapshot_at": "2026-07-14T10:00:00Z",
+        "quote_age_minutes": 2,
+        "best_bid": 9,
+        "best_ask": 10,
+        "asks": [{"price": 10, "quantity": 5}, {"price": 11, "quantity": 5}],
+        "forecast_signal": "Up",
+        "forecast_evidence": "Supported",
+        "forecast_samples": 40,
+        "gross_flip_return_p10_pct": -5,
+        "gross_flip_return_median_pct": 10,
+        "gross_flip_return_p90_pct": 20,
+    }
+    values.update(changes)
+    return values
+
+
+def test_flip_opportunity_uses_sweep_and_per_side_fees_once():
+    source = _flip_input()
+    result = calculate_flip_opportunity(
+        source,
+        FlipAssumptions(quantity=8, fee_pct_per_side=2, minimum_net_margin_pct=1),
+    )
+
+    assert source["asks"][0] == {"price": 10, "quantity": 5}
+    assert result.verdict == "Potential flip"
+    assert result.entry_average_price == pytest.approx(10.375)
+    assert result.total_entry_cost == pytest.approx(83 * 1.02)
+    assert result.break_even_exit_vwap == pytest.approx((83 * 1.02) / (8 * .98))
+    assert result.forecast_exit_vwap_median == pytest.approx(83 * 1.10 / 8)
+    assert result.net_profit_median == pytest.approx(83 * 1.10 * .98 - 83 * 1.02)
+    assert result.net_margin_p10_pct < 0 < result.net_margin_median_pct < result.net_margin_p90_pct
+
+
+@pytest.mark.parametrize(
+    ("changes", "expected_verdict", "expected_reason"),
+    [
+        ({"asks": None}, "Unavailable", "missing_order_book"),
+        ({"quote_age_minutes": 31}, "No trade", "stale_quote"),
+        ({"asks": [{"price": 10, "quantity": 1}]}, "No trade", "insufficient_ask_depth"),
+        ({"best_bid": 10}, "No trade", "invalid_book"),
+        ({"gross_flip_return_median_pct": 0}, "No trade", "margin_non_positive"),
+        ({"forecast_evidence": "Limited"}, "Watch", "forecast_not_above_baseline"),
+        ({"gross_flip_return_median_pct": 1.5}, "Watch", "margin_below_threshold"),
+    ],
+)
+def test_flip_verdict_rules_fail_closed(changes, expected_verdict, expected_reason):
+    result = calculate_flip_opportunity(
+        _flip_input(**changes),
+        FlipAssumptions(quantity=5, minimum_net_margin_pct=2, max_quote_age_minutes=30),
+    )
+    assert result.verdict == expected_verdict
+    assert result.reason_codes == (expected_reason,)
+
+
+def test_partial_and_stale_precedence_and_passive_limit_candidate():
+    result = calculate_flip_opportunity(
+        _flip_input(
+            quote_age_minutes=31,
+            asks=[{"price": 10, "quantity": 1}],
+            best_bid=9.9995,
+            best_ask=10,
+            min_tick=.001,
+        ),
+        FlipAssumptions(quantity=5),
+    )
+    assert result.reason_codes == ("stale_quote",)
+    assert result.entry_average_price is None
+    assert result.passive_limit_price == pytest.approx(9.9995)
+
+
+@pytest.mark.parametrize(
+    ("momentum", "expected", "reason"),
+    [
+        (6, "Up", "strong_positive_momentum"),
+        (1, "Up", "positive_momentum"),
+        (0.999, "No clear move", None),
+        (-0.999, "No clear move", None),
+        (-1, "Down", "negative_momentum"),
+        (-6, "Down", "strong_negative_momentum"),
+    ],
+)
+def test_direction_v1_momentum_thresholds(momentum, expected, reason):
+    result = calculate_direction_signal(momentum_pct=momentum)
+    assert result.signal == expected
+    assert (reason in result.reason_codes) if reason else not result.reason_codes
+
+
+def test_direction_v1_combines_fair_gap_without_tendency_input():
+    assert calculate_direction_signal(momentum_pct=1, fair_gap_pct=2).signal == "No clear move"
+    assert calculate_direction_signal(momentum_pct=-1, fair_gap_pct=-2).signal == "No clear move"
+    assert calculate_direction_signal(fair_gap_pct=-2).signal == "Up"
+    assert calculate_direction_signal(fair_gap_pct=2).signal == "Down"
+
+
+def test_future_bid_outcome_uses_strict_tick_boundaries():
+    assert classify_future_bid_outcome(current_bid=1, future_bid=1.001)[0] == "Flat"
+    assert classify_future_bid_outcome(current_bid=1, future_bid=0.999)[0] == "Flat"
+    assert classify_future_bid_outcome(current_bid=1, future_bid=1.002)[0] == "Up"
+    assert classify_future_bid_outcome(current_bid=1, future_bid=0.998)[0] == "Down"
+
+
+def test_forecast_summary_excludes_no_signal_and_flat_and_requires_ten_for_intervals():
+    rows = [
+        ForecastEvaluationRow(
+            FORECAST_MODEL_VERSION, f"f{i}", i, f"t{i}", i + 1,
+            "Up", "Up", True, float(i), float(i - 2),
+        )
+        for i in range(10)
+    ]
+    rows.extend([
+        ForecastEvaluationRow(FORECAST_MODEL_VERSION, "flat", 20, "flat-t", 21, "Up", "Flat", None, 0),
+        ForecastEvaluationRow(FORECAST_MODEL_VERSION, "none", 22, "none-t", 23, "No clear move", "Down", None, -1),
+    ])
+    result = summarize_forecast_evaluations(
+        item_code="bread", horizon_hours=24, rows=rows, current_signal="Up", min_samples=1
+    )
+    assert result.candidate_samples == 12
+    assert result.evaluable_samples == 10
+    assert result.correct_predictions == 10
+    assert result.accuracy_pct == 100
+    assert result.baseline_accuracy_pct == 100
+    assert result.evidence_label == "Weak"
+    assert result.p10_future_bid_return_pct == pytest.approx(0)
+    assert result.gross_flip_return_median_pct == pytest.approx(2.5)
+
+
+@pytest.mark.parametrize(
+    ("samples", "accuracy", "baseline", "expected"),
+    [(2, 80, 50, "Insufficient"), (3, 50, 50, "Weak"), (3, 54, 50, "Limited"), (3, 55, 50, "Supported")],
+)
+def test_forecast_evidence_boundaries(samples, accuracy, baseline, expected):
+    assert forecast_evidence_label(
+        evaluable_samples=samples, min_samples=3, accuracy_pct=accuracy, baseline_accuracy_pct=baseline
+    ) == expected
 
 
 def test_liquidity_score_uses_depth_and_spread_penalty():

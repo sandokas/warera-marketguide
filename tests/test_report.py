@@ -1,5 +1,6 @@
 import pandas as pd
 
+from warera_quant.metrics import FlipAssumptions
 from warera_quant.report import generate_html_report, write_outputs
 
 
@@ -30,16 +31,14 @@ def test_swing_lens_explains_quotes_without_making_momentum_trade_recommendation
     assert "Price Evolution Lens" in report
     assert "Ask (You Pay)" in report
     assert "Bid (You Receive)" in report
-    assert "Immediate Loss %" in report
+    assert "Crossing Cost %" in report
     assert "Last" in report
     assert "Fair Prices And Tomorrow Bias" in report
-    assert "What To Pay And What To Expect" in report
-    assert "Fair Price" in report
-    assert "Buy ≤" in report
-    assert "Sell ≥" in report
-    assert "Expected Move" in report
-    assert "Signal" in report
-    assert "Trust" in report
+    assert "Flip Board" in report
+    assert "Break-even Exit VWAP" in report
+    assert "Evidence" in report
+    assert "Unavailable" in report
+    assert "Trust" not in report
     assert "Market-Making Score" not in report
     assert "Insufficient score data" not in report
     assert "Price fell; no reversal confirmed" in report
@@ -80,7 +79,7 @@ def test_generate_html_report_shows_all_items_by_default():
 
     assert "Corn" in report
     assert "Rice" in report
-    assert report.count("What To Pay And What To Expect") == 1
+    assert report.count("Flip Board") >= 2
 
 
 def test_report_foregrounds_market_trends_and_writes_compatibility_csv(tmp_path):
@@ -109,6 +108,12 @@ def test_report_foregrounds_market_trends_and_writes_compatibility_csv(tmp_path)
             "momentum_7d_pct": 30.0,
             "trading_attractiveness": 0.52,
             "status": "OK",
+            "forecast_current_signal": "Up",
+            "forecast_evidence": "Supported",
+            "forecast_evaluable_samples": 42,
+            "forecast_accuracy_pct": 65.0,
+            "forecast_baseline_accuracy_pct": 55.0,
+            "forecast_current_reason_codes": "strong_positive_momentum",
         }
     ])
 
@@ -119,16 +124,14 @@ def test_report_foregrounds_market_trends_and_writes_compatibility_csv(tmp_path)
     assert trends_path.exists()
     assert (tmp_path / "market_scores.csv").exists()
     assert "Fair Prices And Tomorrow Bias" in report
-    assert "What To Pay And What To Expect" in report
+    assert "Flip Board" in report
     assert "Market Trends" in report
     assert ">Rank<" not in report
     assert 'class="col-rank"' not in report
     assert "Rising" in report
     assert "Volatile" in report
     assert "5.900" in report
-    assert "Up" in report
-    assert "Hold" in report
-    assert "Above sell line; upward bias" in report
+    assert "Supported" in report
     assert "chip-up" in report
     assert "chip-hold" in report
     assert "signed-positive" in report
@@ -136,7 +139,6 @@ def test_report_foregrounds_market_trends_and_writes_compatibility_csv(tmp_path)
     assert ">250<" in report
     assert 'title="250"' in report
     assert 'class="col-spread-pct number"' in report
-    assert 'class="col-now number"' in report
     assert "th:nth-child(2), td:nth-child(2)" not in report
     assert "th:nth-last-child(2), td:nth-last-child(2)" not in report
     assert "align-right" not in report
@@ -181,10 +183,8 @@ def test_report_uses_stable_fair_price_and_softens_thin_market_actions():
     report = generate_html_report(df, top=0)
 
     assert "10.000" in report
-    assert "Check depth" in report
-    assert "chip-check" in report
-    assert "Weak" in report
-    assert "few trades" in report
+    assert "Unavailable" in report
+    assert "Insufficient" in report
 
 
 def test_report_formats_volume_and_trade_counts_without_decimal_suffix():
@@ -274,11 +274,11 @@ def test_generate_html_report_keeps_compatibility_with_price_precedence_fields()
     report = generate_html_report(df, top=0)
 
     assert "Copper" in report
-    assert "What To Pay And What To Expect" in report
+    assert "Flip Board" in report
     assert "Fair Prices And Tomorrow Bias" in report
 
 
-def test_wait_signal_notes_show_buy_target():
+def test_report_renders_supplied_down_forecast_without_trade_instruction():
     df = pd.DataFrame([
         {
             "item_name": "Coal",
@@ -299,13 +299,19 @@ def test_wait_signal_notes_show_buy_target():
             "range_pct": 20.0,
             "momentum_7d_pct": -3.0,
             "status": "OK",
+            "forecast_current_signal": "Down",
+            "forecast_evidence": "Limited",
+            "forecast_evaluable_samples": 12,
+            "forecast_current_reason_codes": "negative_momentum",
         }
     ])
 
     report = generate_html_report(df, top=0)
 
-    assert "Wait" in report
-    assert "Buy near" in report
+    assert "Unavailable" in report
+    assert "Limited" in report
+    assert "Current order-book levels are unavailable" in report
+    assert "Buy near" not in report
 
 
 def test_fair_price_table_distinguishes_thresholds_from_historical_range():
@@ -325,14 +331,53 @@ def test_fair_price_table_distinguishes_thresholds_from_historical_range():
             "percent_change_7d": 5.8,
             "trades_7d": 70_000,
             "momentum_7d_pct": 5.8,
+            "forecast_current_signal": "Up",
+            "forecast_evidence": "Insufficient",
+            "forecast_evaluable_samples": 3,
+            "forecast_current_reason_codes": "positive_momentum",
         }
     ])
 
     report = generate_html_report(df, top=0, metric_window="7D")
 
-    assert ">Buy ≤<" in report
-    assert ">Sell ≥<" in report
-    assert ">7D Low<" in report
-    assert ">7D High<" in report
-    assert "model thresholds around Fair, not the historical range" in report
-    assert "Above sell line; upward bias" in report
+    assert ">Break-even Exit VWAP<" in report
+    assert "Historical fair context" in report
+    assert "Insufficient" in report
+
+
+def test_profit_first_board_ranks_supported_row_and_displays_downside_and_assumptions():
+    common = {
+        "bid": 9, "ask": 10, "latest_price": 9.5, "trades_7d": 10,
+        "high_7d": 11, "low_7d": 8, "momentum_7d_pct": 1,
+    }
+    df = pd.DataFrame([
+        {
+            **common, "item_name": "Watch Item", "flip_verdict": "Watch",
+            "flip_reason_codes": "forecast_not_above_baseline", "flip_quantity": 5,
+            "flip_forecast_evidence": "Limited", "flip_forecast_samples": 50,
+            "flip_net_margin_median_pct": 8,
+        },
+        {
+            **common, "item_name": "Supported Item", "flip_verdict": "Potential flip",
+            "flip_reason_codes": "supported_positive_margin", "flip_quantity": 5,
+            "flip_entry_average_price": 10.2, "flip_total_entry_cost": 52,
+            "flip_break_even_exit_vwap": 10.7, "flip_forecast_exit_vwap_p10": 9.8,
+            "flip_forecast_exit_vwap_median": 11.5, "flip_forecast_exit_vwap_p90": 12.1,
+            "flip_net_margin_p10_pct": -5, "flip_net_margin_median_pct": 7,
+            "flip_net_profit_median": 3.64, "flip_forecast_evidence": "Supported",
+            "flip_forecast_samples": 40, "flip_quote_age_minutes": 2,
+        },
+    ])
+
+    report = generate_html_report(
+        df,
+        assumptions=FlipAssumptions(quantity=5, fee_pct_per_side=1.5, minimum_net_margin_pct=2),
+    )
+
+    assert report.index("Flip Board") < report.index("Market Trends")
+    assert report.index("Supported Item") < report.index("Watch Item")
+    assert "Fees assumed: 1.50% per side" in report
+    assert "Downside P10 net margin: -5.00%" in report
+    assert "Best supported net margin" in report
+    assert "Trend Highlights" not in report
+    assert "Immediate Loss" not in report

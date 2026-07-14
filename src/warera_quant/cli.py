@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import math
 from pathlib import Path
 
 from .api_client import WarEraApiClient
 from .charts import featured_item_codes, render_featured_chart
 from .csv_loader import load_market_csv
 from .json_loader import market_json_to_dataframe
-from .market_data import load_chart_data, load_market_rows
+from .market_data import load_chart_data, load_market_rows, opportunity_fields
 from .market_store import MarketStore
-from .metrics import calculate_metrics
+from .metrics import FlipAssumptions, calculate_flip_opportunity, calculate_metrics
 from .report import combine_market_rows_with_metrics, write_outputs
 from .sync import sync_market_data
 from .warera_api import WarEraMarketApi
@@ -81,6 +82,40 @@ def build_parser() -> argparse.ArgumentParser:
         help="Minimum exploitable price increment to subtract from bid/ask spread before scoring.",
     )
     parser.add_argument(
+        "--forecast-horizon-hours",
+        type=float,
+        default=24.0,
+        help="Forecast horizon in hours (default: 24).",
+    )
+    parser.add_argument(
+        "--forecast-target-max-lag-hours",
+        type=float,
+        default=6.0,
+        help="Maximum lateness for the first target observation in hours (default: 6).",
+    )
+    parser.add_argument(
+        "--forecast-min-samples",
+        type=int,
+        default=30,
+        help="Minimum directional samples required for evidence grading (default: 30).",
+    )
+    parser.add_argument(
+        "--trade-quantity", type=float, default=1.0,
+        help="Requested quantity for executable flip estimates.",
+    )
+    parser.add_argument(
+        "--trade-fee-pct", type=float, default=0.0,
+        help="Assumed fee percent charged independently per side.",
+    )
+    parser.add_argument(
+        "--min-net-margin-pct", type=float, default=1.0,
+        help="Minimum median net margin for a Potential flip.",
+    )
+    parser.add_argument(
+        "--max-quote-age-minutes", type=float, default=30.0,
+        help="Maximum quote age eligible for a trade verdict.",
+    )
+    parser.add_argument(
         "--exclude-item-code",
         action="append",
         default=[],
@@ -135,6 +170,22 @@ def main() -> None:
         raise SystemExit("--chart-ma-window must be at least 1.")
     if args.chart_min_range_pct < 0:
         raise SystemExit("--chart-min-range-pct cannot be negative.")
+    if not math.isfinite(args.forecast_horizon_hours) or args.forecast_horizon_hours <= 0:
+        raise SystemExit("--forecast-horizon-hours must be positive.")
+    if not math.isfinite(args.forecast_target_max_lag_hours) or args.forecast_target_max_lag_hours < 0:
+        raise SystemExit("--forecast-target-max-lag-hours cannot be negative.")
+    if args.forecast_min_samples < 1:
+        raise SystemExit("--forecast-min-samples must be at least 1.")
+    try:
+        assumptions = FlipAssumptions(
+            quantity=args.trade_quantity,
+            fee_pct_per_side=args.trade_fee_pct,
+            minimum_net_margin_pct=args.min_net_margin_pct,
+            forecast_horizon_hours=args.forecast_horizon_hours,
+            max_quote_age_minutes=args.max_quote_age_minutes,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     if args.quiet and args.verbose:
         raise SystemExit("Use only one of --quiet or --verbose.")
 
@@ -165,7 +216,15 @@ def main() -> None:
                 progress=None if args.quiet else lambda message: print(message, flush=True),
                 verbose=args.verbose,
             )
-            rows = load_market_rows(store, lookback_days=args.lookback_days)
+            rows = load_market_rows(
+                store,
+                lookback_days=args.lookback_days,
+                forecast_horizon_hours=args.forecast_horizon_hours,
+                forecast_target_max_lag_hours=args.forecast_target_max_lag_hours,
+                forecast_min_samples=args.forecast_min_samples,
+                min_tick=args.min_tick,
+                flip_assumptions=assumptions,
+            )
         if not args.quiet:
             print(
                 f"Synced {sync_result.prices_observed} price(s), "
@@ -181,7 +240,15 @@ def main() -> None:
         df_in = market_json_to_dataframe(rows)
     elif args.from_db:
         with MarketStore(args.market_db) as store:
-            rows = load_market_rows(store, lookback_days=args.lookback_days)
+            rows = load_market_rows(
+                store,
+                lookback_days=args.lookback_days,
+                forecast_horizon_hours=args.forecast_horizon_hours,
+                forecast_target_max_lag_hours=args.forecast_target_max_lag_hours,
+                forecast_min_samples=args.forecast_min_samples,
+                min_tick=args.min_tick,
+                flip_assumptions=assumptions,
+            )
         df_in = market_json_to_dataframe(rows)
     elif args.api_endpoint:
         client = WarEraApiClient(min_interval_seconds=args.min_interval)
@@ -189,6 +256,39 @@ def main() -> None:
         df_in = market_json_to_dataframe(data, records_path=args.api_records_path)
     else:
         df_in = load_market_csv(args.csv)
+
+    if not (args.live or args.from_db):
+        compatibility_defaults = {
+            "forecast_model_version": "direction-v1",
+            "forecast_horizon_hours": args.forecast_horizon_hours,
+            "forecast_candidate_samples": 0,
+            "forecast_evaluable_samples": 0,
+            "forecast_execution_evaluable_samples": 0,
+            "forecast_accuracy_pct": None,
+            "forecast_baseline_accuracy_pct": None,
+            "forecast_current_signal": "Unavailable",
+            "forecast_current_reason_codes": "",
+            "forecast_evidence": "Insufficient",
+        }
+        for column, value in compatibility_defaults.items():
+            if column not in df_in.columns:
+                df_in[column] = value
+        compatibility_opportunities = []
+        for _, row in df_in.iterrows():
+            opportunity = calculate_flip_opportunity({
+                "item_code": row.get("item_code"),
+                "item_name": row.get("item_name"),
+                "best_bid": row.get("bid"),
+                "best_ask": row.get("ask"),
+                "forecast_signal": row.get("forecast_current_signal"),
+                "forecast_evidence": row.get("forecast_evidence"),
+                "forecast_samples": row.get("forecast_evaluable_samples"),
+                "min_tick": args.min_tick,
+            }, assumptions)
+            compatibility_opportunities.append(opportunity_fields(opportunity))
+        for index, fields in enumerate(compatibility_opportunities):
+            for column, value in fields.items():
+                df_in.loc[index, column] = value
 
     metrics = []
     for _, row in df_in.iterrows():
@@ -244,6 +344,7 @@ def main() -> None:
         metric_window=metric_window,
         chart_path=chart_path,
         chart_label=chart_label,
+        assumptions=assumptions,
     )
     print(f"Wrote {csv_path}")
     print(f"Wrote {report_path}")

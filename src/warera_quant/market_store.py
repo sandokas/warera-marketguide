@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 
-LATEST_SCHEMA_VERSION = 1
+LATEST_SCHEMA_VERSION = 2
 
 
 class MarketStoreError(RuntimeError):
@@ -246,32 +246,47 @@ class MarketStore:
     def insert_order_book_observations(self, orders: dict[str, Any], observed_at: datetime) -> None:
         observed_at_text = _format_datetime(observed_at)
         observed_at_epoch = _epoch_seconds(observed_at)
-        rows = [
-            (
-                item_code,
-                observed_at_text,
-                observed_at_epoch,
-                observation["best_bid"],
-                observation["best_ask"],
-                observation["bid_depth"],
-                observation["ask_depth"],
-                observation["spread_abs"],
-                observation["spread_pct"],
-            )
+        snapshots = [
+            (item_code, *_normalized_order_book(payload))
             for item_code, payload in orders.items()
-            for observation in [_order_book_observation(payload)]
         ]
-        with self._connect():
-            self._connect().executemany(
-                """
-                insert into order_book_observations (
-                    item_code, observed_at, observed_at_epoch, best_bid, best_ask,
-                    bid_depth, ask_depth, spread_abs, spread_pct
+        connection = self._connect()
+        with connection:
+            for item_code, bids, asks, observation in snapshots:
+                cursor = connection.execute(
+                    """
+                    insert into order_book_observations (
+                        item_code, observed_at, observed_at_epoch, best_bid, best_ask,
+                        bid_depth, ask_depth, spread_abs, spread_pct
+                    )
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        item_code,
+                        observed_at_text,
+                        observed_at_epoch,
+                        observation["best_bid"],
+                        observation["best_ask"],
+                        observation["bid_depth"],
+                        observation["ask_depth"],
+                        observation["spread_abs"],
+                        observation["spread_pct"],
+                    ),
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                rows,
-            )
+                observation_id = cursor.lastrowid
+                level_rows = [
+                    (observation_id, side, position, level.price, level.quantity)
+                    for side, levels in (("bid", bids), ("ask", asks))
+                    for position, level in enumerate(levels)
+                ]
+                connection.executemany(
+                    """
+                    insert into order_book_levels (
+                        observation_id, side, level_position, price, quantity
+                    ) values (?, ?, ?, ?, ?)
+                    """,
+                    level_rows,
+                )
 
     def transactions_for_window(self, item_code: str, since_epoch: int) -> list[dict[str, Any]]:
         rows = self._connect().execute(
@@ -310,6 +325,62 @@ class MarketStore:
             (item_code, since_epoch),
         ).fetchall()
         return [_dict_from_row(row) for row in rows]
+
+    def order_book_history_with_levels(
+        self, item_code: str, since_epoch: int = 0
+    ) -> list[dict[str, Any]]:
+        """Return chronological snapshots and their normalized levels in two bounded queries."""
+        rows = self._connect().execute(
+            """
+            select id, item_code, observed_at, observed_at_epoch, best_bid, best_ask,
+                   bid_depth, ask_depth, spread_abs, spread_pct
+            from order_book_observations
+            where item_code = ? and observed_at_epoch >= ?
+            order by observed_at_epoch asc, id asc
+            """,
+            (item_code, since_epoch),
+        ).fetchall()
+        observations = [_dict_from_row(row) for row in rows]
+        if not observations:
+            return []
+
+        observation_ids = [row["id"] for row in observations]
+        level_rows = self._connect().execute(
+            """
+            select levels.observation_id, levels.side, levels.level_position,
+                   levels.price, levels.quantity
+            from order_book_levels as levels
+            join order_book_observations as observations
+              on observations.id = levels.observation_id
+            where observations.item_code = ? and observations.observed_at_epoch >= ?
+            order by levels.observation_id,
+                     case levels.side when 'bid' then 0 else 1 end,
+                     levels.level_position
+            """,
+            (item_code, since_epoch),
+        ).fetchall()
+        levels_by_observation: dict[int, list[dict[str, Any]]] = {
+            observation_id: [] for observation_id in observation_ids
+        }
+        for level_row in level_rows:
+            level = _dict_from_row(level_row)
+            levels_by_observation[level.pop("observation_id")].append(level)
+
+        for observation in observations:
+            observation["observation_id"] = observation.pop("id")
+            levels = levels_by_observation[observation["observation_id"]]
+            observation["bids"] = [
+                {key: value for key, value in level.items() if key != "side"}
+                for level in levels
+                if level["side"] == "bid"
+            ]
+            observation["asks"] = [
+                {key: value for key, value in level.items() if key != "side"}
+                for level in levels
+                if level["side"] == "ask"
+            ]
+            observation["levels_available"] = bool(levels)
+        return observations
 
     def item_codes(self) -> list[str]:
         rows = self._connect().execute(
@@ -366,6 +437,42 @@ class MarketStore:
             """
         ).fetchall()
         return {row["item_code"]: _dict_from_row(row) for row in rows}
+
+    def order_book_levels(self, observation_id: int) -> list[dict[str, Any]]:
+        rows = self._connect().execute(
+            """
+            select side, level_position, price, quantity
+            from order_book_levels
+            where observation_id = ?
+            order by case side when 'bid' then 0 else 1 end, level_position
+            """,
+            (observation_id,),
+        ).fetchall()
+        return [_dict_from_row(row) for row in rows]
+
+    def latest_order_book_with_levels(self, item_code: str) -> dict[str, Any] | None:
+        row = self._connect().execute(
+            """
+            select id, item_code, observed_at, observed_at_epoch, best_bid, best_ask,
+                   bid_depth, ask_depth, spread_abs, spread_pct
+            from order_book_observations
+            where item_code = ?
+            order by observed_at_epoch desc, id desc
+            limit 1
+            """,
+            (item_code,),
+        ).fetchone()
+        if row is None:
+            return None
+        result = _dict_from_row(row)
+        result["observation_id"] = result.pop("id")
+        levels = self.order_book_levels(result["observation_id"])
+        result["bids"] = [level for level in levels if level["side"] == "bid"]
+        result["asks"] = [level for level in levels if level["side"] == "ask"]
+        for level in result["bids"] + result["asks"]:
+            level.pop("side")
+        result["levels_available"] = bool(levels)
+        return result
 
     def table_names(self) -> set[str]:
         rows = self._connect().execute(
@@ -441,8 +548,29 @@ def migrate_to_v1(connection: sqlite3.Connection) -> None:
     )
 
 
+def migrate_to_v2(connection: sqlite3.Connection) -> None:
+    connection.executescript(
+        """
+        create table order_book_levels (
+            id integer primary key autoincrement,
+            observation_id integer not null,
+            side text not null check (side in ('bid', 'ask')),
+            level_position integer not null check (level_position >= 0),
+            price real not null check (price >= 0),
+            quantity real not null check (quantity > 0),
+            foreign key (observation_id) references order_book_observations(id) on delete cascade,
+            unique (observation_id, side, level_position)
+        );
+
+        create index idx_order_book_levels_observation_side
+            on order_book_levels (observation_id, side, level_position);
+        """
+    )
+
+
 MIGRATIONS = {
     1: migrate_to_v1,
+    2: migrate_to_v2,
 }
 
 
@@ -504,23 +632,23 @@ def _derive_transaction_id(
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _order_book_observation(payload: Any) -> dict[str, float | None]:
-    buy_orders = _orders_from_payload(payload, "buy_orders", "buyOrders", "bids")
-    sell_orders = _orders_from_payload(payload, "sell_orders", "sellOrders", "asks")
-    bid_prices = [_optional_float(order.get("price")) for order in buy_orders]
-    ask_prices = [_optional_float(order.get("price")) for order in sell_orders]
-    quantities_for_bids = [_optional_float(order.get("quantity")) for order in buy_orders]
-    quantities_for_asks = [_optional_float(order.get("quantity")) for order in sell_orders]
-
-    best_bid = max((price for price in bid_prices if price is not None), default=None)
-    best_ask = min((price for price in ask_prices if price is not None), default=None)
-    bid_depth = sum(quantity for quantity in quantities_for_bids if quantity is not None)
-    ask_depth = sum(quantity for quantity in quantities_for_asks if quantity is not None)
+def _normalized_order_book(payload: Any) -> tuple[list[Any], list[Any], dict[str, float | None]]:
+    try:
+        buy_orders = list(payload.buy_orders)
+        sell_orders = list(payload.sell_orders)
+    except (AttributeError, TypeError) as exc:
+        raise ValueError("Expected normalized order data with buy_orders and sell_orders.") from exc
+    bids = _aggregate_levels(buy_orders, reverse=True)
+    asks = _aggregate_levels(sell_orders, reverse=False)
+    best_bid = bids[0].price if bids else None
+    best_ask = asks[0].price if asks else None
+    bid_depth = sum(level.quantity for level in bids)
+    ask_depth = sum(level.quantity for level in asks)
     spread_abs = best_ask - best_bid if best_bid is not None and best_ask is not None else None
     midpoint = (best_bid + best_ask) / 2 if best_bid is not None and best_ask is not None else None
     spread_pct = (spread_abs / midpoint * 100) if spread_abs is not None and midpoint and midpoint > 0 else None
 
-    return {
+    observation = {
         "best_bid": best_bid,
         "best_ask": best_ask,
         "bid_depth": bid_depth,
@@ -528,20 +656,21 @@ def _order_book_observation(payload: Any) -> dict[str, float | None]:
         "spread_abs": spread_abs,
         "spread_pct": spread_pct,
     }
+    return bids, asks, observation
 
 
-def _orders_from_payload(payload: Any, snake_key: str, camel_key: str, compact_key: str) -> list[dict[str, Any]]:
-    if hasattr(payload, snake_key):
-        value = getattr(payload, snake_key)
-    elif isinstance(payload, dict):
-        value = payload.get(snake_key, payload.get(camel_key, payload.get(compact_key, [])))
-    else:
-        value = []
-    if value is None:
+def _aggregate_levels(levels: list[Any], *, reverse: bool) -> list[Any]:
+    by_price: dict[float, float] = {}
+    level_type = None
+    for level in levels:
+        level_type = type(level)
+        by_price[level.price] = by_price.get(level.price, 0.0) + level.quantity
+    if level_type is None:
         return []
-    if not isinstance(value, list) or not all(isinstance(order, dict) for order in value):
-        raise ValueError(f"Expected {snake_key} to be a list of order dictionaries.")
-    return value
+    return [
+        level_type(price=price, quantity=by_price[price])
+        for price in sorted(by_price, reverse=reverse)
+    ]
 
 
 def _item_sync_state_from_row(row: sqlite3.Row) -> ItemSyncState:

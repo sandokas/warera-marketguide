@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -19,9 +20,15 @@ class WarEraApiError(ValueError):
 
 
 @dataclass(frozen=True)
+class OrderLevel:
+    price: float
+    quantity: float
+
+
+@dataclass(frozen=True)
 class TopOrders:
-    buy_orders: list[dict[str, Any]]
-    sell_orders: list[dict[str, Any]]
+    buy_orders: list[OrderLevel]
+    sell_orders: list[OrderLevel]
 
 
 @dataclass(frozen=True)
@@ -57,8 +64,15 @@ class WarEraMarketApi:
             raise WarEraApiError("Expected top-orders response to contain an object.")
 
         return TopOrders(
-            buy_orders=_order_list(data.get("buyOrders"), "buyOrders"),
-            sell_orders=_order_list(data.get("sellOrders"), "sellOrders"),
+            buy_orders=sorted(
+                _order_list(data.get("buyOrders"), "buyOrders"),
+                key=lambda level: level.price,
+                reverse=True,
+            ),
+            sell_orders=sorted(
+                _order_list(data.get("sellOrders"), "sellOrders"),
+                key=lambda level: level.price,
+            ),
         )
 
     def get_transaction_page(self, item_code: str, *, limit: int, cursor: str | None = None) -> TransactionPage:
@@ -106,9 +120,12 @@ def _trpc_data(response: Any) -> Any:
 
 def _required_float(value: Any, field_name: str) -> float:
     try:
-        return float(value)
+        result = float(value)
     except (TypeError, ValueError) as exc:
         raise WarEraApiError(f"Expected {field_name} to be numeric.") from exc
+    if not math.isfinite(result):
+        raise WarEraApiError(f"Expected {field_name} to be finite.")
+    return result
 
 
 def _dict_list(value: Any, field_name: str) -> list[dict[str, Any]]:
@@ -116,13 +133,30 @@ def _dict_list(value: Any, field_name: str) -> list[dict[str, Any]]:
         return []
     if not isinstance(value, list):
         raise WarEraApiError(f"Expected {field_name} to be a list.")
-    if not all(isinstance(item, dict) for item in value):
-        raise WarEraApiError(f"Expected {field_name} entries to be objects.")
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise WarEraApiError(f"Expected {field_name}[{index}] to be an object.")
     return value
 
 
-def _order_list(value: Any, field_name: str) -> list[dict[str, Any]]:
-    return _dict_list(value, field_name)
+def _order_list(value: Any, field_name: str) -> list[OrderLevel]:
+    entries = _dict_list(value, field_name)
+    levels: list[OrderLevel] = []
+    for index, entry in enumerate(entries):
+        entry_name = f"{field_name}[{index}]"
+        if "price" not in entry:
+            raise WarEraApiError(f"Expected {entry_name}.price to be present.")
+        if "quantity" not in entry:
+            raise WarEraApiError(f"Expected {entry_name}.quantity to be present.")
+        price = _required_float(entry["price"], f"{entry_name}.price")
+        quantity = _required_float(entry["quantity"], f"{entry_name}.quantity")
+        if price < 0:
+            raise WarEraApiError(f"Expected {entry_name}.price to be non-negative.")
+        if quantity < 0:
+            raise WarEraApiError(f"Expected {entry_name}.quantity to be non-negative.")
+        if quantity > 0:
+            levels.append(OrderLevel(price=price, quantity=quantity))
+    return levels
 
 
 def _transaction_list(value: Any, field_name: str) -> list[dict[str, Any]]:

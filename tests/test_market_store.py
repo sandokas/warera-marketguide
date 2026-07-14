@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from warera_quant.market_store import LATEST_SCHEMA_VERSION, MarketStore, SyncSummary
+from warera_quant.market_store import LATEST_SCHEMA_VERSION, MarketStore, SyncSummary, migrate_to_v1
+from warera_quant.warera_api import OrderLevel, TopOrders
 
 
 def _store(tmp_path: Path) -> MarketStore:
@@ -20,6 +21,7 @@ def test_initialize_creates_schema_tables(tmp_path):
             "transactions",
             "price_observations",
             "order_book_observations",
+            "order_book_levels",
             "item_sync_state",
             "schema_meta",
         }
@@ -117,16 +119,10 @@ def test_insert_price_and_order_book_observations(tmp_path):
         store.insert_price_observations({"bread": "3.25"}, observed_at)
         store.insert_order_book_observations(
             {
-                "bread": {
-                    "buyOrders": [
-                        {"price": "3.10", "quantity": "4"},
-                        {"price": "3.00", "quantity": "6"},
-                    ],
-                    "sellOrders": [
-                        {"price": "3.40", "quantity": "2"},
-                        {"price": "3.60", "quantity": "8"},
-                    ],
-                }
+                "bread": TopOrders(
+                    buy_orders=[OrderLevel(3.1, 4), OrderLevel(3.0, 6)],
+                    sell_orders=[OrderLevel(3.4, 2), OrderLevel(3.6, 8)],
+                )
             },
             observed_at,
         )
@@ -148,6 +144,13 @@ def test_insert_price_and_order_book_observations(tmp_path):
         assert order_rows[0]["ask_depth"] == 10.0
         assert order_rows[0]["spread_abs"] == pytest.approx(0.3)
         assert order_rows[0]["spread_pct"] == pytest.approx(9.230769)
+        latest = store.latest_order_book_with_levels("bread")
+        assert latest is not None
+        assert latest["levels_available"] is True
+        assert latest["bids"] == [
+            {"level_position": 0, "price": 3.1, "quantity": 4.0},
+            {"level_position": 1, "price": 3.0, "quantity": 6.0},
+        ]
 
 
 def test_sync_state_success_and_failure_updates(tmp_path):
@@ -195,3 +198,78 @@ def test_market_store_is_only_source_module_importing_sqlite3():
     ]
 
     assert offenders == []
+
+
+def test_v1_database_migrates_without_losing_compact_observation(tmp_path):
+    path = tmp_path / "legacy.sqlite3"
+    store = MarketStore(path)
+    connection = store._connect()
+    migrate_to_v1(connection)
+    connection.execute("create table schema_meta (key text primary key, value text not null)")
+    connection.execute("insert into schema_meta values ('version', '1')")
+    connection.execute("pragma user_version = 1")
+    connection.execute(
+        """
+        insert into order_book_observations (
+            item_code, observed_at, observed_at_epoch, best_bid, best_ask,
+            bid_depth, ask_depth, spread_abs, spread_pct
+        ) values ('bread', '2026-06-30T10:00:00Z', 1782813600, 3.1, 3.4, 10, 8, .3, 9.2)
+        """
+    )
+    connection.commit()
+    store.close()
+
+    with MarketStore(path) as migrated:
+        assert migrated.schema_version() == 2
+        snapshot = migrated.latest_order_book_with_levels("bread")
+        assert snapshot is not None
+        assert snapshot["best_bid"] == 3.1
+        assert snapshot["bids"] == []
+        assert snapshot["asks"] == []
+        assert snapshot["levels_available"] is False
+
+
+def test_order_book_insert_aggregates_duplicate_prices_and_is_atomic(tmp_path):
+    observed_at = datetime(2026, 6, 30, 10, 0, tzinfo=timezone.utc)
+    with _store(tmp_path) as store:
+        store.insert_order_book_observations(
+            {"bread": TopOrders(
+                buy_orders=[OrderLevel(3, 2), OrderLevel(3, 4)],
+                sell_orders=[OrderLevel(4, 1)],
+            )},
+            observed_at,
+        )
+        snapshot = store.latest_order_book_with_levels("bread")
+        assert snapshot is not None
+        assert snapshot["bids"] == [{"level_position": 0, "price": 3.0, "quantity": 6.0}]
+
+        with pytest.raises(Exception):
+            store.insert_order_book_observations(
+                {"steel": TopOrders(
+                    buy_orders=[OrderLevel(2, 1)],
+                    sell_orders=[OrderLevel(3, -1)],
+                )},
+                observed_at,
+            )
+        assert store.latest_order_book_with_levels("steel") is None
+
+
+def test_order_book_history_with_levels_is_chronological_and_keeps_legacy_rows(tmp_path):
+    with _store(tmp_path) as store:
+        later = datetime(2026, 6, 30, 12, tzinfo=timezone.utc)
+        earlier = datetime(2026, 6, 30, 10, tzinfo=timezone.utc)
+        for observed_at, bid in ((later, 4), (earlier, 3)):
+            store.insert_order_book_observations(
+                {"bread": TopOrders(
+                    buy_orders=[OrderLevel(bid, 2)],
+                    sell_orders=[OrderLevel(bid + 1, 3)],
+                )},
+                observed_at,
+            )
+        rows = store.order_book_history_with_levels("bread")
+
+    assert [row["observed_at"] for row in rows] == [
+        "2026-06-30T10:00:00Z",
+        "2026-06-30T12:00:00Z",
+    ]
+    assert rows[0]["bids"] == [{"level_position": 0, "price": 3.0, "quantity": 2.0}]

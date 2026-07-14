@@ -6,7 +6,7 @@ from pathlib import Path
 
 from warera_quant.market_store import MarketStore, SyncSummary
 from warera_quant.sync import sync_market_data
-from warera_quant.warera_api import TopOrders, TransactionPage
+from warera_quant.warera_api import OrderLevel, TopOrders, TransactionPage
 
 
 @dataclass
@@ -27,8 +27,8 @@ class FakeMarketApi:
     def get_top_orders(self, item_code: str, limit: int) -> TopOrders:
         self.calls.append(("get_top_orders", (item_code, limit)))
         return TopOrders(
-            buy_orders=[{"price": "3.10", "quantity": "4"}],
-            sell_orders=[{"price": "3.40", "quantity": "2"}],
+            buy_orders=[OrderLevel(3.10, 4)],
+            sell_orders=[OrderLevel(3.40, 2)],
         )
 
     def get_transaction_page(self, item_code: str, *, limit: int, cursor: str | None = None) -> TransactionPage:

@@ -8,7 +8,23 @@ from typing import Iterable
 
 import pandas as pd
 
-from .metrics import MarketMetrics
+from .metrics import FlipAssumptions, MarketMetrics
+
+
+_FLIP_REASON_LABELS = {
+    "missing_order_book": "Current order-book levels are unavailable",
+    "missing_timestamp": "The quote timestamp is unavailable",
+    "missing_forecast": "A current validated forecast is unavailable",
+    "missing_execution_interval": "Same-quantity historical entry/exit evidence is unavailable",
+    "stale_quote": "The quote is older than the configured maximum",
+    "insufficient_ask_depth": "The requested quantity cannot be fully filled from current asks",
+    "invalid_book": "The order book or calculated prices are invalid",
+    "forecast_insufficient": "Forecast evidence is insufficient",
+    "forecast_not_above_baseline": "Forecast evidence does not clearly beat its baseline",
+    "margin_non_positive": "Median estimated net margin is not positive",
+    "margin_below_threshold": "Median estimated net margin is below the configured minimum",
+    "supported_positive_margin": "Supported evidence and the configured margin threshold passed",
+}
 
 
 def combine_market_rows_with_metrics(source: pd.DataFrame, metrics: Iterable[MarketMetrics]) -> pd.DataFrame:
@@ -36,7 +52,7 @@ def _fmt_report_value(value: object, *, column: str | None = None) -> str:
         return "N/A"
     if isinstance(value, (int, float)):
         label = str(column or "").lower()
-        if any(token in label for token in ("volume", "trade")) or label in {"liquidity"}:
+        if any(token in label for token in ("volume", "trade", "sample")) or label in {"liquidity"}:
             return _fmt(value, 0)
         if "%" in label:
             return _fmt(value, 2)
@@ -65,6 +81,10 @@ def _number(value: object) -> float | None:
     except (TypeError, ValueError):
         return None
     return parsed if pd.notna(parsed) else None
+
+
+def _present(value: object, fallback: object) -> object:
+    return fallback if value is None or (not isinstance(value, (list, tuple, dict)) and pd.isna(value)) else value
 
 
 def _first_number(row: pd.Series, *columns: str) -> float | None:
@@ -110,190 +130,6 @@ def _fair_price_band(row: pd.Series, window_key: str) -> tuple[float | None, flo
     if volatility_band is not None:
         half_band = max(half_band, volatility_band)
     return fair, max(0.0, fair - half_band), fair + half_band
-
-
-def _latest_price(row: pd.Series) -> float | None:
-    return _first_number(row, "last_trade_price", "current_price", "latest_price", "quote_price")
-
-
-def _price_gap_pct(latest: float | None, fair: float | None) -> float | None:
-    if latest is None or fair is None or fair <= 0:
-        return None
-    return (latest - fair) / fair * 100
-
-
-def _market_quality(row: pd.Series, window_key: str) -> tuple[str, list[str]]:
-    trades = _first_number(row, f"trade_count_{window_key}", "trades_7d") or 0.0
-    volume = _first_number(row, f"volume_{window_key}", f"traded_quantity_{window_key}") or 0.0
-    stable_range_pct = _first_number(row, f"stable_range_pct_{window_key}", "stable_range_pct_7d")
-    spread_pct = _first_number(row, "latest_spread_pct", f"average_spread_pct_{window_key}", "spread_pct")
-    reasons: list[str] = []
-    if trades < 3 or volume <= 0:
-        reasons.append("few trades")
-    if spread_pct is not None and spread_pct >= 8:
-        reasons.append("wide bid/ask gap")
-    if stable_range_pct is not None and stable_range_pct >= 18:
-        reasons.append("price swings are large")
-
-    if trades >= 10 and volume > 0 and (spread_pct is None or spread_pct <= 4) and (
-        stable_range_pct is None or stable_range_pct <= 12
-    ):
-        return "strong", reasons
-    if trades >= 3 and volume > 0 and (stable_range_pct is None or stable_range_pct <= 18):
-        return "usable", reasons
-    return "weak", reasons
-
-
-def _plain_action(
-    latest: float | None,
-    buy_below: float | None,
-    sell_above: float | None,
-    fair: float | None,
-    quality: str = "usable",
-) -> str:
-    if latest is None or buy_below is None or sell_above is None or fair is None:
-        return "Check live market"
-    if latest <= buy_below:
-        if quality == "weak":
-            return "Possible buy; confirm depth"
-        return "Good buy zone"
-    if latest >= sell_above:
-        if quality == "weak":
-            return "Possible sell; confirm bids"
-        return "Good sell zone"
-    gap_pct = _price_gap_pct(latest, fair)
-    if gap_pct is not None:
-        if gap_pct <= -1:
-            return "Slightly cheap; watch buys"
-        if gap_pct >= 1:
-            return "Slightly rich; watch sells"
-    return "Fair; balanced"
-
-
-def _tomorrow_bias(row: pd.Series, window_key: str, fair: float | None) -> tuple[str, str, str]:
-    latest = _latest_price(row)
-    gap_pct = _price_gap_pct(latest, fair)
-    momentum = _first_number(row, f"percent_change_{window_key}", "momentum_7d_pct")
-    trades = _first_number(row, f"trade_count_{window_key}", "trades_7d") or 0.0
-    range_pct = _first_number(row, f"stable_range_pct_{window_key}", "stable_range_pct_7d", f"range_pct_{window_key}", "range_pct") or 0.0
-    spread_pct = _first_number(row, "latest_spread_pct", f"average_spread_pct_{window_key}", "spread_pct")
-    tendency = str(row.get(f"tendency_labels_{window_key}") or row.get(f"tendency_{window_key}") or "")
-    quality, quality_reasons = _market_quality(row, window_key)
-
-    score = 0
-    reasons: list[str] = []
-    if momentum is not None:
-        if momentum >= 6:
-            score += 2
-            reasons.append("price rose strongly")
-        elif momentum >= 1:
-            score += 1
-            reasons.append("price is rising")
-        elif momentum <= -6:
-            score -= 2
-            reasons.append("price fell strongly")
-        elif momentum <= -1:
-            score -= 1
-            reasons.append("price is falling")
-
-    if gap_pct is not None:
-        if gap_pct <= -2:
-            score += 1
-            reasons.append("below fair value")
-        elif gap_pct >= 2:
-            score -= 1
-            reasons.append("above fair value")
-
-    if "Rising" in tendency:
-        score += 1
-        reasons.append("history points up")
-    elif "Falling" in tendency:
-        score -= 1
-        reasons.append("history points down")
-
-    if score >= 1:
-        direction = "Up"
-    elif score <= -1:
-        direction = "Down"
-    else:
-        direction = "No clear move"
-
-    if quality == "strong" and abs(score) >= 2 and range_pct <= 12:
-        confidence = "Medium"
-    elif quality in {"strong", "usable"} and abs(score) >= 1:
-        confidence = "Low-medium"
-    else:
-        confidence = "Low"
-    if spread_pct is not None and spread_pct >= 8 and confidence == "Medium":
-        confidence = "Low-medium"
-
-    if not reasons:
-        reasons.append("no clear edge")
-    if quality == "weak":
-        reasons = [*quality_reasons, *reasons]
-    else:
-        reasons.extend(reason for reason in quality_reasons if reason not in reasons)
-    return direction, confidence, "; ".join(reasons[:2])
-
-
-def _trade_signal(
-    *,
-    latest: float | None,
-    buy_below: float | None,
-    sell_above: float | None,
-    expected_move: str,
-    quality: str,
-) -> str:
-    if latest is None or buy_below is None or sell_above is None:
-        return "Check market"
-    if quality == "weak":
-        return "Check depth"
-    if latest <= buy_below and expected_move != "Down":
-        return "Buy"
-    if latest >= sell_above and expected_move != "Up":
-        return "Sell"
-    if expected_move == "Up":
-        return "Hold"
-    if expected_move == "Down":
-        return "Wait"
-    return "Hold"
-
-
-def _next_step_note(
-    *,
-    signal: str,
-    latest: float | None,
-    buy_below: float | None,
-    sell_above: float | None,
-    reason: str,
-) -> str:
-    if signal == "Buy":
-        return "Already at buy zone"
-    if signal == "Sell":
-        return "Already at sell zone"
-    if signal == "Hold" and sell_above is not None:
-        if latest is not None and latest >= sell_above:
-            return "Above sell line; upward bias"
-        return f"Sell near {_fmt(sell_above)}"
-    if signal == "Wait" and buy_below is not None:
-        if latest is not None and latest <= buy_below:
-            return "Below buy line; downward bias"
-        return f"Buy near {_fmt(buy_below)}"
-    if signal == "Check depth":
-        return reason
-    if buy_below is not None and sell_above is not None:
-        return f"Trade near {_fmt(buy_below)}-{_fmt(sell_above)}"
-    return reason
-
-
-def _signal_summary(row: pd.Series) -> str:
-    parts = [
-        f"momentum {_fmt(row.get('momentum_7d_pct'), 2)}%",
-        f"trades {_fmt(row.get('trades_7d'), 0)}",
-        f"stable range {_fmt(row.get('stable_range_pct_7d', row.get('range_pct')), 2)}%",
-        f"spread {_fmt(row.get('spread_pct'), 2)}%",
-    ]
-    return ", ".join(parts)
 
 
 def _window_key(metric_window: str) -> str:
@@ -665,10 +501,6 @@ def _is_number_column(column: str) -> bool:
 
 
 def _render_table_cell(column: str, value: object, *, max_liquidity: float | None) -> str:
-    if column == "Signal":
-        return _chip(str(value), _signal_tone(value))
-    if column == "Expected Move":
-        return _chip(str(value), _move_tone(value), prefix=_move_arrow(value))
     if column == "Trust":
         return _chip(str(value), _trust_tone(value))
     if column == "Market":
@@ -691,46 +523,6 @@ def _chip(label: str, tone: str, *, prefix: str | None = None) -> str:
     safe_label = escape(label)
     safe_prefix = f"<span>{prefix}</span>" if prefix else ""
     return f'<span class="chip chip-{tone}">{safe_prefix}{safe_label}</span>'
-
-
-def _signal_tone(value: object) -> str:
-    normalized = str(value).strip().lower()
-    if normalized == "buy":
-        return "buy"
-    if normalized == "sell":
-        return "sell"
-    if normalized == "wait":
-        return "wait"
-    if normalized == "check depth" or normalized == "check market":
-        return "check"
-    return "hold"
-
-
-def _move_tone(value: object) -> str:
-    normalized = str(value).strip().lower()
-    if normalized == "up":
-        return "up"
-    if normalized == "down":
-        return "down"
-    return "flat"
-
-
-def _move_arrow(value: object) -> str:
-    normalized = str(value).strip().lower()
-    if normalized == "up":
-        return "&uarr;"
-    if normalized == "down":
-        return "&darr;"
-    return "&rarr;"
-
-
-def _summary_card_class(value: object) -> str:
-    tone = _move_tone(value)
-    if tone == "up":
-        return "summary-card-up"
-    if tone == "down":
-        return "summary-card-down"
-    return "summary-card-neutral"
 
 
 def _trust_tone(value: object) -> str:
@@ -832,145 +624,102 @@ def generate_html_report(
     chart_path: str | Path | None = None,
     chart_label: str | None = None,
     output_dir: str | Path = ".",
+    assumptions: FlipAssumptions | None = None,
 ) -> str:
+    assumptions = assumptions or FlipAssumptions()
     generated = datetime.now().strftime("%Y-%m-%d %H:%M")
     display_count = len(df) if top <= 0 else top
-    swing_count = len(df) if top <= 0 else top
-    trend_count = min(swing_count, 10)
     window_key = _window_key(metric_window)
-
     blocks: list[str] = []
     blocks.append(
         f"""    <header>
       <div>
         <div class="eyebrow">WarEra Market Guide</div>
         <h1>Fair Prices And Tomorrow Bias</h1>
-        <p class="muted">A practical read on what is cheap, what is expensive, and which way prices may lean next.</p>
+        <p class="muted">Executable flip opportunities ranked by forecast evidence, spread, depth, fees, and estimated net margin.</p>
       </div>
       <div class="muted">Window: {escape(metric_window)}<br>Generated: {escape(generated)}</div>
-    </header>"""
+    </header>
+    <div class="panel assumptions">Quantity: {escape(f'{assumptions.quantity:g}')} | Horizon: {escape(f'{assumptions.forecast_horizon_hours:g}')}h |
+      Fees assumed: {assumptions.fee_pct_per_side:.2f}% per side | Minimum margin: {assumptions.minimum_net_margin_pct:.2f}% |
+      Max quote age: {escape(f'{assumptions.max_quote_age_minutes:g}')}m
+    </div>"""
     )
 
-    chart_src = _relative_chart_path(chart_path, Path(output_dir))
-    if chart_src:
-        chart_heading = "Featured Price History"
-        if chart_label:
-            chart_heading = f"Featured Price History: {chart_label}"
-        blocks.append(
-            f"""    <section>
-      <h2>{escape(chart_heading)}</h2>
-      <img class="chart" src="{escape(chart_src)}" alt="Featured market history chart">
-    </section>"""
-        )
+    opportunity_rows: list[dict[str, object]] = []
+    for _, row in df.iterrows():
+        verdict = str(_present(row.get("flip_verdict"), "Unavailable"))
+        reason_value = _present(row.get("flip_reason_codes"), "missing_order_book")
+        codes = [code.strip() for code in str(reason_value).split(",") if code.strip()]
+        why = "; ".join(_FLIP_REASON_LABELS.get(code, code.replace("_", " ")) for code in codes)
+        if "insufficient_ask_depth" in codes:
+            filled = _number(row.get("flip_entry_filled_quantity")) or 0.0
+            why += f" ({filled:g} of {assumptions.quantity:g} available)"
+        passive = _number(row.get("flip_passive_limit_price"))
+        if passive is not None:
+            why += f". Limit idea — fill not estimated: {_fmt(passive)}"
+        downside = _number(row.get("flip_net_margin_p10_pct"))
+        if downside is not None:
+            why += f". Downside P10 net margin: {downside:.2f}%"
+        opportunity_rows.append({
+            "Item": row.get("item_name", "Unknown"), "Verdict": verdict,
+            "Qty": row.get("flip_quantity", assumptions.quantity),
+            "Ask VWAP": row.get("flip_entry_average_price"),
+            "Entry Cost": row.get("flip_total_entry_cost"),
+            "Break-even Exit VWAP": row.get("flip_break_even_exit_vwap"),
+            f"{assumptions.forecast_horizon_hours:g}h Exit VWAP P10": row.get("flip_forecast_exit_vwap_p10"),
+            f"{assumptions.forecast_horizon_hours:g}h Exit VWAP Median": row.get("flip_forecast_exit_vwap_median"),
+            f"{assumptions.forecast_horizon_hours:g}h Exit VWAP P90": row.get("flip_forecast_exit_vwap_p90"),
+            "Median Net Margin %": row.get("flip_net_margin_median_pct"),
+            "Median Net Profit": row.get("flip_net_profit_median"),
+            "Evidence": _present(row.get("flip_forecast_evidence"), _present(row.get("forecast_evidence"), "Insufficient")),
+            "Samples": _present(row.get("flip_forecast_samples"), _present(row.get("forecast_evaluable_samples"), 0)),
+            "Quote Age": row.get("flip_quote_age_minutes"), "Why": why,
+            "_margin": _number(row.get("flip_net_margin_median_pct")),
+            "_p10": _number(row.get("flip_net_margin_p10_pct")),
+            "_samples": _number(row.get("flip_forecast_samples")) or 0,
+        })
+    verdict_order = {"Potential flip": 0, "Watch": 1, "No trade": 2, "Unavailable": 3}
+    opportunity_rows.sort(key=lambda row: (
+        verdict_order.get(str(row["Verdict"]), 4),
+        -float(row["_margin"]) if row["_margin"] is not None else float("inf"),
+        -float(row["_samples"]), str(row["Item"]),
+    ))
+    opportunity_rows = opportunity_rows[:display_count]
+    visible_columns = [
+        "Item", "Verdict", "Qty", "Ask VWAP", "Entry Cost", "Break-even Exit VWAP",
+        f"{assumptions.forecast_horizon_hours:g}h Exit VWAP P10",
+        f"{assumptions.forecast_horizon_hours:g}h Exit VWAP Median",
+        f"{assumptions.forecast_horizon_hours:g}h Exit VWAP P90",
+        "Median Net Margin %", "Median Net Profit", "Evidence", "Samples", "Quote Age", "Why",
+    ]
+    flip_table = pd.DataFrame(opportunity_rows, columns=visible_columns)
+    blocks.append(f"""    <section>
+      <h2>Flip Board</h2>
+      <p class="muted">Only fully executable, fresh, supported opportunities are ranked as Potential flip. P10 is the displayed downside estimate.</p>
+      {_compact_table_html(flip_table, table_kind="signal")}
+    </section>""")
 
-    fair_candidates = df.copy()
-    if not fair_candidates.empty:
-        fair_rows = []
-        for _, row in fair_candidates.iterrows():
-            fair, buy_below, sell_above = _fair_price_band(row, window_key)
-            latest = _latest_price(row)
-            gap_pct = _price_gap_pct(latest, fair)
-            direction, confidence, reason = _tomorrow_bias(row, window_key, fair)
-            quality, _ = _market_quality(row, window_key)
-            signal = _trade_signal(
-                latest=latest,
-                buy_below=buy_below,
-                sell_above=sell_above,
-                expected_move=direction,
-                quality=quality,
-            )
-            next_step = _next_step_note(
-                signal=signal,
-                latest=latest,
-                buy_below=buy_below,
-                sell_above=sell_above,
-                reason=reason,
-            )
-            fair_rows.append({
-                "item_name": row.get("item_name"),
-                "latest_price": latest,
-                "fair_price": fair,
-                "buy_below": buy_below,
-                "sell_above": sell_above,
-                "history_low": _first_number(row, f"min_{window_key}", "low_7d"),
-                "history_high": _first_number(row, f"max_{window_key}", "high_7d"),
-                "gap_pct": gap_pct,
-                "signal": signal,
-                "action": _plain_action(latest, buy_below, sell_above, fair, quality),
-                "tomorrow_bias": direction,
-                "confidence": confidence,
-                "why": next_step,
-                "market_quality": quality.title(),
-                "latest_bid": row.get("latest_bid", row.get("bid")),
-                "latest_ask": row.get("latest_ask", row.get("ask")),
-                "tendency": row.get(f"tendency_labels_{window_key}"),
-            })
-        fair_view = pd.DataFrame(fair_rows)
-        fair_view = fair_view[fair_view["fair_price"].notna()].copy()
-        if not fair_view.empty:
-            summary_view = fair_view.copy()
-            cheap = summary_view[summary_view["gap_pct"].notna() & (summary_view["gap_pct"] <= -1)].sort_values("gap_pct").head(1)
-            expensive = summary_view[summary_view["gap_pct"].notna() & (summary_view["gap_pct"] >= 1)].sort_values("gap_pct", ascending=False).head(1)
-            likely_up = summary_view[summary_view["tomorrow_bias"] == "Up"].head(1)
-            likely_down = summary_view[summary_view["tomorrow_bias"] == "Down"].head(1)
+    potential = [row for row in opportunity_rows if row["Verdict"] == "Potential flip"]
+    def card(title: str, selected: dict[str, object] | None, detail: str) -> str:
+        name = str(selected["Item"]) if selected else "No supported opportunity"
+        value = detail.format(**selected) if selected else ""
+        return f'<div class="summary-card summary-card-neutral"><span>{escape(title)}</span><strong>{escape(name)}</strong><span>{escape(value)}</span></div>'
+    best_margin = max(potential, key=lambda row: float(row["_margin"]), default=None)
+    lowest_break_even = min(potential, key=lambda row: float(row["Break-even Exit VWAP"]), default=None)
+    best_downside = max(potential, key=lambda row: float(row["_p10"]), default=None)
+    problem = next((row for row in opportunity_rows if row["Verdict"] in {"No trade", "Unavailable"}), None)
+    blocks.append("    <section><div class=\"summary-grid\">" +
+        card("Best supported net margin", best_margin, "{Median Net Margin %:.2f}%") +
+        card("Lowest break-even cost", lowest_break_even, "{Break-even Exit VWAP:.3f}") +
+        card("Best downside profile", best_downside, "P10 margin {_p10:.2f}%") +
+        card("Avoid / data problem", problem, "{Why}") + "</div></section>")
 
-            def summary_card(title: str, row_df: pd.DataFrame, fallback: str) -> str:
-                if row_df.empty:
-                    return (
-                        '<div class="summary-card summary-card-neutral">'
-                        f'<span>{escape(title)}</span>'
-                        f'<strong><span class="summary-arrow">&rarr;</span>{escape(fallback)}</strong>'
-                        '</div>'
-                    )
-                row = row_df.iloc[0]
-                gap = _fmt(row.get("gap_pct"), 2)
-                move = str(row.get("tomorrow_bias") or "No clear move")
-                card_class = _summary_card_class(move)
-                arrow = _move_arrow(move)
-                return (
-                    f'<div class="summary-card {card_class}"><span>{escape(title)}</span>'
-                    f'<strong><span class="summary-arrow">{arrow}</span>{escape(str(row.get("item_name")))}</strong>'
-                    f'<span>{escape(str(row.get("signal")))}; {escape(str(row.get("tomorrow_bias")))}; gap {escape(gap)}%</span></div>'
-                )
-
-            blocks.append(
-                """    <section>
-      <div class="summary-grid">"""
-                + summary_card("Cheapest vs fair", cheap, "No clear discount")
-                + summary_card("Richest vs fair", expensive, "No clear premium")
-                + summary_card("Best upside bias", likely_up, "No clear up bias")
-                + summary_card("Best downside bias", likely_down, "No clear down bias")
-                + """</div>
-    </section>"""
-            )
-
-            fair_view = fair_view.sort_values(["gap_pct", "item_name"], na_position="last").head(display_count)
-            table = fair_view[[
-                "item_name", "latest_price", "fair_price", "buy_below", "sell_above",
-                "history_low", "history_high", "gap_pct",
-                "signal", "tomorrow_bias", "confidence", "market_quality", "why"
-            ]].rename(columns={
-                "item_name": "Commodity",
-                "latest_price": "Now",
-                "fair_price": "Fair",
-                "buy_below": "Buy ≤",
-                "sell_above": "Sell ≥",
-                "history_low": f"{metric_window} Low",
-                "history_high": f"{metric_window} High",
-                "gap_pct": "Gap %",
-                "signal": "Signal",
-                "tomorrow_bias": "Expected Move",
-                "confidence": "Trust",
-                "market_quality": "Market",
-                "why": "Notes",
-            })
-            blocks.append(
-                f"""    <section>
-      <h2>What To Pay And What To Expect</h2>
-      <p class="muted">Buy ≤ and Sell ≥ are model thresholds around Fair, not the historical range. The {escape(metric_window)} Low and High columns show the actual traded range. Confirm live depth in thin or volatile markets.</p>
-      {_compact_table_html(table, table_kind="signal")}
-    </section>"""
-            )
+    blocks.append(f"""    <section>
+      <h2>How to read the Flip Board</h2>
+      <div class="panel"><p>Forecasts are historical estimates, not guarantees. Fees are assumptions supplied by the user. Order-book execution is estimated from a snapshot that may change. Passive limit orders may not fill. <strong>Potential flip</strong> means the configured rules passed, not that profit is certain.</p>
+      <p>Entry uses an ask sweep for quantity {assumptions.quantity:g}; historical exits use same-quantity bid sweeps. Crossing cost and slippage are already represented in those executions and are not subtracted twice.</p></div>
+    </section>""")
 
     trend_candidates = df.copy()
     if not trend_candidates.empty:
@@ -981,7 +730,7 @@ def generate_html_report(
         sort_cols = [col for col in [liquidity_col, volume_col] if col]
         if sort_cols:
             trend_candidates = trend_candidates.sort_values(sort_cols, ascending=False, na_position="last")
-        view = trend_candidates.head(swing_count).copy()
+        view = trend_candidates.head(display_count).copy()
         table_columns: list[tuple[str, str]] = [
             ("item_name", "Item"),
             (_column(df, "latest_price", "current_price") or "", "Latest"),
@@ -1005,76 +754,6 @@ def generate_html_report(
     </section>"""
         )
 
-    signal_items: list[str] = []
-
-    momentum = df[df["momentum_7d_pct"].notna()].copy()
-    if not momentum.empty:
-        winners = momentum[momentum["momentum_7d_pct"] > 0].sort_values(
-            ["momentum_7d_pct", "trades_7d"], ascending=[False, False]
-        ).head(3)
-        losers = momentum[momentum["momentum_7d_pct"] < 0].sort_values(
-            ["momentum_7d_pct", "trades_7d"], ascending=[True, False]
-        ).head(3)
-
-        winner_items = []
-        if winners.empty:
-            winner_items.append("<li>None with positive momentum.</li>")
-        else:
-            for _, row in winners.iterrows():
-                winner_items.append(f"<li><strong>{escape(str(row['item_name']))}</strong>: {escape(_signal_summary(row))}</li>")
-
-        loser_items = []
-        if losers.empty:
-            loser_items.append("<li>None with negative momentum.</li>")
-        else:
-            for _, row in losers.iterrows():
-                loser_items.append(f"<li><strong>{escape(str(row['item_name']))}</strong>: {escape(_signal_summary(row))}</li>")
-        signal_items.append(
-            '<div class="grid">'
-            f'<div><h3>Biggest winners</h3><ul>{"".join(winner_items)}</ul></div>'
-            f'<div><h3>Biggest losers</h3><ul>{"".join(loser_items)}</ul></div>'
-            "</div>"
-        )
-
-    blocks.append(
-        """    <section>
-      <h2>Trend Highlights</h2>
-      <div class="panel">""" + "\n".join(signal_items) + """</div>
-    </section>"""
-    )
-
-    blocks.append(
-        f"""    <section>
-      <h2>Reading The Signals</h2>
-      <div class="grid">
-        <div class="panel">
-          <h3>Fair prices</h3>
-          <ul>
-            <li><strong>Fair:</strong> the report's best estimate of a normal price, smoothed so one odd trade matters less.</li>
-            <li><strong>Buy ≤ / Sell ≥:</strong> model thresholds around Fair, widened when the market is jumpy; they are not historical bounds.</li>
-            <li><strong>Use for:</strong> quick limit-order levels before checking live depth.</li>
-          </ul>
-        </div>
-        <div class="panel">
-          <h3>Tomorrow bias</h3>
-          <ul>
-            <li><strong>Expected Move:</strong> Up means prices may rise, Down means prices may fall, No clear move means mixed evidence.</li>
-            <li><strong>Signal:</strong> Buy, Sell, Hold, Wait, or Check depth based on price, direction, and market quality.</li>
-            <li><strong>Trust:</strong> higher when trades, spread, volume, and price stability support the signal.</li>
-          </ul>
-        </div>
-        <div class="panel">
-          <h3>Market state</h3>
-          <ul>
-            <li><strong>Rising/Falling:</strong> recent trades moved mostly one way.</li>
-            <li><strong>Range-bound/Volatile:</strong> prices are staying tight or swinging widely.</li>
-            <li><strong>Thin/Stable:</strong> there are few trades, or enough activity to trust the prices more.</li>
-          </ul>
-        </div>
-      </div>
-    </section>"""
-    )
-
     swing_price_columns = [
         column for column in ["bid", "ask", "current_price", "latest_price", "low_7d", "high_7d"]
         if column in df.columns
@@ -1083,12 +762,16 @@ def generate_html_report(
     if not swing_candidates.empty:
         trend = swing_candidates.copy()
         if not trend.empty:
+            if "momentum_7d_pct" not in trend.columns:
+                trend["momentum_7d_pct"] = None
+            if "trades_7d" not in trend.columns:
+                trend["trades_7d"] = None
             trend["abs_momentum"] = pd.to_numeric(trend["momentum_7d_pct"], errors="coerce").abs()
             trend = trend.sort_values(
                 ["abs_momentum", "trades_7d"],
                 ascending=[False, False],
                 na_position="last",
-            ).head(trend_count)
+            ).head(display_count)
             trend["swing_read"] = trend.apply(_swing_read, axis=1)
             last_col = _column(trend, "current_price", "latest_price")
             columns = [
@@ -1106,7 +789,7 @@ def generate_html_report(
                 "latest_price": "Last",
                 "low_7d": f"{metric_window} Low",
                 "high_7d": f"{metric_window} High",
-                "crossing_loss_pct": "Immediate Loss %",
+                "crossing_loss_pct": "Crossing Cost %",
                 "momentum_7d_pct": f"{metric_window} Momentum %",
                 "trades_7d": f"{metric_window} Trades",
                 "swing_read": "Read",
@@ -1114,7 +797,7 @@ def generate_html_report(
             blocks.append(
                 f"""    <section>
       <h2>Price Evolution Lens</h2>
-      <p class="muted">Ask is what you pay; bid is what you receive. Immediate Loss is the buy-at-ask, sell-at-bid loss before fees. Momentum describes history, not a trade recommendation.</p>
+      <p class="muted">Ask is what you pay; bid is what you receive. Crossing Cost is the buy-at-ask, sell-at-bid cost before fees. Momentum describes history, not a trade recommendation.</p>
       {_compact_table_html(trend_table, table_kind="trend")}
     </section>"""
             )
@@ -1128,7 +811,7 @@ def generate_html_report(
             trades = _first_number(row, f"trade_count_{window_key}", "trades_7d")
             liquidity = _first_number(row, f"liquidity_{window_key}")
             detail_items = [
-                f"<li>Fair / Buy below / Sell above: <strong>{escape(_fmt(fair))} / {escape(_fmt(buy_below))} / {escape(_fmt(sell_above))}</strong></li>",
+                f"<li>Historical fair context: <strong>{escape(_fmt(fair))}</strong></li>",
                 f"<li>Bid / Ask: <strong>{escape(_fmt(row.get('bid')))} / {escape(_fmt(row.get('ask')))}</strong></li>",
                 f"<li>{escape(metric_window)} volume / trades: <strong>{escape(_fmt(volume, 0))} / {escape(_fmt(trades, 0))}</strong></li>",
                 f"<li>Liquidity depth score: <strong>{escape(_fmt(liquidity, 1))}</strong></li>",
@@ -1149,6 +832,11 @@ def generate_html_report(
     </section>"""
         )
 
+    chart_src = _relative_chart_path(chart_path, Path(output_dir))
+    if chart_src:
+        chart_heading = f"Featured Price History: {chart_label}" if chart_label else "Featured Price History"
+        blocks.append(f'<section><h2>{escape(chart_heading)}</h2><img class="chart" src="{escape(chart_src)}" alt="Featured market history chart"></section>')
+
     return _html_page("WarEra Market Guide", "\n".join(blocks))
 
 
@@ -1160,22 +848,50 @@ def write_outputs(
     metric_window: str = "7D",
     chart_path: str | Path | None = None,
     chart_label: str | None = None,
+    assumptions: FlipAssumptions | None = None,
 ) -> tuple[Path, Path]:
+    assumptions = assumptions or FlipAssumptions()
+    export_df = df.copy()
+    compatibility_defaults = {
+        "flip_verdict": "Unavailable",
+        "flip_reason_codes": "missing_order_book",
+        "flip_quantity": assumptions.quantity,
+        "flip_snapshot_at": None,
+        "flip_quote_age_minutes": None,
+        "flip_entry_fully_filled": False,
+        "flip_entry_average_price": None,
+        "flip_total_entry_cost": None,
+        "flip_break_even_exit_vwap": None,
+        "flip_forecast_exit_vwap_p10": None,
+        "flip_forecast_exit_vwap_median": None,
+        "flip_forecast_exit_vwap_p90": None,
+        "flip_net_margin_p10_pct": None,
+        "flip_net_margin_median_pct": None,
+        "flip_net_margin_p90_pct": None,
+        "flip_net_profit_median": None,
+        "flip_forecast_evidence": export_df["forecast_evidence"] if "forecast_evidence" in export_df.columns else "Insufficient",
+        "flip_forecast_samples": export_df["forecast_evaluable_samples"] if "forecast_evaluable_samples" in export_df.columns else 0,
+        "flip_passive_limit_price": None,
+    }
+    for column, value in compatibility_defaults.items():
+        if column not in export_df.columns:
+            export_df[column] = value
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     trends_csv_path = out / "market_trends.csv"
     scores_csv_path = out / "market_scores.csv"
     html_path = out / "market_report.html"
-    df.to_csv(trends_csv_path, index=False)
-    df.to_csv(scores_csv_path, index=False)
+    export_df.to_csv(trends_csv_path, index=False)
+    export_df.to_csv(scores_csv_path, index=False)
     html_path.write_text(
         generate_html_report(
-            df,
+            export_df,
             top=top,
             metric_window=metric_window,
             chart_path=chart_path,
             chart_label=chart_label,
             output_dir=out,
+            assumptions=assumptions,
         ),
         encoding="utf-8",
     )

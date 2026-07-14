@@ -5,6 +5,7 @@ import pytest
 from warera_quant.warera_api import (
     TOP_ORDERS_ENDPOINT,
     TRANSACTIONS_ENDPOINT,
+    OrderLevel,
     WarEraApiError,
     WarEraMarketApi,
 )
@@ -65,8 +66,8 @@ def test_get_top_orders_parses_orders_and_builds_input_params():
 
     orders = api.get_top_orders("bread", 7)
 
-    assert orders.buy_orders == [{"price": "1.20", "quantity": 10}]
-    assert orders.sell_orders == [{"price": "1.35", "quantity": 5}]
+    assert orders.buy_orders == [OrderLevel(price=1.2, quantity=10.0)]
+    assert orders.sell_orders == [OrderLevel(price=1.35, quantity=5.0)]
     endpoint, params = client.calls[0]
     assert endpoint == TOP_ORDERS_ENDPOINT
     assert json.loads(params["input"]) == {"itemCode": "bread", "limit": 7}
@@ -84,6 +85,47 @@ def test_get_top_orders_rejects_malformed_responses(payload):
     api = WarEraMarketApi(FakeClient([_trpc(payload)]))
 
     with pytest.raises(WarEraApiError):
+        api.get_top_orders("bread", 10)
+
+
+def test_get_top_orders_sorts_levels_and_discards_zero_quantity():
+    api = WarEraMarketApi(FakeClient([_trpc({
+        "buyOrders": [
+            {"price": "1.1", "quantity": "2"},
+            {"price": "1.2", "quantity": "3"},
+            {"price": "9", "quantity": "0"},
+        ],
+        "sellOrders": [
+            {"price": "1.5", "quantity": "1"},
+            {"price": "1.4", "quantity": "4"},
+        ],
+    })]))
+
+    orders = api.get_top_orders("bread", 10)
+
+    assert orders.buy_orders == [OrderLevel(1.2, 3), OrderLevel(1.1, 2)]
+    assert orders.sell_orders == [OrderLevel(1.4, 4), OrderLevel(1.5, 1)]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("price", None),
+        ("price", "bad"),
+        ("price", float("inf")),
+        ("price", -1),
+        ("quantity", None),
+        ("quantity", "bad"),
+        ("quantity", float("nan")),
+        ("quantity", -1),
+    ],
+)
+def test_get_top_orders_rejects_invalid_level_fields_clearly(field, value):
+    entry = {"price": 1, "quantity": 2}
+    entry[field] = value
+    api = WarEraMarketApi(FakeClient([_trpc({"buyOrders": [entry], "sellOrders": []})]))
+
+    with pytest.raises(WarEraApiError, match=rf"buyOrders\[0\]\.{field}"):
         api.get_top_orders("bread", 10)
 
 
