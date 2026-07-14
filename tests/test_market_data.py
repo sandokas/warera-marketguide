@@ -207,6 +207,12 @@ def test_load_market_rows_computes_window_statistics(tmp_path):
     assert row["latest_bid"] == 6.0
     assert row["latest_ask"] == 7.0
     assert row["latest_spread"] == 1.0
+    assert row["order_book"]["bid_value"] == 60.0
+    assert row["order_book"]["ask_value"] == 140.0
+    assert row["order_book"]["pressure_pct"] == pytest.approx(-40.0)
+    assert [entry["budget"] for entry in row["order_book_executions"]] == [100, 1_000, 10_000]
+    assert row["order_book_executions"][0]["buy"]["fully_filled"] is True
+    assert row["order_book_executions"][0]["sell"]["fully_filled"] is False
     assert row["flip_quantity"] == 1.0
     assert row["flip_quote_age_minutes"] == 15.0
     assert row["flip_entry_fully_filled"] is True
@@ -246,6 +252,7 @@ def test_load_market_rows_keeps_legacy_metric_fields_for_current_report(tmp_path
             fetched_at=NOW,
         )
         store.insert_price_observations({"bread": 3.0}, NOW)
+        store.upsert_item_production_points({"bread": 10}, NOW)
 
         row = load_market_rows(store, lookback_days=1, now=NOW)[0]
 
@@ -254,6 +261,7 @@ def test_load_market_rows_keeps_legacy_metric_fields_for_current_report(tmp_path
     assert row["low_7d"] == 3.0
     assert row["open_7d"] == 3.0
     assert row["close_7d"] == 3.0
+    assert row["production_points"] == 10.0
 
 
 def test_load_market_rows_uses_percentile_range_to_reduce_outlier_noise(tmp_path):

@@ -4,6 +4,8 @@ import argparse
 import math
 from pathlib import Path
 
+import pandas as pd
+
 from .api_client import WarEraApiClient
 from .charts import featured_item_codes, render_featured_chart
 from .csv_loader import load_market_csv
@@ -62,10 +64,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--order-limit",
         type=int,
-        default=10,
+        default=100,
         help=(
-            "Current order-book depth per item: fetch this many best bids and best asks. "
-            "Does not limit transaction history."
+            "Current order-book depth per item: fetch this many best bids and best asks "
+            "(default and API maximum: 100). Does not limit transaction history."
         ),
     )
     parser.add_argument(
@@ -237,7 +239,10 @@ def main() -> None:
             )
         if args.sync:
             return
-        df_in = market_json_to_dataframe(rows)
+        # Database read models are already normalized and include structured
+        # order-book levels.  Keep those nested values intact for report
+        # rendering instead of flattening them like an arbitrary JSON payload.
+        df_in = pd.DataFrame(rows)
     elif args.from_db:
         with MarketStore(args.market_db) as store:
             rows = load_market_rows(
@@ -249,7 +254,7 @@ def main() -> None:
                 min_tick=args.min_tick,
                 flip_assumptions=assumptions,
             )
-        df_in = market_json_to_dataframe(rows)
+        df_in = pd.DataFrame(rows)
     elif args.api_endpoint:
         client = WarEraApiClient(min_interval_seconds=args.min_interval)
         data = client.get_json(args.api_endpoint, params=dict(args.api_param))

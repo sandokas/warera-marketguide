@@ -49,7 +49,7 @@ def sync_market_data(
     market_api: WarEraMarketApi,
     store: MarketStore,
     *,
-    order_limit: int = 10,
+    order_limit: int = 100,
     transaction_limit: int = 100,
     history_pages: int = 0,
     transaction_backfill: bool = False,
@@ -63,6 +63,8 @@ def sync_market_data(
 
     if order_limit < 1:
         raise ValueError("order_limit must be at least 1.")
+    if order_limit > 100:
+        raise ValueError("order_limit cannot exceed the WarEra API maximum of 100.")
     if transaction_limit < 1:
         raise ValueError("transaction_limit must be at least 1.")
     if history_pages < 0:
@@ -76,6 +78,11 @@ def sync_market_data(
     excluded = {code.lower() for code in (exclude_item_codes or set())}
     if excluded:
         prices = {code: price for code, price in prices.items() if code.lower() not in excluded}
+    production_points = market_api.get_item_production_points()
+    store.upsert_item_production_points(
+        {item_code: production_points.get(item_code) for item_code in prices},
+        observed_at,
+    )
     store.insert_price_observations(prices, observed_at)
     _log_verbose(
         progress,

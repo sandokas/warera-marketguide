@@ -300,6 +300,165 @@ class SweepResult:
     slippage_pct: float | None
 
 
+@dataclass(frozen=True)
+class BookLevelDepth:
+    price: float
+    quantity: float
+    order_value: float
+    cumulative_quantity: float
+    cumulative_value: float
+    is_wall: bool
+
+
+@dataclass(frozen=True)
+class OrderBookSummary:
+    best_bid: float | None
+    best_ask: float | None
+    bid_quantity: float
+    ask_quantity: float
+    bid_value: float
+    ask_value: float
+    pressure_pct: float | None
+    spread_abs: float | None
+    spread_pct: float | None
+    bids: tuple[BookLevelDepth, ...]
+    asks: tuple[BookLevelDepth, ...]
+
+
+@dataclass(frozen=True)
+class NotionalSweepResult:
+    side: str
+    requested_value: float
+    filled_quantity: float
+    gross_value: float
+    fully_filled: bool
+    average_price: float | None
+    best_price: float | None
+    worst_price: float | None
+    slippage_pct: float | None
+
+
+def summarize_order_book(*, bids: object, asks: object) -> OrderBookSummary:
+    """Summarize normalized levels without hiding depth behind a composite score."""
+    bid_levels = _normalized_levels(bids, reverse=True)
+    ask_levels = _normalized_levels(asks, reverse=False)
+
+    def depth_rows(levels: list[tuple[float, float]]) -> tuple[BookLevelDepth, ...]:
+        wall_index = max(range(len(levels)), key=lambda index: levels[index][1], default=-1)
+        cumulative_quantity = 0.0
+        cumulative_value = 0.0
+        rows = []
+        for index, (price, quantity) in enumerate(levels):
+            value = price * quantity
+            cumulative_quantity += quantity
+            cumulative_value += value
+            rows.append(BookLevelDepth(
+                price=price,
+                quantity=quantity,
+                order_value=value,
+                cumulative_quantity=cumulative_quantity,
+                cumulative_value=cumulative_value,
+                is_wall=index == wall_index,
+            ))
+        return tuple(rows)
+
+    bid_rows = depth_rows(bid_levels)
+    ask_rows = depth_rows(ask_levels)
+    bid_value = sum(level.order_value for level in bid_rows)
+    ask_value = sum(level.order_value for level in ask_rows)
+    total_value = bid_value + ask_value
+    best_bid = bid_rows[0].price if bid_rows else None
+    best_ask = ask_rows[0].price if ask_rows else None
+    spread = best_ask - best_bid if best_bid is not None and best_ask is not None else None
+    midpoint = (best_bid + best_ask) / 2 if best_bid is not None and best_ask is not None else None
+    return OrderBookSummary(
+        best_bid=best_bid,
+        best_ask=best_ask,
+        bid_quantity=sum(level.quantity for level in bid_rows),
+        ask_quantity=sum(level.quantity for level in ask_rows),
+        bid_value=bid_value,
+        ask_value=ask_value,
+        pressure_pct=(bid_value - ask_value) / total_value * 100 if total_value > 0 else None,
+        spread_abs=spread,
+        spread_pct=spread / midpoint * 100 if spread is not None and midpoint and midpoint > 0 else None,
+        bids=bid_rows,
+        asks=ask_rows,
+    )
+
+
+def calculate_notional_book_sweep(
+    levels: object, *, side: str, value: float
+) -> NotionalSweepResult:
+    """Estimate execution for a fixed monetary size using only visible levels.
+
+    A buy spends ``value`` and a sell raises ``value``. The final visible level
+    may therefore be partially consumed.
+    """
+    if side not in {"buy", "sell"}:
+        raise ValueError("side must be 'buy' or 'sell'.")
+    requested_value = _finite_float_or_none(value)
+    if requested_value is None or requested_value <= 0:
+        raise ValueError("value must be a finite positive number.")
+    normalized = _normalized_levels(levels, reverse=side == "sell")
+    best_price = normalized[0][0] if normalized else None
+    if best_price is None or best_price <= 0:
+        return NotionalSweepResult(side, requested_value, 0.0, 0.0, False, None, best_price, None, None)
+
+    remaining_value = requested_value
+    gross_value = 0.0
+    filled_quantity = 0.0
+    worst_price = None
+    for price, available in normalized:
+        fill = min(remaining_value / price, available)
+        fill_value = fill * price
+        gross_value += fill_value
+        filled_quantity += fill
+        remaining_value -= fill_value
+        if fill > 0:
+            worst_price = price
+        if remaining_value <= 1e-9:
+            remaining_value = 0.0
+            break
+    average_price = gross_value / filled_quantity if filled_quantity > 0 else None
+    slippage_pct = None
+    if average_price is not None:
+        slippage = average_price - best_price if side == "buy" else best_price - average_price
+        slippage_pct = slippage / best_price * 100
+    return NotionalSweepResult(
+        side=side,
+        requested_value=requested_value,
+        filled_quantity=filled_quantity,
+        gross_value=gross_value,
+        fully_filled=remaining_value == 0,
+        average_price=average_price,
+        best_price=best_price,
+        worst_price=worst_price,
+        slippage_pct=slippage_pct,
+    )
+
+
+def _normalized_levels(levels: object, *, reverse: bool) -> list[tuple[float, float]]:
+    try:
+        source_levels = list(levels)  # type: ignore[arg-type]
+    except TypeError as exc:
+        raise ValueError("levels must be an iterable of price and quantity values.") from exc
+    by_price: dict[float, float] = {}
+    for index, level in enumerate(source_levels):
+        try:
+            if isinstance(level, dict):
+                price = float(level["price"])
+                quantity = float(level["quantity"])
+            else:
+                price = float(level.price)
+                quantity = float(level.quantity)
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid level at position {index}.") from exc
+        if not math.isfinite(price) or price <= 0 or not math.isfinite(quantity) or quantity <= 0:
+            raise ValueError(f"Invalid level at position {index}.")
+        by_price[price] = by_price.get(price, 0.0) + quantity
+    return [(price, by_price[price]) for price in sorted(by_price, reverse=reverse)]
+
+
 def calculate_book_sweep(levels: object, *, side: str, quantity: float) -> SweepResult:
     if side not in {"buy", "sell"}:
         raise ValueError("side must be 'buy' or 'sell'.")
@@ -537,6 +696,8 @@ class MarketMetrics:
     price_p10_7d: Optional[float] = None
     price_p90_7d: Optional[float] = None
     stable_fair_price_7d: Optional[float] = None
+    fair_reference_7d: Optional[float] = None
+    fair_gap_7d_pct: Optional[float] = None
     rolling_average_7d: Optional[float] = None
     mid_price: Optional[float] = None
     min_tick: float = 0.001
@@ -663,6 +824,19 @@ def calculate_metrics(row: dict) -> MarketMetrics:
         if row.get("latest_depth_imbalance_pct") is not None
         else row.get("depth_imbalance_pct")
     )
+    fair_reference_7d = next(
+        (
+            value
+            for value in (stable_fair_price_7d, vwap_7d, median_7d, average_7d, rolling_average_7d)
+            if value is not None and value > 0
+        ),
+        None,
+    )
+    fair_gap_7d_pct = (
+        (current_price - fair_reference_7d) / fair_reference_7d * 100
+        if current_price is not None and fair_reference_7d is not None
+        else None
+    )
 
     return MarketMetrics(
         item_name=item_name,
@@ -681,6 +855,8 @@ def calculate_metrics(row: dict) -> MarketMetrics:
         price_p10_7d=price_p10_7d,
         price_p90_7d=price_p90_7d,
         stable_fair_price_7d=stable_fair_price_7d,
+        fair_reference_7d=fair_reference_7d,
+        fair_gap_7d_pct=fair_gap_7d_pct,
         rolling_average_7d=rolling_average_7d,
         mid_price=mid_price,
         min_tick=min_tick,

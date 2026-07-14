@@ -22,9 +22,18 @@ def test_initialize_creates_schema_tables(tmp_path):
             "price_observations",
             "order_book_observations",
             "order_book_levels",
+            "item_production_config",
             "item_sync_state",
             "schema_meta",
         }
+
+
+def test_upsert_item_production_points_preserves_undefined_items(tmp_path):
+    observed_at = datetime(2026, 6, 30, 10, 0, tzinfo=timezone.utc)
+    with _store(tmp_path) as store:
+        store.upsert_item_production_points({"iron": 1, "steel": 10, "case1": None}, observed_at)
+
+        assert store.item_production_points() == {"case1": None, "iron": 1.0, "steel": 10.0}
 
 
 def test_initialize_sets_schema_and_user_versions(tmp_path):
@@ -220,7 +229,7 @@ def test_v1_database_migrates_without_losing_compact_observation(tmp_path):
     store.close()
 
     with MarketStore(path) as migrated:
-        assert migrated.schema_version() == 2
+        assert migrated.schema_version() == LATEST_SCHEMA_VERSION
         snapshot = migrated.latest_order_book_with_levels("bread")
         assert snapshot is not None
         assert snapshot["best_bid"] == 3.1

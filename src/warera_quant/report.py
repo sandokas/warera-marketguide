@@ -26,6 +26,15 @@ _FLIP_REASON_LABELS = {
     "supported_positive_margin": "Supported evidence and the configured margin threshold passed",
 }
 
+_FORECAST_REASON_LABELS = {
+    "strong_positive_momentum": "Strong positive momentum",
+    "positive_momentum": "Positive momentum",
+    "strong_negative_momentum": "Strong negative momentum",
+    "negative_momentum": "Negative momentum",
+    "below_fair": "Below fair value",
+    "above_fair": "Above fair value",
+}
+
 
 def combine_market_rows_with_metrics(source: pd.DataFrame, metrics: Iterable[MarketMetrics]) -> pd.DataFrame:
     df = source.reset_index(drop=True).copy()
@@ -132,6 +141,16 @@ def _fair_price_band(row: pd.Series, window_key: str) -> tuple[float | None, flo
     return fair, max(0.0, fair - half_band), fair + half_band
 
 
+def _latest_price(row: pd.Series) -> float | None:
+    return _first_number(row, "last_trade_price", "current_price", "latest_price", "quote_price", "mid_price")
+
+
+def _price_gap_pct(latest: float | None, fair: float | None) -> float | None:
+    if latest is None or fair is None or fair <= 0:
+        return None
+    return (latest - fair) / fair * 100
+
+
 def _window_key(metric_window: str) -> str:
     return metric_window.strip().lower()
 
@@ -171,9 +190,10 @@ def _html_page(title: str, body: str) -> str:
       color: var(--text);
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       line-height: 1.45;
+      overflow-x: hidden;
     }}
     main {{
-      width: min(1180px, calc(100vw - 32px));
+      width: min(1280px, calc(100vw - 32px));
       margin: 0 auto;
       padding: 32px 0 48px;
     }}
@@ -181,18 +201,32 @@ def _html_page(title: str, body: str) -> str:
       display: flex;
       justify-content: space-between;
       gap: 24px;
-      align-items: end;
-      padding: 24px;
-      border-bottom: 1px solid var(--line);
-      background: linear-gradient(135deg, #111826 0%, #0f172a 100%);
+      align-items: center;
+      padding: 28px 30px;
+      background:
+        radial-gradient(circle at 82% 12%, rgba(56, 189, 248, 0.15), transparent 34%),
+        linear-gradient(135deg, #111b2e 0%, #0e1729 100%);
       border: 1px solid var(--line);
-      border-radius: 8px;
+      border-radius: 16px;
+      box-shadow: 0 18px 50px rgba(0, 0, 0, 0.2);
     }}
     h1, h2, h3, p {{ margin-top: 0; }}
-    h1 {{ margin-bottom: 4px; font-size: 2rem; }}
-    h2 {{ margin-bottom: 12px; font-size: 1.35rem; }}
+    h1 {{ margin-bottom: 7px; font-size: clamp(1.8rem, 4vw, 2.55rem); letter-spacing: -0.035em; }}
+    h2 {{
+      margin-bottom: 8px;
+      padding-left: 10px;
+      border-left: 3px solid var(--accent);
+      font-size: 1.28rem;
+      line-height: 1.2;
+    }}
     h3 {{ margin-bottom: 8px; font-size: 1rem; }}
-    section {{ margin-top: 28px; }}
+    section {{ margin-top: 26px; }}
+    section > .muted {{
+      max-width: 1040px;
+      margin-bottom: 11px;
+      font-size: 0.82rem;
+      line-height: 1.4;
+    }}
     .eyebrow {{
       margin-bottom: 8px;
       color: var(--accent);
@@ -202,6 +236,10 @@ def _html_page(title: str, body: str) -> str:
       text-transform: uppercase;
     }}
     .muted {{ color: var(--muted); }}
+    .hero-copy {{ max-width: 700px; }}
+    .hero-copy > p {{ margin-bottom: 0; max-width: 650px; }}
+    .hero-meta {{ color: var(--muted); font-size: 0.82rem; text-align: left; white-space: nowrap; }}
+    .hero-meta strong {{ display: block; margin-bottom: 4px; color: var(--text); font-size: 0.92rem; }}
     .panel {{
       background: var(--panel);
       border: 1px solid var(--line);
@@ -216,26 +254,43 @@ def _html_page(title: str, body: str) -> str:
     .summary-grid {{
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 12px;
+      gap: 14px;
     }}
     .summary-card {{
-      background: var(--panel);
+      position: relative;
+      min-height: 154px;
+      overflow: hidden;
+      background: linear-gradient(145deg, rgba(24, 35, 54, 0.98), rgba(15, 23, 42, 0.98));
       border: 1px solid var(--line);
-      border-left: 4px solid var(--line);
-      border-radius: 8px;
-      padding: 14px;
+      border-radius: 13px;
+      padding: 17px;
     }}
-    .summary-card-up {{ border-left-color: var(--good); }}
-    .summary-card-down {{ border-left-color: var(--bad); }}
-    .summary-card-neutral {{ border-left-color: var(--amber); }}
-    .summary-card-info {{ border-left-color: var(--accent); }}
+    .summary-card::after {{
+      position: absolute;
+      inset: auto -30px -45px auto;
+      width: 110px;
+      height: 110px;
+      border-radius: 999px;
+      background: var(--card-glow, rgba(148, 163, 184, 0.08));
+      content: "";
+      filter: blur(2px);
+    }}
+    .summary-card-up {{ --card-glow: rgba(110, 231, 183, 0.12); border-color: rgba(110, 231, 183, 0.22); }}
+    .summary-card-down {{ --card-glow: rgba(248, 113, 113, 0.12); border-color: rgba(248, 113, 113, 0.22); }}
+    .summary-card-neutral {{ --card-glow: rgba(251, 191, 36, 0.1); border-color: rgba(251, 191, 36, 0.2); }}
+    .summary-card-info {{ --card-glow: rgba(125, 211, 252, 0.12); border-color: rgba(125, 211, 252, 0.22); }}
     .summary-card strong {{
       display: flex;
       align-items: center;
       gap: 8px;
-      font-size: 1.15rem;
+      margin-top: 12px;
+      color: #f8fafc;
+      font-size: 1.18rem;
+      line-height: 1.25;
     }}
-    .summary-card span {{ color: var(--muted); }}
+    .summary-card > span {{ color: var(--muted); font-size: 0.78rem; }}
+    .summary-value {{ display: block; margin-top: 12px; color: var(--text) !important; font-size: 1rem !important; font-weight: 750; }}
+    .summary-detail {{ display: block; margin-top: 3px; line-height: 1.35; }}
     .summary-arrow {{
       display: inline-grid;
       place-items: center;
@@ -275,6 +330,13 @@ def _html_page(title: str, body: str) -> str:
       font-weight: 750;
       white-space: nowrap;
     }}
+    .price-guide-table .col-signal .chip {{
+      min-width: 70px;
+      min-height: 28px;
+      border-radius: 5px;
+      font-size: 0.8rem;
+      letter-spacing: 0.035em;
+    }}
     .chip-buy, .chip-up, .chip-strong {{
       color: var(--good);
       background: rgba(15, 118, 110, 0.28);
@@ -303,33 +365,76 @@ def _html_page(title: str, body: str) -> str:
     .signed-positive {{ color: var(--good); font-weight: 700; }}
     .signed-negative {{ color: var(--bad); font-weight: 700; }}
     .signed-neutral {{ color: var(--muted); }}
-    .liquidity-cell {{
-      display: grid;
-      grid-template-columns: minmax(72px, 1fr) 48px;
+    .evolution-key {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin: 0 0 10px;
+    }}
+    .evolution-key > span {{
+      display: inline-flex;
       align-items: center;
-      gap: 8px;
-      justify-content: end;
-      width: 100%;
-      min-width: 0;
+      gap: 6px;
+      min-height: 29px;
+      padding: 4px 9px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: rgba(17, 24, 38, 0.78);
+      color: var(--muted);
+      font-size: 0.72rem;
     }}
-    .liquidity-track {{
-      height: 7px;
-      width: 100%;
+    .evolution-key b {{ font-size: 0.76rem; }}
+    .evolution-key .key-up b {{ color: var(--good); }}
+    .evolution-key .key-down b {{ color: var(--bad); }}
+    .evolution-key .key-flat b {{ color: var(--accent); }}
+    .evolution-key .key-cost b {{ color: var(--amber); }}
+    .momentum-indicator {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 5px;
       min-width: 72px;
+      padding: 3px 7px;
+      border: 1px solid transparent;
       border-radius: 999px;
-      background: #1e293b;
-      overflow: hidden;
-    }}
-    .liquidity-fill {{
-      height: 100%;
-      border-radius: inherit;
-      background: linear-gradient(90deg, var(--accent), var(--good));
-    }}
-    .liquidity-value {{
-      color: var(--text);
+      font-weight: 750;
       font-variant-numeric: tabular-nums;
-      text-align: right;
     }}
+    .momentum-icon {{ font-size: 0.92rem; line-height: 1; }}
+    .momentum-up {{
+      color: var(--good);
+      background: rgba(15, 118, 110, 0.2);
+      border-color: rgba(110, 231, 183, 0.22);
+    }}
+    .momentum-down {{
+      color: var(--bad);
+      background: rgba(63, 31, 31, 0.58);
+      border-color: rgba(248, 113, 113, 0.22);
+    }}
+    .momentum-flat {{
+      color: var(--accent);
+      background: rgba(21, 59, 87, 0.55);
+      border-color: rgba(125, 211, 252, 0.22);
+    }}
+    .crossing-cost {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 5px;
+      color: var(--amber);
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }}
+    .crossing-cost::before {{
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: currentColor;
+      content: "";
+    }}
+    .read-summary {{ display: grid; grid-template-columns: 70px 1fr; gap: 7px; align-items: center; }}
+    .read-direction {{ font-weight: 750; white-space: nowrap; }}
+    .read-detail {{ color: var(--muted); font-size: 0.76rem; white-space: nowrap; }}
     ul {{ margin: 0; padding-left: 1.2rem; }}
     li + li {{ margin-top: 6px; }}
     code {{
@@ -346,15 +451,21 @@ def _html_page(title: str, body: str) -> str:
       border: 1px solid var(--line);
       border-radius: 8px;
       overflow: hidden;
-      font-size: 0.92rem;
+      font-size: 0.86rem;
     }}
     th, td {{
-      padding: 9px 10px;
+      padding: 8px 9px;
       border-bottom: 1px solid var(--line);
-      text-align: right;
+      text-align: left;
       vertical-align: top;
       white-space: normal;
     }}
+    th.number, td.number {{
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }}
+    th.text, td.text {{ text-align: left; }}
     td {{
       max-width: 220px;
     }}
@@ -362,29 +473,31 @@ def _html_page(title: str, body: str) -> str:
     th {{
       background: #172a45;
       color: #e2e8f0;
-      font-weight: 650;
+      font-size: 0.75rem;
+      font-weight: 750;
+      letter-spacing: 0.015em;
     }}
-    .table-wrap {{ overflow-x: auto; }}
+    tbody tr:nth-child(even) {{ background: rgba(30, 41, 59, 0.22); }}
+    .table-wrap {{ overflow: visible; }}
     .compact-table .report-table {{
-      width: max-content;
+      width: 100%;
+      table-layout: fixed;
     }}
     .compact-table th, .compact-table td {{
-      font-size: 0.88rem;
       max-width: none;
-      white-space: nowrap;
+      white-space: normal;
     }}
     .compact-table th.number,
     .compact-table td.number {{
-      width: 1%;
       text-align: right;
       font-variant-numeric: tabular-nums;
+      white-space: nowrap;
     }}
     .compact-table .col-commodity,
     .compact-table .col-item,
     .compact-table .col-notes,
     .compact-table .col-read,
     .compact-table .col-market-state {{
-      text-align: left;
       white-space: normal;
     }}
     .compact-table .col-commodity,
@@ -398,11 +511,6 @@ def _html_page(title: str, body: str) -> str:
       min-width: 220px;
       max-width: 340px;
     }}
-    .compact-table .col-liquidity {{
-      width: 188px;
-      min-width: 188px;
-      max-width: 188px;
-    }}
     .compact-table .col-spread-pct {{
       width: 76px;
       min-width: 76px;
@@ -411,28 +519,177 @@ def _html_page(title: str, body: str) -> str:
       width: 80px;
       min-width: 80px;
     }}
-    .flip-board {{
-      width: 100%;
-      overflow: visible;
+    .price-guide-table {{ overflow: visible; }}
+    .price-guide-table .report-table {{ width: 100%; table-layout: fixed; }}
+    .price-guide-table th, .price-guide-table td {{ padding: 7px 5px; }}
+    .price-guide-table .col-item {{ width: 12%; min-width: 0; font-weight: 700; white-space: nowrap; }}
+    .price-guide-table .col-signal {{ width: 8%; text-align: left; white-space: nowrap; }}
+    .price-guide-table .col-now,
+    .price-guide-table .col-fair,
+    .price-guide-table .col-buy,
+    .price-guide-table .col-sell {{ width: 8%; white-space: nowrap; }}
+    .price-guide-table .col-gap-pct {{ width: 9%; white-space: nowrap; }}
+    .price-guide-table .col-gross-room-pct {{ width: 10%; white-space: nowrap; }}
+    .price-guide-table .col-price-state {{ width: 29%; white-space: nowrap; }}
+    .price-guide-table tr.signal-buy {{ background: linear-gradient(90deg, rgba(15, 118, 110, 0.22), transparent 32%); }}
+    .price-guide-table tr.signal-sell {{ background: linear-gradient(90deg, rgba(127, 29, 29, 0.23), transparent 32%); }}
+    .signal-help {{
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin: 0 0 8px;
     }}
-    .flip-board .report-table {{
-      width: 100%;
-      table-layout: fixed;
+    .signal-help span {{
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: rgba(17, 24, 38, 0.8);
+      color: var(--muted);
+      font-size: 0.76rem;
+      line-height: 1.35;
     }}
-    .flip-board th,
-    .flip-board td {{
-      padding: 12px 10px;
-      max-width: none;
-      text-align: left;
-      overflow-wrap: break-word;
+    .signal-help strong {{ display: block; margin-bottom: 2px; font-size: 0.8rem; }}
+    .signal-help .buy-rule strong {{ color: var(--good); }}
+    .signal-help .sell-rule strong {{ color: var(--bad); }}
+    .signal-help .wait-rule strong {{ color: var(--amber); }}
+    .signal-warning {{ margin: 0 0 10px; color: var(--muted); font-size: 0.76rem; }}
+    .book-summary .report-table {{ width: 100%; table-layout: fixed; }}
+    .book-summary th, .book-summary td {{ white-space: normal; vertical-align: middle; }}
+    .book-summary th, .book-summary td {{ padding: 7px 5px; }}
+    .book-summary .book-item {{ width: 10%; font-weight: 700; }}
+    .book-summary .book-price {{ width: 7%; }}
+    .book-summary .book-wall {{ width: 8%; }}
+    .book-summary .book-profile-cell {{ width: 41%; }}
+    .book-summary .book-pressure {{ width: 13%; white-space: nowrap; }}
+    .book-summary .book-spread {{ width: 6%; }}
+    .activity-table .report-table,
+    .market-trends-table .report-table,
+    .price-evolution-table {{
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      scrollbar-color: var(--line) var(--bg);
     }}
-    .flip-board .col-item {{ width: 12%; }}
-    .flip-board .col-verdict {{ width: 11%; }}
-    .flip-board .col-entry {{ width: 16%; }}
-    .flip-board .col-forecast-exit {{ width: 16%; }}
-    .flip-board .col-expected-net {{ width: 11%; }}
-    .flip-board .col-evidence {{ width: 16%; }}
-    .flip-board .col-why {{ width: 18%; }}
+    .price-evolution-table .report-table {{ min-width: 1040px; table-layout: fixed; border: 0; border-radius: 0; }}
+    .activity-table th, .activity-table td,
+    .market-trends-table th, .market-trends-table td,
+    .price-evolution-table th, .price-evolution-table td {{ padding: 7px 6px; }}
+    .activity-table .activity-item {{ width: 14%; font-weight: 700; }}
+    .activity-table .activity-volume {{ width: 64%; }}
+    .activity-table .activity-totals {{ width: 22%; }}
+    .activity-volume-content {{ display: grid; gap: 4px; }}
+    .activity-metric {{ display: grid; grid-template-columns: 54px minmax(0, 1fr) 58px; gap: 7px; align-items: center; }}
+    .activity-metric-label {{ color: var(--muted); font-size: 0.7rem; text-align: left; white-space: nowrap; }}
+    .activity-track {{ height: 12px; overflow: hidden; border-radius: 3px; background: #0b1220; }}
+    .activity-fill {{ height: 100%; min-width: 1px; border-radius: 3px; background: linear-gradient(90deg, #0f766e, #6ee7b7); }}
+    .activity-fill-work {{ background: linear-gradient(90deg, #1d4ed8, #7dd3fc); }}
+    .activity-number,
+    .activity-total-line {{ display: block; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }}
+    .activity-total-line + .activity-total-line {{ margin-top: 2px; color: var(--muted); font-size: 0.75rem; }}
+    .market-trends-table .col-item {{ width: 11%; font-weight: 700; }}
+    .market-trends-table .col-latest {{ width: 9%; }}
+    .market-trends-table .col-7d-change-pct {{ width: 9%; }}
+    .market-trends-table .col-range {{ width: 14%; }}
+    .market-trends-table .col-activity {{ width: 20%; }}
+    .market-trends-table .col-spread-pct {{ width: 8%; min-width: 0; }}
+    .market-trends-table .col-price-state {{ width: 29%; min-width: 0; max-width: none; white-space: nowrap; }}
+    .price-evolution-table th {{ vertical-align: bottom; }}
+    .price-evolution-table th small {{
+      display: block;
+      margin-top: 1px;
+      color: var(--muted);
+      font-size: 0.62rem;
+      font-weight: 600;
+      letter-spacing: 0;
+      text-transform: none;
+    }}
+    .price-evolution-table tbody tr {{ transition: background-color 120ms ease; }}
+    .price-evolution-table tbody tr:hover {{ background: rgba(56, 189, 248, 0.075); }}
+    .price-evolution-table tbody tr.momentum-up .col-item {{ box-shadow: inset 3px 0 var(--good); }}
+    .price-evolution-table tbody tr.momentum-down .col-item {{ box-shadow: inset 3px 0 var(--bad); }}
+    .price-evolution-table tbody tr.momentum-flat .col-item {{ box-shadow: inset 3px 0 var(--accent); }}
+    .price-evolution-table .col-item {{
+      position: sticky;
+      left: 0;
+      z-index: 1;
+      width: 11%;
+      background: var(--panel);
+      font-weight: 700;
+    }}
+    .price-evolution-table thead .col-item {{ z-index: 2; background: #172a45; }}
+    .price-evolution-table tbody tr:nth-child(even) .col-item {{ background: #141d2c; }}
+    .price-evolution-table tbody tr:hover .col-item {{ background: #17263a; }}
+    .price-evolution-table .col-ask,
+    .price-evolution-table .col-bid,
+    .price-evolution-table .col-last,
+    .price-evolution-table .col-7d-low,
+    .price-evolution-table .col-7d-high {{ width: 7%; }}
+    .price-evolution-table .col-crossing-cost-pct {{ width: 10%; }}
+    .price-evolution-table .col-7d-momentum-pct {{ width: 9%; }}
+    .price-evolution-table .col-7d-trades {{ width: 9%; }}
+    .price-evolution-table .col-read {{ width: 26%; min-width: 0; max-width: none; white-space: nowrap; }}
+    .state-chips {{ display: inline-flex; flex-wrap: nowrap; gap: 4px; white-space: nowrap; }}
+    .depth-profile {{ width: 100%; min-width: 0; }}
+    .depth-profile-labels {{
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 3px;
+      color: var(--muted);
+      font-size: 0.7rem;
+      font-variant-numeric: tabular-nums;
+    }}
+    .depth-profile-label {{
+      display: flex;
+      justify-content: space-between;
+      gap: 4px;
+      min-width: 0;
+    }}
+    .depth-profile-labels .buy-label {{ color: var(--good); }}
+    .depth-profile-labels .sell-label {{ color: var(--bad); }}
+    .depth-label-text {{ text-align: left; }}
+    .depth-label-number {{ overflow: hidden; text-align: right; text-overflow: ellipsis; white-space: nowrap; }}
+    .depth-profile-track {{
+      position: relative;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px;
+      height: 19px;
+      border-radius: 4px;
+      background: #0b1220;
+      overflow: hidden;
+    }}
+    .depth-profile-half {{ display: flex; min-width: 0; }}
+    .depth-profile-fill {{ display: flex; min-width: 1px; }}
+    .depth-profile-bids {{ justify-content: flex-end; }}
+    .depth-profile-bids .depth-profile-fill {{ margin-left: auto; }}
+    .depth-profile-asks .depth-profile-fill {{ margin-right: auto; }}
+    .depth-segment {{
+      flex-basis: 0;
+      min-width: 1px;
+      border-inline: 1px solid rgba(11, 17, 32, 0.72);
+    }}
+    .depth-segment-bid {{ background: var(--good-soft); }}
+    .depth-segment-ask {{ background: var(--bad-soft); }}
+    .depth-segment.wall-segment {{
+      box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.8);
+      filter: brightness(1.25);
+    }}
+    .depth-profile-spread {{
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 0.64rem;
+      text-align: right;
+    }}
+    .book-pressure-content {{
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 5px;
+      white-space: nowrap;
+    }}
+    .book-pressure-value {{ font-variant-numeric: tabular-nums; text-align: right; }}
+    .book-pressure-label {{ text-align: left; }}
     .flip-item {{
       color: #f8fafc;
       font-weight: 750;
@@ -452,17 +709,30 @@ def _html_page(title: str, body: str) -> str:
       line-height: 1.35;
     }}
     .metric-label {{ color: #cbd5e1; font-weight: 650; }}
-    .flip-board .chip {{ white-space: normal; text-align: center; }}
     .flip-why {{ color: #cbd5e1; font-size: 0.82rem; line-height: 1.4; }}
-    .flip-board-notice {{
-      margin: 12px 0;
-      padding: 12px 14px;
-      border: 1px solid rgba(251, 191, 36, 0.35);
-      border-left: 4px solid var(--amber);
-      border-radius: 8px;
-      background: rgba(66, 49, 13, 0.34);
-      color: #fde68a;
+    .readiness-note {{
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 12px;
+      align-items: start;
+      margin-top: 24px;
+      padding: 14px 16px;
+      border: 1px solid rgba(125, 211, 252, 0.2);
+      border-radius: 10px;
+      background: rgba(21, 59, 87, 0.25);
     }}
+    .readiness-icon {{
+      display: grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 800;
+    }}
+    .readiness-note strong {{ display: block; margin-bottom: 2px; }}
+    .readiness-note p {{ margin: 0; color: var(--muted); font-size: 0.84rem; }}
     .chart {{
       width: 100%;
       max-height: 720px;
@@ -484,55 +754,34 @@ def _html_page(title: str, body: str) -> str:
     }}
     @media (max-width: 720px) {{
       header {{ display: block; padding: 18px; }}
+      .hero-meta {{ margin-top: 18px; text-align: left; }}
       h1 {{ font-size: 1.65rem; }}
       th, td {{ padding: 8px; }}
-    }}
-    @media (max-width: 860px) {{
-      .flip-board thead {{
-        position: absolute;
-        width: 1px;
-        height: 1px;
-        overflow: hidden;
-        clip: rect(0 0 0 0);
-        white-space: nowrap;
-      }}
-      .flip-board .report-table,
-      .flip-board tbody {{ display: block; }}
-      .flip-board tr {{
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        margin-bottom: 12px;
-        overflow: hidden;
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        background: var(--panel);
-      }}
-      .flip-board td,
-      .flip-board .col-item,
-      .flip-board .col-verdict,
-      .flip-board .col-entry,
-      .flip-board .col-forecast-exit,
-      .flip-board .col-expected-net,
-      .flip-board .col-evidence,
-      .flip-board .col-why {{
-        display: block;
-        width: auto;
-        border-bottom: 1px solid var(--line);
-      }}
-      .flip-board td::before {{
-        display: block;
-        margin-bottom: 5px;
-        color: var(--muted);
-        content: attr(data-label);
-        font-size: 0.68rem;
-        font-weight: 750;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-      }}
+      .signal-help {{ grid-template-columns: 1fr; }}
+      .price-guide-table th, .price-guide-table td {{ padding: 6px 3px; font-size: 0.68rem; }}
+      .price-guide-table .chip {{ padding: 2px 4px; font-size: 0.68rem; }}
     }}
     @media (max-width: 520px) {{
       main {{ width: min(100% - 20px, 1180px); padding-top: 10px; }}
-      .flip-board tr {{ grid-template-columns: 1fr; }}
+      .book-summary th, .book-summary td {{ padding-inline: 3px; font-size: 0.64rem; }}
+      .book-pressure-content {{ gap: 2px; }}
+    }}
+    @media print {{
+      @page {{ size: landscape; margin: 10mm; }}
+      :root {{ color-scheme: dark; }}
+      * {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+      body {{ background: var(--bg); }}
+      main {{ width: 100%; padding: 0; }}
+      header {{ padding: 16px 18px; border-radius: 8px; box-shadow: none; }}
+      h1 {{ font-size: 1.7rem; }}
+      section {{ margin-top: 18px; }}
+      h2 {{ font-size: 1.08rem; }}
+      thead {{ display: table-header-group; }}
+      tr, .note, .summary-card {{ break-inside: avoid; page-break-inside: avoid; }}
+      .report-table {{ font-size: 8.5pt; }}
+      .price-evolution-table {{ overflow: visible; }}
+      .price-evolution-table .report-table {{ min-width: 0; }}
+      .chart {{ max-height: 165mm; }}
     }}
   </style>
 </head>
@@ -546,20 +795,31 @@ def _html_page(title: str, body: str) -> str:
 
 
 def _compact_table_html(df: pd.DataFrame, *, table_kind: str = "trend") -> str:
-    kind_class = "signal-table" if table_kind == "signal" else "trend-table"
-    max_liquidity = _max_numeric(df["Liquidity"]) if "Liquidity" in df.columns else None
+    kind_class = f"{table_kind}-table"
     header = "".join(
-        f'<th class="{_column_classes(column)}">{escape(str(column))}</th>'
+        f'<th class="{_column_classes(column)}"'
+        f'{" scope=\"col\"" if table_kind == "price-evolution" else ""}>'
+        f'{_render_table_header(column, table_kind=table_kind)}</th>'
         for column in df.columns
     )
     body_rows = []
     for _, row in df.iterrows():
         cells = "".join(
             f'<td class="{_column_classes(column)}">'
-            f"{_render_table_cell(column, row[column], max_liquidity=max_liquidity)}</td>"
+            f"{_render_table_cell(column, row[column])}</td>"
             for column in df.columns
         )
-        body_rows.append(f"<tr>{cells}</tr>")
+        row_class = ""
+        if table_kind == "price-guide":
+            signal = str(row.get("Signal", "")).strip().lower()
+            if signal in {"buy", "sell", "wait"}:
+                row_class = f' class="signal-{signal}"'
+        elif table_kind == "price-evolution":
+            momentum_column = next((column for column in df.columns if str(column).endswith("Momentum %")), "")
+            momentum = _number(row.get(momentum_column))
+            tone = "flat" if momentum is None or abs(momentum) < 0.005 else "up" if momentum > 0 else "down"
+            row_class = f' class="momentum-{tone}"'
+        body_rows.append(f"<tr{row_class}>{cells}</tr>")
     table = (
         '<table class="report-table">'
         f"<thead><tr>{header}</tr></thead>"
@@ -567,6 +827,335 @@ def _compact_table_html(df: pd.DataFrame, *, table_kind: str = "trend") -> str:
         "</table>"
     )
     return f'<div class="table-wrap compact-table {kind_class}">{table}</div>'
+
+
+def _render_table_header(column: str, *, table_kind: str) -> str:
+    if table_kind != "price-evolution":
+        return escape(str(column))
+    labels = {
+        "Ask": ("Ask", "you pay"),
+        "Bid": ("Bid", "you receive"),
+        "Last": ("Last", "completed"),
+        "7D Low": ("7D Low", "range floor"),
+        "7D High": ("7D High", "range ceiling"),
+        "Crossing Cost %": ("Crossing Cost %", "before fees"),
+        "7D Momentum %": ("7D Momentum %", "historical"),
+        "7D Trades": ("7D Trades", "completed"),
+        "Read": ("At a glance", "direction · activity"),
+    }
+    label, detail = labels.get(str(column), (str(column), ""))
+    sublabel = f"<small>{escape(detail)}</small>" if detail else ""
+    return f"<span>{escape(label)}</span>{sublabel}"
+
+
+def _trend_label(value: object) -> str:
+    change = _number(value)
+    if change is None:
+        return "—"
+    if change > 0.5:
+        return _chip("Rising", "up", prefix="↑")
+    if change < -0.5:
+        return _chip("Falling", "down", prefix="↓")
+    return _chip("Flat", "flat", prefix="→")
+
+
+def _profit_signal(row: pd.Series, buy_below: float | None, sell_above: float | None) -> str:
+    best_bid = _first_number(row, "latest_bid", "bid")
+    best_ask = _first_number(row, "latest_ask", "ask")
+    if best_bid is not None and sell_above is not None and best_bid >= sell_above:
+        return "SELL"
+    if best_ask is not None and buy_below is not None and best_ask <= buy_below:
+        return "BUY"
+    return "WAIT"
+
+
+def _price_guide_html(df: pd.DataFrame, window_key: str, display_count: int) -> str:
+    rows = []
+    for _, row in df.iterrows():
+        fair, buy_below, sell_above = _fair_price_band(row, window_key)
+        gross_room_pct = (
+            (sell_above - buy_below) / buy_below * 100
+            if buy_below is not None and sell_above is not None and buy_below > 0
+            else None
+        )
+        rows.append({
+            "Item": row.get("item_name", "Unknown"),
+            "Signal": _profit_signal(row, buy_below, sell_above),
+            "Now": _latest_price(row),
+            "Fair": fair,
+            "Gap %": _price_gap_pct(_latest_price(row), fair),
+            "Buy ≤": buy_below,
+            "Sell ≥": sell_above,
+            "Gross Room %": gross_room_pct,
+            "Price State": _present(
+                row.get("tendency_labels_7d"),
+                _present(
+                    row.get("tendency_7d"),
+                    _present(
+                        row.get(f"tendency_labels_{window_key}"),
+                        _present(row.get(f"tendency_{window_key}"), "Insufficient history"),
+                    ),
+                ),
+            ),
+        })
+    if not rows:
+        return ""
+    view = pd.DataFrame(rows)
+    view["_signal_rank"] = view["Signal"].map({"BUY": 0, "SELL": 1, "WAIT": 2}).fillna(3)
+    view = view.sort_values(
+        ["_signal_rank", "Gross Room %", "Item"],
+        ascending=[True, False, True],
+        na_position="last",
+    ).head(display_count).drop(columns="_signal_rank")
+    return (
+        '<section><div class="eyebrow">Fair-value detail</div><h2>Fair Value &amp; Buy / Sell Signals</h2>'
+        '<p class="muted">Fair is the same historical reference used in the price-gap cards above. Gap compares Now with Fair; Buy ≤ and Sell ≥ show the calculated limit zones around that reference.</p>'
+        '<div class="signal-help">'
+        '<span class="buy-rule"><strong>BUY</strong>Current best Ask is at or below Buy ≤.</span>'
+        '<span class="sell-rule"><strong>SELL</strong>Current best Bid is at or above Sell ≥.</span>'
+        '<span class="wait-rule"><strong>WAIT</strong>Neither profitable limit zone is available now.</span>'
+        '</div>'
+        '<p class="signal-warning">Gross Room is the planned Buy ≤ to Sell ≥ return before fees; both orders must fill. Never buy at Ask and immediately sell at Bid—that locks in the spread loss.</p>'
+        + _compact_table_html(view, table_kind="price-guide")
+        + '</section>'
+    )
+
+
+def _activity_html(df: pd.DataFrame, window_key: str, metric_window: str, display_count: int) -> str:
+    rows: list[dict[str, object]] = []
+    for _, row in df.iterrows():
+        units = _first_number(row, f"traded_quantity_{window_key}", f"volume_{window_key}")
+        production_points = _first_number(row, "production_points")
+        rows.append({
+            "Item": row.get("item_name", "Unknown"),
+            "Value": _first_number(row, f"traded_value_{window_key}"),
+            "Units": units,
+            "Trades": _first_number(row, f"trade_count_{window_key}", "trades_7d"),
+            "Production Points": production_points,
+            "Work Volume": units * production_points if units is not None and production_points is not None else None,
+        })
+    if not rows:
+        return ""
+    rows.sort(key=lambda row: (-(_number(row["Value"]) or 0.0), str(row["Item"])))
+    rows = rows[:display_count]
+    work_volumes = [_number(row["Work Volume"]) or 0.0 for row in rows if _number(row["Work Volume"]) is not None]
+    max_work_volume = max(work_volumes, default=0.0)
+    max_turnover = max((_number(row["Value"]) or 0.0 for row in rows), default=0.0)
+    body = []
+    for row in rows:
+        units = _number(row["Units"])
+        value = _number(row["Value"])
+        trades = _number(row["Trades"])
+        work_volume = _number(row["Work Volume"])
+        work_width = work_volume / max_work_volume * 100 if work_volume is not None and max_work_volume > 0 else 0.0
+        turnover_width = value / max_turnover * 100 if value is not None and max_turnover > 0 else 0.0
+        unit_label = _fmt_compact(units) if units is not None else "N/A"
+        work_label = _fmt_compact(work_volume) if work_volume is not None else "N/A"
+        value_label = _fmt_compact(value) if value is not None else "N/A"
+        trade_label = _fmt_compact(trades) if trades is not None else "N/A"
+        body.append(
+            '<tr>'
+            f'<td class="activity-item text">{escape(str(row["Item"]))}</td>'
+            '<td class="activity-volume number"><div class="activity-volume-content">'
+            '<div class="activity-metric"><span class="activity-metric-label">Value</span>'
+            f'<div class="activity-track" role="img" aria-label="{escape(value_label)} completed transaction value; {turnover_width:.1f}% of the highest-value market">'
+            f'<div class="activity-fill" style="width: {turnover_width:.1f}%"></div></div>'
+            f'<span class="activity-number">{escape(value_label)}</span></div>'
+            '<div class="activity-metric"><span class="activity-metric-label">Prod. work</span>'
+            f'<div class="activity-track" role="img" aria-label="{escape(work_label)} production-adjusted work volume; {work_width:.1f}% of the busiest comparable item">'
+            f'<div class="activity-fill activity-fill-work" style="width: {work_width:.1f}%"></div></div>'
+            f'<span class="activity-number" title="{escape(_fmt(work_volume, 0) if work_volume is not None else "N/A")}">{escape(work_label)}</span></div>'
+            '</div></td>'
+            '<td class="activity-totals number">'
+            f'<span class="activity-total-line">{escape(unit_label)} units</span>'
+            f'<span class="activity-total-line">{escape(trade_label)} trades</span></td></tr>'
+        )
+    return (
+        '<section><h2>Completed Market Activity</h2>'
+        f'<p class="muted">Actual completed trading over {escape(metric_window)}. Completed Value is the sum of transaction price × quantity and controls the row order for every item. Production-adjusted Work is completed units × production points where an official recipe exists. Scraps therefore ranks normally by value; only its production bar is N/A. Open orders are not included.</p>'
+        '<div class="table-wrap compact-table activity-table"><table class="report-table">'
+        '<thead><tr><th class="activity-item text">Item</th>'
+        '<th class="activity-volume number">Completed Value / Production-adjusted Work</th>'
+        '<th class="activity-totals number">Units / Trades</th></tr></thead>'
+        f'<tbody>{"".join(body)}</tbody></table></div></section>'
+    )
+
+
+def _pressure_label(value: object) -> str:
+    pressure = _number(value)
+    if pressure is None:
+        return "—"
+    if pressure > 5:
+        label, tone = "Buy-heavy", "positive"
+    elif pressure < -5:
+        label, tone = "Sell-heavy", "negative"
+    else:
+        label, tone = "Balanced", "neutral"
+    return (
+        '<span class="book-pressure-content">'
+        f'<span class="book-pressure-label signed-{tone}">{label}</span>'
+        f'<span class="book-pressure-value signed-{tone}">{pressure:+.1f}%</span></span>'
+    )
+
+
+def _depth_profile_html(book: dict[str, object]) -> str:
+    bids = [level for level in book.get("bids", ()) if isinstance(level, dict)] if isinstance(book.get("bids"), (list, tuple)) else []
+    asks = [level for level in book.get("asks", ()) if isinstance(level, dict)] if isinstance(book.get("asks"), (list, tuple)) else []
+    bid_value = _number(book.get("bid_value")) or 0.0
+    ask_value = _number(book.get("ask_value")) or 0.0
+    bid_quantity = _number(book.get("bid_quantity")) or 0.0
+    ask_quantity = _number(book.get("ask_quantity")) or 0.0
+    scale = max(bid_value, ask_value, 1.0)
+
+    def segments(levels: list[dict[str, object]], side: str) -> str:
+        ordered = list(reversed(levels)) if side == "bid" else levels
+        parts = []
+        for level in ordered:
+            value = _number(level.get("order_value")) or 0.0
+            if value <= 0:
+                continue
+            price = _number(level.get("price"))
+            quantity = _number(level.get("quantity"))
+            wall_class = " wall-segment" if level.get("is_wall") else ""
+            title = (
+                f'{side.title()} at {_fmt(price)}: {_fmt(quantity, 0)} units, '
+                f'{_fmt(value, 0)} value'
+            )
+            parts.append(
+                f'<span class="depth-segment depth-segment-{side}{wall_class}" '
+                f'style="flex-grow: {value:.6g}" title="{escape(title)}"></span>'
+            )
+        return "".join(parts)
+
+    bid_width = bid_value / scale * 100
+    ask_width = ask_value / scale * 100
+    spread = _number(book.get("spread_pct"))
+    aria = (
+        f'Buy orders: {_fmt(bid_quantity, 0)} units worth {_fmt(bid_value, 0)}. '
+        f'Sell orders: {_fmt(ask_quantity, 0)} units worth {_fmt(ask_value, 0)}.'
+    )
+    spread_text = f'{_fmt(spread, 2)}% spread' if spread is not None else "Spread unavailable"
+    return (
+        f'<div class="depth-profile" role="img" aria-label="{escape(aria)}">'
+        '<div class="depth-profile-labels">'
+        f'<span class="depth-profile-label buy-label"><span class="depth-label-text">Buy</span>'
+        f'<span class="depth-label-number">{_fmt_compact(bid_quantity)} ({_fmt_compact(bid_value)} value)</span></span>'
+        f'<span class="depth-profile-label sell-label"><span class="depth-label-text">Sell</span>'
+        f'<span class="depth-label-number">{_fmt_compact(ask_quantity)} ({_fmt_compact(ask_value)} value)</span></span>'
+        '</div><div class="depth-profile-track">'
+        '<div class="depth-profile-half depth-profile-bids">'
+        f'<div class="depth-profile-fill" style="width: {bid_width:.1f}%">{segments(bids, "bid")}</div></div>'
+        '<div class="depth-profile-half depth-profile-asks">'
+        f'<div class="depth-profile-fill" style="width: {ask_width:.1f}%">{segments(asks, "ask")}</div></div>'
+        f'</div><div class="depth-profile-spread">{escape(spread_text)}</div></div>'
+    )
+
+
+def _order_book_html(df: pd.DataFrame, display_count: int) -> str:
+    summaries = []
+    for _, row in df.head(display_count).iterrows():
+        book = row.get("order_book")
+        if not isinstance(book, dict):
+            continue
+        name = str(row.get("item_name", "Unknown"))
+        bids = [level for level in book.get("bids", ()) if isinstance(level, dict)] if isinstance(book.get("bids"), (list, tuple)) else []
+        asks = [level for level in book.get("asks", ()) if isinstance(level, dict)] if isinstance(book.get("asks"), (list, tuple)) else []
+
+        def wall_price(levels: list[dict[str, object]]) -> object:
+            walls = [level for level in levels if level.get("is_wall")]
+            if not walls:
+                return None
+            wall = max(walls, key=lambda level: _number(level.get("order_value")) or 0.0)
+            return wall.get("price")
+
+        summaries.append(
+            '<tr>'
+            f'<td class="book-item text">{escape(name)}</td>'
+            f'<td class="book-price number">{escape(_fmt(book.get("best_bid")))}</td>'
+            f'<td class="book-wall number">{escape(_fmt(wall_price(bids)))}</td>'
+            f'<td class="book-profile-cell text">{_depth_profile_html(book)}</td>'
+            f'<td class="book-wall number">{escape(_fmt(wall_price(asks)))}</td>'
+            f'<td class="book-price number">{escape(_fmt(book.get("best_ask")))}</td>'
+            f'<td class="book-pressure text">{_pressure_label(book.get("pressure_pct"))}</td>'
+            f'<td class="book-spread number">{escape(_fmt(book.get("spread_pct"), 2))}%</td></tr>'
+        )
+    if not summaries:
+        return ""
+    return (
+        '<section><h2>Current Order Book</h2>'
+        '<p class="muted">Visible advertised depth from up to 100 orders per side. Green bids extend left and red asks extend right; each segment is one price level sized by order value, with the best prices nearest the centre and walls outlined. Pressure = (bid value − ask value) ÷ (bid value + ask value). Orders can be cancelled.</p>'
+        '<div class="table-wrap compact-table book-summary"><table class="report-table">'
+        '<thead><tr><th class="book-item text">Item</th><th class="book-price number">Best Bid</th>'
+        '<th class="book-wall number">Buy Wall</th><th class="book-profile-cell text">Buy orders vs sell orders</th>'
+        '<th class="book-wall number">Sell Wall</th><th class="book-price number">Best Ask</th>'
+        '<th class="book-pressure text">Pressure</th><th class="book-spread number">Spread</th></tr></thead>'
+        f'<tbody>{"".join(summaries)}</tbody></table></div></section>'
+    )
+
+
+def _profit_signal_chip(value: object) -> str:
+    label = str(value)
+    tone, icon = {
+        "BUY": ("buy", "+"),
+        "SELL": ("sell", "−"),
+        "WAIT": ("wait", "•"),
+    }.get(label, ("check", "•"))
+    return _chip(label, tone, prefix=icon)
+
+
+def _forecast_reason_text(value: object) -> str:
+    if value is None or pd.isna(value):
+        return "No dominant driver"
+    codes = [part.strip() for part in str(value).split(",") if part.strip()]
+    return ", ".join(_FORECAST_REASON_LABELS.get(code, code.replace("_", " ").title()) for code in codes) or "No dominant driver"
+
+
+def _signal_rank(row: pd.Series) -> tuple[int, float, float]:
+    evidence_rank = {"Supported": 3, "Limited": 2, "Weak": 1, "Insufficient": 0}
+    evidence = evidence_rank.get(str(row.get("forecast_evidence")), -1)
+    accuracy = _number(row.get("forecast_accuracy_pct"))
+    baseline = _number(row.get("forecast_baseline_accuracy_pct"))
+    edge = accuracy - baseline if accuracy is not None and baseline is not None else float("-inf")
+    samples = _number(row.get("forecast_evaluable_samples")) or 0.0
+    return evidence, edge, samples
+
+
+def _market_pulse_html(df: pd.DataFrame, window_key: str) -> str:
+    valuation_rows: list[dict[str, object]] = []
+    for _, row in df.iterrows():
+        latest = _latest_price(row)
+        fair = _fair_price(row, window_key)
+        gap = _price_gap_pct(latest, fair)
+        if gap is not None:
+            valuation_rows.append({"name": row.get("item_name", "Unknown"), "gap": gap, "fair": fair})
+
+    discount = min(valuation_rows, key=lambda item: float(item["gap"]), default=None)
+    premium = max(valuation_rows, key=lambda item: float(item["gap"]), default=None)
+    if discount is not None and float(discount["gap"]) >= 0:
+        discount = None
+    if premium is not None and float(premium["gap"]) <= 0:
+        premium = None
+
+    def valuation_card(title: str, selected: dict[str, object] | None, *, tone: str, icon: str, fallback: str) -> str:
+        if selected is None:
+            name, value, detail = fallback, "No clear outlier", "Current price is close to its fair-price context"
+        else:
+            name = str(selected["name"])
+            value = f'{float(selected["gap"]):+.2f}% vs fair'
+            detail = f'Fair reference {_fmt(selected["fair"])}'
+        return (
+            f'<article class="summary-card summary-card-{tone}"><span>{escape(title)}</span>'
+            f'<strong><span class="summary-arrow" aria-hidden="true">{escape(icon)}</span>{escape(name)}</strong>'
+            f'<span class="summary-value">{escape(value)}</span><span class="summary-detail">{escape(detail)}</span></article>'
+        )
+
+    return (
+        '<section><div class="eyebrow">Fair-value context</div><h2>Largest price gaps</h2>'
+        '<div class="summary-grid">'
+        + valuation_card("Largest discount", discount, tone="down", icon="↓", fallback="No clear discount")
+        + valuation_card("Largest premium", premium, tone="up", icon="↑", fallback="No clear premium")
+        + '</div></section>'
+    )
 
 
 def _flip_verdict_chip(verdict: object) -> str:
@@ -614,7 +1203,7 @@ def _flip_board_html(
     columns.extend(["Evidence", "Why"])
 
     header = "".join(
-        f'<th class="{_column_css_class(column)}" scope="col">{escape(column)}</th>'
+        f'<th class="{_flip_column_classes(column)}" scope="col">{escape(column)}</th>'
         for column in columns
     )
     body_rows: list[str] = []
@@ -698,7 +1287,7 @@ def _flip_board_html(
             "Why": f'<span class="flip-why">{why}</span>',
         }
         body_rows.append("<tr>" + "".join(
-            f'<td class="{_column_css_class(column)}" data-label="{escape(column)}">{cells[column]}</td>'
+            f'<td class="{_flip_column_classes(column)}" data-label="{escape(column)}">{cells[column]}</td>'
             for column in columns
         ) + "</tr>")
 
@@ -718,10 +1307,17 @@ def _column_css_class(column: str) -> str:
     return f"col-{slug or 'value'}"
 
 
+def _flip_column_classes(column: str) -> str:
+    kind = "number" if column in {"Entry", "Forecast Exit", "Expected Net"} else "text"
+    return f"{_column_css_class(column)} {kind}"
+
+
 def _column_classes(column: str) -> str:
     classes = [_column_css_class(column)]
     if _is_number_column(column):
         classes.append("number")
+    else:
+        classes.append("text")
     return " ".join(classes)
 
 
@@ -730,36 +1326,103 @@ def _is_number_column(column: str) -> bool:
     return (
         label in {
             "now", "latest", "min", "max", "fair", "buy", "sell", "buy ≤", "sell ≥",
-            "volume", "liquidity", "spread %",
+            "volume", "liquidity", "spread %", "units", "trades", "rank",
+            "range", "activity",
         }
         or label.endswith("trades")
         or label.endswith("momentum %")
         or label.endswith("low")
         or label.endswith("high")
+        or label.endswith("traded value")
         or "%" in label
         or "ask" in label
         or "bid" in label
-        or label == "last"
+        or label in {"last", "samples"}
     )
 
 
-def _render_table_cell(column: str, value: object, *, max_liquidity: float | None) -> str:
+def _render_table_cell(column: str, value: object) -> str:
+    if column == "7D Trend":
+        return _trend_label(value)
+    if column == "Signal":
+        return _profit_signal_chip(value)
+    if column == "Evidence":
+        return _evidence_chip(value)
     if column == "Trust":
         return _chip(str(value), _trust_tone(value))
     if column == "Market":
         return _chip(str(value), _market_tone(value))
-    if column == "Market State":
+    if column in {"Market State", "Price State"}:
         return _market_state_chips(value)
-    if column == "Liquidity":
-        return _liquidity_bar(value, max_liquidity=max_liquidity)
-    if column == "Volume":
+    if column == "Crossing Cost %":
+        return _crossing_cost_indicator(value)
+    if column == "Read":
+        return _swing_read_indicator(value)
+    if column == "Volume" or column == "Units" or column.endswith("Traded Value"):
         number = _number(value)
         if number is None:
             return escape(_fmt_report_value(value, column=column))
         return f'<span title="{escape(_fmt(number, 0))}">{escape(_fmt_compact(number))}</span>'
-    if column in {"Gap %", "Change %"} or column.endswith("Momentum %"):
+    if column.endswith("Momentum %"):
+        return _momentum_indicator(value)
+    if column in {"Gap %", "Change %"} or column.endswith("Change %"):
         return _signed_number(value, invert=column == "Gap %")
     return escape(_fmt_report_value(value, column=column))
+
+
+def _momentum_indicator(value: object) -> str:
+    number = _number(value)
+    if number is None:
+        return '<span class="momentum-indicator momentum-flat" aria-label="Momentum unavailable">—</span>'
+    if abs(number) < 0.005:
+        tone, icon, direction = "flat", "→", "Flat"
+    elif number > 0:
+        tone, icon, direction = "up", "↑", "Up"
+    else:
+        tone, icon, direction = "down", "↓", "Down"
+    label = f"{abs(number):.2f}%" if tone != "flat" else "0.00%"
+    return (
+        f'<span class="momentum-indicator momentum-{tone}" '
+        f'aria-label="{direction} {abs(number):.2f} percent over 7 days" '
+        f'title="Historical price movement: {direction.lower()} {abs(number):.2f}%">'
+        f'<span class="momentum-icon" aria-hidden="true">{icon}</span>{label}</span>'
+    )
+
+
+def _crossing_cost_indicator(value: object) -> str:
+    number = _number(value)
+    if number is None:
+        return '<span class="crossing-cost" aria-label="Crossing cost unavailable">—</span>'
+    return (
+        f'<span class="crossing-cost" aria-label="{number:.2f} percent crossing cost before fees" '
+        f'title="Buy at ask, then sell at bid: {number:.2f}% cost before fees">{number:.2f}%</span>'
+    )
+
+
+def _swing_read_indicator(value: object) -> str:
+    if not isinstance(value, dict):
+        return escape(_fmt_report_value(value))
+    status = str(value.get("status", ""))
+    momentum = _number(value.get("momentum"))
+    trades = _number(value.get("trades"))
+    if status:
+        return f'<span class="read-detail">{escape(status)}</span>'
+    if momentum is None:
+        direction, tone, icon, change = "No trend", "flat", "→", ""
+    elif abs(momentum) < 0.005:
+        direction, tone, icon, change = "Flat", "flat", "→", "0.00%"
+    elif momentum > 0:
+        direction, tone, icon, change = "Rising", "up", "↑", f"{abs(momentum):.2f}%"
+    else:
+        direction, tone, icon, change = "Falling", "down", "↓", f"{abs(momentum):.2f}%"
+    activity = f"{_fmt_compact(trades)} trades" if trades is not None else "Activity unavailable"
+    detail = f"{change} · {activity}" if change else activity
+    return (
+        '<span class="read-summary">'
+        f'<span class="read-direction signed-{"positive" if tone == "up" else "negative" if tone == "down" else "neutral"}">'
+        f'<span aria-hidden="true">{icon}</span> {direction}</span>'
+        f'<span class="read-detail">{escape(detail)}</span></span>'
+    )
 
 
 def _chip(label: str, tone: str, *, prefix: str | None = None) -> str:
@@ -782,7 +1445,8 @@ def _market_state_chips(value: object) -> str:
     labels = [part.strip() for part in str(value).split(",") if part.strip()]
     if not labels:
         return "N/A"
-    return " ".join(_chip(label, _market_state_tone(label)) for label in labels)
+    chips = "".join(_chip(label, _market_state_tone(label)) for label in labels)
+    return f'<span class="state-chips">{chips}</span>'
 
 
 def _market_state_tone(label: str) -> str:
@@ -809,28 +1473,6 @@ def _signed_number(value: object, *, invert: bool = False) -> str:
     return f'<span class="{css_class}">{escape(_fmt(number))}</span>'
 
 
-def _liquidity_bar(value: object, *, max_liquidity: float | None) -> str:
-    number = _number(value)
-    if number is None:
-        return escape(_fmt(value))
-    width = 0.0
-    if max_liquidity is not None and max_liquidity > 0:
-        width = max(4.0, min(number / max_liquidity * 100, 100.0))
-    return (
-        '<div class="liquidity-cell">'
-        '<div class="liquidity-track">'
-        f'<div class="liquidity-fill" style="width: {width:.1f}%"></div>'
-        '</div>'
-        f'<span class="liquidity-value" title="{escape(_fmt(number, 0))}">{escape(_fmt_compact(number))}</span>'
-        '</div>'
-    )
-
-
-def _max_numeric(values: Iterable[object]) -> float | None:
-    numbers = [number for value in values if (number := _number(value)) is not None]
-    return max(numbers, default=None)
-
-
 def _relative_chart_path(chart_path: str | Path | None, output_dir: Path) -> str | None:
     if chart_path is None:
         return None
@@ -841,7 +1483,7 @@ def _relative_chart_path(chart_path: str | Path | None, output_dir: Path) -> str
         return path.as_posix()
 
 
-def _swing_read(row: pd.Series) -> str:
+def _swing_read(row: pd.Series) -> dict[str, object]:
     momentum = row.get("momentum_7d_pct")
     trades = row.get("trades_7d")
 
@@ -849,14 +1491,10 @@ def _swing_read(row: pd.Series) -> str:
     has_trades = trades is not None and not pd.isna(trades) and trades > 0
 
     if not has_trades:
-        return "Insufficient completed trades"
-    if has_momentum and momentum >= 2 and has_trades:
-        return "Price rose; momentum is not a sell signal"
-    if has_momentum and momentum <= -2 and has_trades:
-        return "Price fell; no reversal confirmed"
+        return {"status": "Insufficient completed trades"}
     if has_momentum:
-        return "Little net price change"
-    return "Insufficient trend history"
+        return {"momentum": float(momentum), "trades": float(trades)}
+    return {"status": "Insufficient trend history"}
 
 
 def generate_html_report(
@@ -869,201 +1507,58 @@ def generate_html_report(
     output_dir: str | Path = ".",
     assumptions: FlipAssumptions | None = None,
 ) -> str:
-    assumptions = assumptions or FlipAssumptions()
     generated = datetime.now().strftime("%Y-%m-%d %H:%M")
     display_count = len(df) if top <= 0 else top
     window_key = _window_key(metric_window)
     blocks: list[str] = []
     blocks.append(
         f"""    <header>
-      <div>
+      <div class="hero-copy">
         <div class="eyebrow">WarEra Market Guide</div>
-        <h1>Fair Prices And Tomorrow Bias</h1>
-        <p class="muted">Executable flip opportunities ranked by forecast evidence, spread, depth, fees, and estimated net margin.</p>
+        <h1>Market intelligence, without the noise.</h1>
+        <p class="muted">Historical price context, completed activity, and the current visible order book in one practical view.</p>
       </div>
-      <div class="muted">Window: {escape(metric_window)}<br>Generated: {escape(generated)}</div>
-    </header>
-    <div class="panel assumptions">Quantity: {escape(f'{assumptions.quantity:g}')} | Horizon: {escape(f'{assumptions.forecast_horizon_hours:g}')}h |
-      Fees assumed: {assumptions.fee_pct_per_side:.2f}% per side | Minimum margin: {assumptions.minimum_net_margin_pct:.2f}% |
-      Max quote age: {escape(f'{assumptions.max_quote_age_minutes:g}')}m
-    </div>"""
+      <div class="hero-meta"><strong>{escape(metric_window)} analysis window</strong>Updated {escape(generated)}</div>
+</header>
+"""
     )
+    blocks.append(_market_pulse_html(df, window_key))
+    blocks.append(_price_guide_html(df, window_key, display_count))
 
-    opportunity_rows: list[dict[str, object]] = []
-    for _, row in df.iterrows():
-        verdict = str(_present(row.get("flip_verdict"), "Unavailable"))
-        reason_value = _present(row.get("flip_reason_codes"), "missing_order_book")
-        codes = [code.strip() for code in str(reason_value).split(",") if code.strip()]
-        reason_labels = [_FLIP_REASON_LABELS.get(code, code.replace("_", " ")) for code in codes]
-        why_addenda: list[str] = []
-        if "insufficient_ask_depth" in codes:
-            filled = _number(row.get("flip_entry_filled_quantity")) or 0.0
-            index = codes.index("insufficient_ask_depth")
-            reason_labels[index] += f" ({filled:g} of {assumptions.quantity:g} available)"
-        passive = _number(row.get("flip_passive_limit_price"))
-        if passive is not None and verdict != "Unavailable":
-            why_addenda.append(f"Limit idea — fill not estimated: {_fmt(passive)}")
-        downside = _number(row.get("flip_net_margin_p10_pct"))
-        if downside is not None:
-            why_addenda.append(f"Downside P10 net margin: {downside:.2f}%")
-        quantity = _number(row.get("flip_quantity")) or assumptions.quantity
-        entry_average = _number(row.get("flip_entry_average_price"))
-        entry_cost = _number(row.get("flip_total_entry_cost"))
-        break_even = _number(row.get("flip_break_even_exit_vwap"))
-        exit_p10 = _number(row.get("flip_forecast_exit_vwap_p10"))
-        exit_median = _number(row.get("flip_forecast_exit_vwap_median"))
-        exit_p90 = _number(row.get("flip_forecast_exit_vwap_p90"))
-        margin = _number(row.get("flip_net_margin_median_pct"))
-        profit = _number(row.get("flip_net_profit_median"))
-        forecast_samples = int(_number(row.get("flip_forecast_samples")) or 0)
-        execution_sample_value = _number(row.get("forecast_execution_evaluable_samples"))
-        quote_age = _number(row.get("flip_quote_age_minutes"))
-
-        evidence = str(_present(
-            row.get("flip_forecast_evidence"),
-            _present(row.get("forecast_evidence"), "Insufficient"),
-        ))
-        why = ". ".join([*reason_labels, *why_addenda])
-
-        opportunity_rows.append({
-            "Item": row.get("item_name", "Unknown"), "Verdict": verdict,
-            "Evidence": evidence,
-            "Why": why,
-            "Qty": quantity,
-            "Break-even Exit VWAP": row.get("flip_break_even_exit_vwap"),
-            "Median Net Margin %": row.get("flip_net_margin_median_pct"),
-            "Quote Age": quote_age,
-            "_codes": codes,
-            "_reason_labels": reason_labels,
-            "_why_addenda": why_addenda,
-            "_entry_average": entry_average,
-            "_entry_cost": entry_cost,
-            "_exit_p10": exit_p10,
-            "_exit_median": exit_median,
-            "_exit_p90": exit_p90,
-            "_margin": margin,
-            "_profit": profit,
-            "_p10": _number(row.get("flip_net_margin_p10_pct")),
-            "_samples": forecast_samples,
-            "_execution_samples": execution_sample_value,
-        })
-    verdict_order = {"Potential flip": 0, "Watch": 1, "No trade": 2, "Unavailable": 3}
-    opportunity_rows.sort(key=lambda row: (
-        verdict_order.get(str(row["Verdict"]), 4),
-        -float(row["_margin"]) if row["_margin"] is not None else float("inf"),
-        -float(row["_samples"]), str(row["Item"]),
-    ))
-    opportunity_rows = opportunity_rows[:display_count]
-    show_entry = any(
-        row.get("_entry_average") is not None
-        or row.get("_entry_cost") is not None
-        or _number(row.get("Break-even Exit VWAP")) is not None
-        for row in opportunity_rows
-    )
-    show_forecast = any(
-        row.get("_exit_p10") is not None
-        or row.get("_exit_median") is not None
-        or row.get("_exit_p90") is not None
-        for row in opportunity_rows
-    )
-    show_net = any(
-        row.get("_margin") is not None or row.get("_profit") is not None
-        for row in opportunity_rows
-    )
-    has_execution_gap = bool(opportunity_rows) and all(
-        "missing_execution_interval" in row["_codes"] for row in opportunity_rows
-    )
-    execution_notice = ""
-    if has_execution_gap:
-        execution_notice = (
-            f'<div class="flip-board-notice"><strong>No quantity-{assumptions.quantity:g} flip can be evaluated yet.</strong> '
-            'Historical order books do not contain enough fully executable entry/exit observations at that size.</div>'
-        )
-    flip_board = _flip_board_html(
-        opportunity_rows,
-        show_entry=show_entry,
-        show_forecast=show_forecast,
-        show_net=show_net,
-        suppress_execution_reason=has_execution_gap,
-    )
-    blocks.append(f"""    <section>
-      <h2>Flip Board</h2>
-      <p class="muted">Only fully executable, fresh, supported opportunities are ranked as Potential flip. Entry combines quantity, ask VWAP, cost, and break-even; forecast exit combines median and P10–P90.</p>
-      {execution_notice}
-      {flip_board}
-    </section>""")
-
-    potential = [row for row in opportunity_rows if row["Verdict"] == "Potential flip"]
-    def card(
-        title: str,
-        selected: dict[str, object] | None,
-        detail: str,
-        *,
-        tone: str,
-        icon: str,
-        empty_detail: str,
-    ) -> str:
-        name = str(selected["Item"]) if selected else "No supported opportunity"
-        value = detail.format(**selected) if selected else empty_detail
-        return (
-            f'<article class="summary-card summary-card-{tone}">'
-            f'<span>{escape(title)}</span>'
-            f'<strong><span class="summary-arrow" aria-hidden="true">{escape(icon)}</span>{escape(name)}</strong>'
-            f'<span>{escape(value)}</span></article>'
-        )
-    margin_candidates = [row for row in potential if row["_margin"] is not None]
-    break_even_candidates = [row for row in potential if _number(row["Break-even Exit VWAP"]) is not None]
-    downside_candidates = [row for row in potential if row["_p10"] is not None]
-    best_margin = max(margin_candidates, key=lambda row: float(row["_margin"]), default=None)
-    lowest_break_even = min(
-        break_even_candidates,
-        key=lambda row: float(row["Break-even Exit VWAP"]),
-        default=None,
-    )
-    best_downside = max(downside_candidates, key=lambda row: float(row["_p10"]), default=None)
-    problem = next((row for row in opportunity_rows if row["Verdict"] in {"No trade", "Unavailable"}), None)
-    blocks.append("    <section><div class=\"summary-grid\">" +
-        card("Best Supported Net Margin", best_margin, "{Median Net Margin %:.2f}% median", tone="up", icon="↗", empty_detail="No positive, supported margin") +
-        card("Lowest Break-even Exit", lowest_break_even, "{Break-even Exit VWAP:.3f} exit VWAP", tone="info", icon="↓", empty_detail="Break-even evidence unavailable") +
-        card("Best Downside Profile", best_downside, "P10 margin {_p10:.2f}%", tone="up", icon="◇", empty_detail="Downside evidence unavailable") +
-        card("Avoid / Data Problem", problem, "{Why}", tone="down", icon="!", empty_detail="No blocked or rejected row") + "</div></section>")
-
-    blocks.append(f"""    <section>
-      <h2>How to read the Flip Board</h2>
-      <div class="panel"><p>Forecasts are historical estimates, not guarantees. Fees are assumptions supplied by the user. Order-book execution is estimated from a snapshot that may change. Passive limit orders may not fill. <strong>Potential flip</strong> means the configured rules passed, not that profit is certain.</p>
-      <p>Entry uses an ask sweep for quantity {assumptions.quantity:g}; historical exits use same-quantity bid sweeps. Crossing cost and slippage are already represented in those executions and are not subtracted twice.</p></div>
-    </section>""")
+    blocks.append(_order_book_html(df, display_count))
+    blocks.append(_activity_html(df, window_key, metric_window, display_count))
 
     trend_candidates = df.copy()
     if not trend_candidates.empty:
         change_col = _column(df, f"percent_change_{window_key}", "momentum_7d_pct")
         volume_col = _column(df, f"volume_{window_key}", f"traded_quantity_{window_key}")
         trades_col = _column(df, f"trade_count_{window_key}", "trades_7d")
-        liquidity_col = _column(df, f"liquidity_{window_key}")
-        sort_cols = [col for col in [liquidity_col, volume_col] if col]
+        sort_cols = [col for col in [volume_col] if col]
         if sort_cols:
             trend_candidates = trend_candidates.sort_values(sort_cols, ascending=False, na_position="last")
         view = trend_candidates.head(display_count).copy()
-        table_columns: list[tuple[str, str]] = [
-            ("item_name", "Item"),
-            (_column(df, "latest_price", "current_price") or "", "Latest"),
-            (change_col or "", "Change %"),
-            (_column(df, f"min_{window_key}", "low_7d") or "", "Min"),
-            (_column(df, f"max_{window_key}", "high_7d") or "", "Max"),
-            (_column(df, f"stable_fair_price_{window_key}", "stable_fair_price_7d", f"vwap_{window_key}") or "", "Fair"),
-            (volume_col or "", "Volume"),
-            (trades_col or "", "Trades"),
-            (_column(df, "latest_spread_pct", f"average_spread_pct_{window_key}", "spread_pct") or "", "Spread %"),
-            (liquidity_col or "", "Liquidity"),
-            (_column(df, f"tendency_labels_{window_key}", f"tendency_{window_key}") or "", "Market State"),
-        ]
-        selected = [(source, label) for source, label in table_columns if source and source in view.columns]
-        trend_table = view[[source for source, _ in selected]].rename(columns=dict(selected))
+        trend_rows = []
+        for _, row in view.iterrows():
+            low = _first_number(row, f"min_{window_key}", "low_7d")
+            high = _first_number(row, f"max_{window_key}", "high_7d")
+            volume = _number(row.get(volume_col)) if volume_col else None
+            trades = _number(row.get(trades_col)) if trades_col else None
+            state_col = _column(df, f"tendency_labels_{window_key}", f"tendency_{window_key}")
+            trend_rows.append({
+                "Item": row.get("item_name", "Unknown"),
+                "Latest": _first_number(row, "latest_price", "current_price"),
+                "7D Change %": _number(row.get(change_col)) if change_col else None,
+                "Range": f"{_fmt(low)} – {_fmt(high)}" if low is not None and high is not None else "N/A",
+                "Activity": f"{_fmt_compact(volume)} units / {_fmt_compact(trades)} trades" if volume is not None and trades is not None else "N/A",
+                "Spread %": _first_number(row, "latest_spread_pct", f"average_spread_pct_{window_key}", "spread_pct"),
+                "Price State": row.get(state_col) if state_col else "Insufficient history",
+            })
+        trend_table = pd.DataFrame(trend_rows)
         blocks.append(
             f"""    <section>
       <h2>Market Trends</h2>
-      <p class="muted">Compact history view: prices, traded volume, completed trades, spread, relative liquidity, and market state.</p>
-      {_compact_table_html(trend_table, table_kind="trend")}
+      <p class="muted">Price state describes price behaviour only. Completed activity is shown separately in units and trades so a stable price is never mistaken for an inactive market.</p>
+      {_compact_table_html(trend_table, table_kind="market-trends")}
     </section>"""
         )
 
@@ -1096,8 +1591,8 @@ def generate_html_report(
             ]
             trend_table = trend[columns].rename(columns={
                 "item_name": "Item",
-                "ask": "Ask (You Pay)",
-                "bid": "Bid (You Receive)",
+                "ask": "Ask",
+                "bid": "Bid",
                 "current_price": "Last",
                 "latest_price": "Last",
                 "low_7d": f"{metric_window} Low",
@@ -1110,8 +1605,14 @@ def generate_html_report(
             blocks.append(
                 f"""    <section>
       <h2>Price Evolution Lens</h2>
-      <p class="muted">Ask is what you pay; bid is what you receive. Crossing Cost is the buy-at-ask, sell-at-bid cost before fees. Momentum describes history, not a trade recommendation.</p>
-      {_compact_table_html(trend_table, table_kind="trend")}
+      <p class="muted">Compare today’s quote with the seven-day range, direction, and completed activity. Momentum describes history, not a trade recommendation.</p>
+      <div class="evolution-key" aria-label="Price Evolution legend">
+        <span class="key-up"><b>↑ Rising</b> price increased</span>
+        <span class="key-down"><b>↓ Falling</b> price decreased</span>
+        <span class="key-flat"><b>→ Flat</b> little net change</span>
+        <span class="key-cost"><b>● Crossing cost</b> ask-to-bid cost before fees</span>
+      </div>
+      {_compact_table_html(trend_table, table_kind="price-evolution")}
     </section>"""
             )
 
@@ -1122,12 +1623,10 @@ def generate_html_report(
             fair, buy_below, sell_above = _fair_price_band(row, window_key)
             volume = _first_number(row, f"volume_{window_key}", f"traded_quantity_{window_key}")
             trades = _first_number(row, f"trade_count_{window_key}", "trades_7d")
-            liquidity = _first_number(row, f"liquidity_{window_key}")
             detail_items = [
                 f"<li>Historical fair context: <strong>{escape(_fmt(fair))}</strong></li>",
                 f"<li>Bid / Ask: <strong>{escape(_fmt(row.get('bid')))} / {escape(_fmt(row.get('ask')))}</strong></li>",
                 f"<li>{escape(metric_window)} volume / trades: <strong>{escape(_fmt(volume, 0))} / {escape(_fmt(trades, 0))}</strong></li>",
-                f"<li>Liquidity depth score: <strong>{escape(_fmt(liquidity, 1))}</strong></li>",
                 f"<li>{escape(metric_window)} range: <strong>{escape(_fmt(row.get('range_pct'), 2))}%</strong></li>",
             ]
             if row.get("momentum_7d_pct") is not None and not pd.isna(row.get("momentum_7d_pct")):

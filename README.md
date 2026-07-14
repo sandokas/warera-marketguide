@@ -40,20 +40,21 @@ WARERA_API_BASE_URL=https://api2.warera.io/trpc
 
 Do not commit or hardcode the key. Requests authenticate with the `X-Api-Key` header.
 
-Sync current quotes, order-book observations, and transactions, then generate a report:
+Sync current quotes, full visible order books, completed transactions, and the official
+per-item production-point configuration, then generate a report:
 
 ```bash
 PYTHONPATH=src .venv/bin/python run_report.py --live --output output
 ```
 
-The default database is `data/warera_market.sqlite3`, the report lookback is 7 days, the order-book depth is 10 orders per side, and requests are spaced at least 1 second apart. Override those values when needed:
+The default database is `data/warera_market.sqlite3`, the report lookback is 7 days, and sync requests the API maximum of 100 order-book entries per side. Requests are spaced at least 1 second apart. Override those values when needed:
 
 ```bash
 PYTHONPATH=src .venv/bin/python run_report.py \
   --live \
   --market-db data/warera_market.sqlite3 \
   --lookback-days 30 \
-  --order-limit 20 \
+  --order-limit 100 \
   --min-interval 1 \
   --output output
 ```
@@ -90,6 +91,13 @@ PYTHONPATH=src .venv/bin/python run_report.py \
 ```
 
 When no input option is supplied, the CLI uses the default market database if it exists; otherwise it uses `data/sample_market.csv`. Prefer `--from-db` or an explicit CSV path in scripts so the input is clear.
+
+Completed activity uses two bars. Completed Value sums transaction price × quantity
+for every item and determines the row order. Production-adjusted Work multiplies
+completed units by the official `productionPoints` required per item; for example,
+1 steel (10 points) is comparable with 10 iron (1 point each). Items without an
+official production-point value still rank by Completed Value and show `N/A` only
+for the production-adjusted bar.
 
 ## Charts
 
@@ -143,7 +151,7 @@ Executed transactions are the primary price source. The report distinguishes:
 - `mid_price`: midpoint of the newest best bid and ask;
 - `current_price`: last trade, then quote, then midpoint as fallback.
 
-Transaction history drives open, high, low, close, VWAP, median, percentiles, volume, and trend metrics. Order-book depth and spread drive liquidity. The trading-attractiveness score remains a secondary compatibility metric:
+Transaction history drives open, high, low, close, VWAP, median, percentiles, volume, and trend metrics. Current order books are reported transparently as bid/ask quantity, monetary value, spread, pressure, cumulative levels, and fixed-budget slippage. The trading-attractiveness score remains a secondary CSV compatibility metric:
 
 ```text
 Trading Attractiveness = (Effective Spread % x Window Trades) / Window Range %
@@ -159,8 +167,10 @@ no-signal and flat outcomes; execution return intervals require complete histori
 sweeps for the same evaluation quantity. CSV and custom JSON inputs have no normalized history and
 therefore report the forecast as `Unavailable` with `Insufficient` evidence.
 
-The Flip Board ranks only fresh, fully executable opportunities with same-quantity historical exit
-evidence. Configure its visible assumptions with `--trade-quantity` (default `1`),
+The Flip Board appears when at least one row can be evaluated and ranks only fresh, fully
+executable opportunities with same-quantity historical exit evidence. When execution history is
+not ready, the report keeps its validated direction signals and replaces the unavailable-only
+table with a compact readiness note. Configure its visible assumptions with `--trade-quantity` (default `1`),
 `--trade-fee-pct` (default `0` per side), `--min-net-margin-pct` (default `1`), and
 `--max-quote-age-minutes` (default `30`). CSV and custom JSON inputs remain usable for descriptive
 history, but their Flip Board verdict is `Unavailable` because normalized depth and validated

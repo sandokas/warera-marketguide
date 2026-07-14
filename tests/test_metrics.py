@@ -8,11 +8,13 @@ from warera_quant.metrics import (
     calculate_flip_opportunity,
     calculate_direction_signal,
     calculate_liquidity_score,
+    calculate_notional_book_sweep,
     calculate_metrics,
     classify_future_bid_outcome,
     classify_tendency,
     forecast_evidence_label,
     summarize_forecast_evaluations,
+    summarize_order_book,
 )
 from warera_quant.warera_api import OrderLevel
 
@@ -62,6 +64,47 @@ def test_book_sweep_empty_and_invalid_inputs():
         calculate_book_sweep([], side="hold", quantity=1)
     with pytest.raises(ValueError):
         calculate_book_sweep([{"price": 1, "quantity": 0}], side="buy", quantity=1)
+
+
+def test_order_book_summary_uses_monetary_depth_and_marks_largest_quantity_wall():
+    summary = summarize_order_book(
+        bids=[{"price": 9, "quantity": 100}, {"price": 10, "quantity": 2}],
+        asks=[{"price": 11, "quantity": 3}, {"price": 12, "quantity": 1_000_000}],
+    )
+
+    assert summary.best_bid == 10
+    assert summary.best_ask == 11
+    assert summary.bid_value == 920
+    assert summary.ask_value == 12_000_033
+    assert summary.pressure_pct == pytest.approx((920 - 12_000_033) / (920 + 12_000_033) * 100)
+    assert summary.spread_pct == pytest.approx(1 / 10.5 * 100)
+    assert summary.bids[1].is_wall is True
+    assert summary.asks[1].is_wall is True
+    assert summary.asks[1].cumulative_quantity == 1_000_003
+
+
+def test_notional_sweep_reports_slippage_and_insufficient_visible_depth():
+    buy = calculate_notional_book_sweep(
+        [{"price": 10, "quantity": 5}, {"price": 11, "quantity": 10}],
+        side="buy",
+        value=100,
+    )
+    sell = calculate_notional_book_sweep(
+        [{"price": 10, "quantity": 5}, {"price": 9, "quantity": 10}],
+        side="sell",
+        value=100,
+    )
+    too_large = calculate_notional_book_sweep(
+        [{"price": 10, "quantity": 1}], side="buy", value=100,
+    )
+
+    assert buy.fully_filled is True
+    assert buy.average_price == pytest.approx(100 / (5 + 50 / 11))
+    assert buy.slippage_pct == pytest.approx((buy.average_price - 10) / 10 * 100)
+    assert sell.fully_filled is True
+    assert sell.average_price == pytest.approx(100 / (5 + 50 / 9))
+    assert sell.slippage_pct == pytest.approx((10 - sell.average_price) / 10 * 100)
+    assert too_large.fully_filled is False
 
 
 def _flip_input(**changes):

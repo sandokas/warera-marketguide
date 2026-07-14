@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 
-LATEST_SCHEMA_VERSION = 2
+LATEST_SCHEMA_VERSION = 3
 
 
 class MarketStoreError(RuntimeError):
@@ -243,6 +243,38 @@ class MarketStore:
                 rows,
             )
 
+    def upsert_item_production_points(
+        self,
+        values: dict[str, float | None],
+        observed_at: datetime,
+    ) -> None:
+        observed_at_text = _format_datetime(observed_at)
+        rows = [
+            (
+                item_code,
+                None if points is None else _required_positive_float(points, "production_points"),
+                observed_at_text,
+            )
+            for item_code, points in values.items()
+        ]
+        with self._connect():
+            self._connect().executemany(
+                """
+                insert into item_production_config (item_code, production_points, observed_at)
+                values (?, ?, ?)
+                on conflict(item_code) do update set
+                    production_points = excluded.production_points,
+                    observed_at = excluded.observed_at
+                """,
+                rows,
+            )
+
+    def item_production_points(self) -> dict[str, float | None]:
+        rows = self._connect().execute(
+            "select item_code, production_points from item_production_config order by item_code"
+        ).fetchall()
+        return {row["item_code"]: row["production_points"] for row in rows}
+
     def insert_order_book_observations(self, orders: dict[str, Any], observed_at: datetime) -> None:
         observed_at_text = _format_datetime(observed_at)
         observed_at_epoch = _epoch_seconds(observed_at)
@@ -353,6 +385,7 @@ class MarketStore:
             join order_book_observations as observations
               on observations.id = levels.observation_id
             where observations.item_code = ? and observations.observed_at_epoch >= ?
+              and levels.price > 0 and levels.quantity > 0
             order by levels.observation_id,
                      case levels.side when 'bid' then 0 else 1 end,
                      levels.level_position
@@ -444,6 +477,7 @@ class MarketStore:
             select side, level_position, price, quantity
             from order_book_levels
             where observation_id = ?
+              and price > 0 and quantity > 0
             order by case side when 'bid' then 0 else 1 end, level_position
             """,
             (observation_id,),
@@ -568,9 +602,22 @@ def migrate_to_v2(connection: sqlite3.Connection) -> None:
     )
 
 
+def migrate_to_v3(connection: sqlite3.Connection) -> None:
+    connection.executescript(
+        """
+        create table item_production_config (
+            item_code text primary key,
+            production_points real check (production_points > 0),
+            observed_at text not null
+        );
+        """
+    )
+
+
 MIGRATIONS = {
     1: migrate_to_v1,
     2: migrate_to_v2,
+    3: migrate_to_v3,
 }
 
 
@@ -664,6 +711,10 @@ def _aggregate_levels(levels: list[Any], *, reverse: bool) -> list[Any]:
     level_type = None
     for level in levels:
         level_type = type(level)
+        if level.price < 0 or level.quantity <= 0:
+            raise ValueError("Order-book prices must be non-negative and quantities must be positive.")
+        if level.price == 0:
+            continue
         by_price[level.price] = by_price.get(level.price, 0.0) + level.quantity
     if level_type is None:
         return []
@@ -715,6 +766,13 @@ def _required_float(value: Any, field_name: str) -> float:
         return float(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"Expected {field_name} to be numeric.") from exc
+
+
+def _required_positive_float(value: Any, field_name: str) -> float:
+    result = _required_float(value, field_name)
+    if result <= 0:
+        raise ValueError(f"Expected {field_name} to be positive.")
+    return result
 
 
 def _optional_float(value: Any) -> float | None:

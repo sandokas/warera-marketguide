@@ -15,18 +15,21 @@ from .metrics import (
     ForecastValidationResult,
     FlipAssumptions,
     calculate_book_sweep,
+    calculate_notional_book_sweep,
     calculate_direction_signal,
     calculate_flip_opportunity,
     calculate_liquidity_score,
     classify_future_bid_outcome,
     classify_tendency,
     summarize_forecast_evaluations,
+    summarize_order_book,
 )
 
 
 SUPPORTED_REPORT_WINDOWS = ("1D", "7D", "30D", "90D", "1Y")
 DEFAULT_REPORT_WINDOWS = ("1D", "7D", "30D")
 FORECAST_TRAILING_SECONDS = 7 * 24 * 60 * 60
+EXECUTION_BUDGETS = (100.0, 1_000.0, 10_000.0)
 
 
 def evaluate_item_forecast(
@@ -281,6 +284,7 @@ def load_market_rows(
 
     latest_prices = store.latest_price_observations()
     latest_books = store.latest_order_book_observations()
+    production_points = store.item_production_points()
 
     rows: list[dict[str, Any]] = []
     for item_code in store.item_codes():
@@ -300,6 +304,7 @@ def load_market_rows(
         row: dict[str, Any] = {
             "item_name": _display_name(item_code),
             "item_code": item_code,
+            "production_points": production_points.get(item_code),
             "latest_price": current_price,
             "latest_price_observed_at": latest_price.get("observed_at"),
             "latest_bid": latest_book.get("best_bid"),
@@ -374,14 +379,27 @@ def load_market_rows(
         asks = None
         best_bid = None
         best_ask = None
+        row["order_book"] = None
+        row["order_book_executions"] = []
         if snapshot is not None:
             best_bid = snapshot.get("best_bid")
             best_ask = snapshot.get("best_ask")
             observed = datetime.fromtimestamp(int(snapshot["observed_at_epoch"]), tz=timezone.utc)
             quote_age_minutes = max(0.0, (now - observed).total_seconds() / 60)
             if snapshot.get("levels_available"):
+                bids = snapshot.get("bids", ())
                 asks = snapshot.get("asks", ())
                 entry_sweep = calculate_book_sweep(asks, side="buy", quantity=assumptions.quantity)
+                book_summary = summarize_order_book(bids=bids, asks=asks)
+                row["order_book"] = asdict(book_summary)
+                row["order_book_executions"] = [
+                    {
+                        "budget": budget,
+                        "buy": asdict(calculate_notional_book_sweep(asks, side="buy", value=budget)),
+                        "sell": asdict(calculate_notional_book_sweep(bids, side="sell", value=budget)),
+                    }
+                    for budget in EXECUTION_BUDGETS
+                ]
         opportunity = calculate_flip_opportunity({
             "item_code": item_code,
             "item_name": row["item_name"],

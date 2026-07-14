@@ -24,6 +24,10 @@ class FakeMarketApi:
         self.calls.append(("get_prices", None))
         return {"bread": 3.25}
 
+    def get_item_production_points(self) -> dict[str, float | None]:
+        self.calls.append(("get_item_production_points", None))
+        return {"bread": 10.0}
+
     def get_top_orders(self, item_code: str, limit: int) -> TopOrders:
         self.calls.append(("get_top_orders", (item_code, limit)))
         return TopOrders(
@@ -98,6 +102,7 @@ def test_incremental_sync_persists_observations_and_stops_at_high_water(tmp_path
         assert ("get_transaction_page", ("bread", 100, "next-page")) not in api.calls
         assert [row["id"] for row in store.transactions_for_window("bread", 0)] == ["tx-old", "tx-new"]
         assert store.price_observations_for_window("bread", 0)[0]["current_price"] == 3.25
+        assert store.item_production_points() == {"bread": 10.0}
         assert store.order_book_observations_for_window("bread", 0)[0]["best_bid"] == 3.1
 
         state = store.get_item_state("bread")
@@ -268,6 +273,7 @@ def test_verbose_sync_logs_transaction_page_import_details(tmp_path):
         )
 
     assert "Observed current prices for 1 item(s) at 2026-06-30T10:00:00Z." in messages
+    assert ("get_top_orders", ("bread", 100)) in api.calls
     assert any("current order book fetched (1 best bid(s), 1 best ask(s))" in message for message in messages)
     assert any("bread: fetching transaction page 1 (cursor=first, limit=100)" in message for message in messages)
     assert any(

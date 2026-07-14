@@ -29,20 +29,25 @@ def test_swing_lens_explains_quotes_without_making_momentum_trade_recommendation
     assert "WarEra Market Guide" in report
     assert "Market Trends" in report
     assert "Price Evolution Lens" in report
-    assert "Ask (You Pay)" in report
-    assert "Bid (You Receive)" in report
+    assert ">Ask<" in report
+    assert ">Bid<" in report
+    assert "(You Pay)" not in report
+    assert "(You Receive)" not in report
     assert "Crossing Cost %" in report
     assert "Last" in report
-    assert "Fair Prices And Tomorrow Bias" in report
-    assert "Flip Board" in report
+    assert "Market intelligence, without the noise." in report
+    assert "Largest price gaps" in report
+    assert "Flip Board" not in report
     assert "Break-even Exit VWAP" not in report
     assert ">Entry<" not in report
-    assert "Evidence" in report
-    assert "Unavailable" in report
+    assert "Strongest upside signal" not in report
+    assert "Strongest downside signal" not in report
     assert "Trust" not in report
     assert "Market-Making Score" not in report
     assert "Insufficient score data" not in report
-    assert "Price fell; no reversal confirmed" in report
+    assert 'aria-label="Down 3.50 percent over 7 days"' in report
+    assert '<span aria-hidden="true">↓</span> Falling' in report
+    assert "3.50% · 100 trades" in report
     assert "Price is low; consider buying" not in report
     assert "Price is high; consider selling" not in report
     assert "Momentum describes history, not a trade recommendation" in report
@@ -80,7 +85,8 @@ def test_generate_html_report_shows_all_items_by_default():
 
     assert "Corn" in report
     assert "Rice" in report
-    assert report.count("Flip Board") >= 2
+    assert report.count('<article class="summary-card') == 2
+    assert "Flip Board" not in report
 
 
 def test_report_foregrounds_market_trends_and_writes_compatibility_csv(tmp_path):
@@ -124,38 +130,41 @@ def test_report_foregrounds_market_trends_and_writes_compatibility_csv(tmp_path)
     assert trends_path.name == "market_trends.csv"
     assert trends_path.exists()
     assert (tmp_path / "market_scores.csv").exists()
-    assert "Fair Prices And Tomorrow Bias" in report
-    assert "Flip Board" in report
+    assert "Market intelligence, without the noise." in report
+    assert "Market Signals" not in report
+    assert "Strongest upside signal" not in report
+    assert "Flip Board" not in report
     assert "Market Trends" in report
     assert ">Rank<" not in report
     assert 'class="col-rank"' not in report
     assert "Rising" in report
     assert "Volatile" in report
     assert "5.900" in report
-    assert "Supported" in report
+    assert "Supported" not in report
+    assert '<span class="chip chip-up"><span>↑</span>Up</span>' not in report
     assert "chip-up" in report
     assert "chip-hold" in report
     assert "signed-positive" in report
-    assert "liquidity-fill" in report
-    assert ">250<" in report
-    assert 'title="250"' in report
+    assert '<div class="liquidity-fill"' not in report
+    assert ">250<" not in report
+    assert 'title="250"' not in report
     assert 'class="col-spread-pct number"' in report
     assert "th:nth-child(2), td:nth-child(2)" not in report
     assert "th:nth-last-child(2), td:nth-last-child(2)" not in report
     assert "align-right" not in report
     assert ".compact-table .report-table" in report
-    assert "width: max-content" in report
-    assert ".table-wrap { overflow-x: auto; }" in report
-    assert ".flip-board .report-table" in report
+    assert "width: max-content" not in report
+    assert ".table-wrap { overflow: visible; }" in report
+    assert ".flip-board .report-table" not in report
     assert "table-layout: fixed" in report
     assert "overflow-x: clip" not in report
     assert ".compact-table td.number" in report
     assert "font-variant-numeric: tabular-nums" in report
     assert "min-width: 220px" in report
-    assert "grid-template-columns: minmax(72px, 1fr) 48px" in report
-    assert "min-width: 188px" in report
-    assert 'class="col-7d-trades number"' in report
-    assert 'class="col-trades number"' in report
+    assert "grid-template-columns: minmax(72px, 1fr) 48px" not in report
+    assert "min-width: 188px" not in report
+    assert 'class="col-activity number"' in report
+    assert 'class="activity-totals number"' in report
     assert "Market-Making Score" not in report
 
 
@@ -188,8 +197,8 @@ def test_report_uses_stable_fair_price_and_softens_thin_market_actions():
     report = generate_html_report(df, top=0)
 
     assert "10.000" in report
-    assert "Unavailable" in report
-    assert "Insufficient" in report
+    assert "Largest discount" in report
+    assert "-20.00% vs fair" in report
 
 
 def test_report_formats_volume_and_trade_counts_without_decimal_suffix():
@@ -214,12 +223,12 @@ def test_report_formats_volume_and_trade_counts_without_decimal_suffix():
     assert "12.345" in report
     assert "31641" in report
     assert "31641.000" not in report
-    assert ">31.6K<" in report
-    assert ">Volume<" in report
-    assert ">Trades<" in report
+    assert ">31.6K units<" in report
+    assert "Completed Value / Production-adjusted Work" in report
+    assert ">Units / Trades<" in report
 
 
-def test_report_normalizes_liquidity_bars_across_current_rows():
+def test_report_does_not_render_opaque_liquidity_score():
     df = pd.DataFrame([
         {
             "item_name": "Deep Market",
@@ -247,8 +256,8 @@ def test_report_normalizes_liquidity_bars_across_current_rows():
 
     report = generate_html_report(df, top=0)
 
-    assert 'class="liquidity-fill" style="width: 100.0%"' in report
-    assert 'class="liquidity-fill" style="width: 25.0%"' in report
+    assert '<div class="liquidity-fill"' not in report
+    assert ">Liquidity<" not in report
     assert "200.000" not in report
     assert "50.000" not in report
 
@@ -279,11 +288,12 @@ def test_generate_html_report_keeps_compatibility_with_price_precedence_fields()
     report = generate_html_report(df, top=0)
 
     assert "Copper" in report
-    assert "Flip Board" in report
-    assert "Fair Prices And Tomorrow Bias" in report
+    assert "Largest price gaps" in report
+    assert "Market intelligence, without the noise." in report
+    assert "Flip Board" not in report
 
 
-def test_report_renders_supplied_down_forecast_without_trade_instruction():
+def test_report_does_not_render_supplied_forecast_as_a_signal():
     df = pd.DataFrame([
         {
             "item_name": "Coal",
@@ -313,9 +323,10 @@ def test_report_renders_supplied_down_forecast_without_trade_instruction():
 
     report = generate_html_report(df, top=0)
 
-    assert "Unavailable" in report
-    assert "Limited" in report
-    assert "Current order-book levels are unavailable" in report
+    assert "Market Signals" not in report
+    assert "Limited" not in report
+    assert '<span class="chip chip-down"><span>↓</span>Down</span>' not in report
+    assert "Negative momentum" not in report
     assert "Buy near" not in report
 
 
@@ -346,11 +357,11 @@ def test_fair_price_table_distinguishes_thresholds_from_historical_range():
     report = generate_html_report(df, top=0, metric_window="7D")
 
     assert ">Break-even Exit VWAP<" not in report
-    assert "Historical fair context" in report
-    assert "Insufficient" in report
+    assert "Buy / Sell Signals" in report
+    assert "Insufficient" not in report
 
 
-def test_profit_first_board_ranks_supported_row_and_displays_downside_and_assumptions():
+def test_report_does_not_render_internal_flip_fields():
     common = {
         "bid": 9, "ask": 10, "latest_price": 9.5, "trades_7d": 10,
         "high_7d": 11, "low_7d": 8, "momentum_7d_pct": 1,
@@ -379,28 +390,273 @@ def test_profit_first_board_ranks_supported_row_and_displays_downside_and_assump
         assumptions=FlipAssumptions(quantity=5, fee_pct_per_side=1.5, minimum_net_margin_pct=2),
     )
 
-    assert report.index("Flip Board") < report.index("Market Trends")
-    assert report.index("Supported Item") < report.index("Watch Item")
-    assert "Fees assumed: 1.50% per side" in report
-    assert "Downside P10 net margin: -5.00%" in report
-    assert ">Entry<" in report
-    assert ">Forecast Exit<" in report
-    assert ">Expected Net<" in report
-    assert ">Qty<" not in report
-    assert ">Ask VWAP<" not in report
-    assert ">Median Net Profit<" not in report
-    assert 'class="chip chip-strong"><span>↗</span>Potential flip</span>' in report
-    assert 'class="chip chip-wait"><span>◷</span>Watch</span>' in report
-    assert '<span class="metric-label">BE</span> 10.700' in report
-    assert '<span class="metric-label">P10</span> 9.800' in report
-    assert "Best Supported Net Margin" in report
-    assert "Lowest Break-even Exit" in report
-    assert "Best Downside Profile" in report
-    assert "Avoid / Data Problem" in report
-    assert report.count('<article class="summary-card') == 4
+    assert "Flip Board" not in report
+    assert "Downside P10 net margin" not in report
+    assert ">Entry<" not in report
+    assert ">Forecast Exit<" not in report
+    assert ">Expected Net<" not in report
+    assert "Largest discount" in report
+    assert "Largest premium" in report
+    assert "Strongest upside signal" not in report
+    assert "Strongest downside signal" not in report
+    assert report.count('<article class="summary-card') == 2
 
 
-def test_flip_board_collapses_empty_metrics_and_explains_quantity_gap():
+def test_market_pulse_arrow_colors_follow_direction():
+    report = generate_html_report(pd.DataFrame([
+        {
+            "item_name": "Discount", "latest_price": 8, "stable_fair_price_7d": 10,
+            "forecast_current_signal": "Down", "forecast_evidence": "Supported",
+        },
+        {
+            "item_name": "Premium", "latest_price": 12, "stable_fair_price_7d": 10,
+            "forecast_current_signal": "Up", "forecast_evidence": "Supported",
+        },
+    ]))
+
+    assert 'summary-card summary-card-down"><span>Largest discount</span>' in report
+    assert 'summary-arrow" aria-hidden="true">↓</span>Discount' in report
+    assert 'summary-card summary-card-up"><span>Largest premium</span>' in report
+    assert 'summary-arrow" aria-hidden="true">↑</span>Premium' in report
+
+
+def test_report_restores_price_guide_and_renders_transparent_market_depth():
+    report = generate_html_report(pd.DataFrame([{
+        "item_name": "Cocain",
+        "last_trade_price": 36.02,
+        "stable_fair_price_7d": 36.1,
+        "stable_range_pct_7d": 2,
+        "percent_change_7d": -3,
+        "tendency_labels_7d": "Falling, Stable",
+        "traded_value_7d": 560_862,
+        "traded_quantity_7d": 15_540,
+        "trade_count_7d": 9_968,
+        "production_points": 100,
+        "order_book": {
+            "best_bid": 36.02, "best_ask": 36.2,
+            "bid_quantity": 59, "ask_quantity": 46,
+            "bid_value": 2_126, "ask_value": 1_665,
+            "pressure_pct": 12.16, "spread_pct": .5,
+            "bids": [{"price": 36.02, "quantity": 59, "order_value": 2125.18,
+                      "cumulative_quantity": 59, "cumulative_value": 2125.18, "is_wall": True}],
+            "asks": [{"price": 36.2, "quantity": 46, "order_value": 1665.2,
+                      "cumulative_quantity": 46, "cumulative_value": 1665.2, "is_wall": True}],
+        },
+        "order_book_executions": [{
+            "budget": 100,
+            "buy": {"fully_filled": True, "average_price": 36.2, "slippage_pct": 0},
+            "sell": {"fully_filled": False},
+        }],
+    }]))
+
+    assert report.index("Largest price gaps") < report.index("Buy / Sell Signals")
+    assert report.index("Buy / Sell Signals") < report.index("Current Order Book")
+    assert '<th class="col-fair number">Fair</th>' in report
+    assert '<th class="col-gap-pct number">Gap %</th>' in report
+    assert "Fair is the same historical reference used in the price-gap cards above" in report
+    assert ">Buy ≤<" in report and ">Sell ≥<" in report
+    assert '<span class="chip chip-down">Falling</span>' in report
+    assert "Current Order Book" in report
+    assert "Buy orders vs sell orders" in report
+    assert '<span class="depth-label-text">Buy</span>' in report
+    assert '<span class="depth-label-number">59 (2.1K value)</span>' in report
+    assert '<span class="depth-label-text">Sell</span>' in report
+    assert '<span class="depth-label-number">46 (1.7K value)</span>' in report
+    assert 'class="depth-segment depth-segment-bid wall-segment"' in report
+    assert 'class="depth-segment depth-segment-ask wall-segment"' in report
+    assert 'title="Bid at 36.020: 59 units, 2125 value"' in report
+    assert '<span class="book-pressure-content"><span class="book-pressure-label signed-positive">Buy-heavy</span>' in report
+    assert '<span class="book-pressure-value signed-positive">+12.2%</span>' in report
+    assert '.book-summary .book-pressure { width: 13%; white-space: nowrap; }' in report
+    assert '<th class="book-wall number">Buy Wall</th>' in report
+    assert '<td class="book-wall number">36.020</td>' in report
+    assert '<th class="book-wall number">Sell Wall</th>' in report
+    assert '<td class="book-wall number">36.200</td>' in report
+    assert '.book-pressure-content {' in report
+    assert "<details" not in report
+    assert ".flip-board" not in report
+    assert "Executable fixed-budget depth" not in report
+    assert "Insufficient visible depth" not in report
+    assert ">Gross Room %<" in report
+    assert "Never buy at Ask and immediately sell at Bid—that locks in the spread loss" in report
+    assert "Completed Market Activity" in report
+    assert "Liquidity depth score" not in report
+
+
+def test_report_aligns_text_left_and_numbers_right_with_semantic_classes():
+    report = generate_html_report(pd.DataFrame([{
+        "item_name": "Iron",
+        "last_trade_price": 0.08,
+        "stable_fair_price_7d": 0.081,
+        "stable_range_pct_7d": 2,
+        "traded_value_7d": 1000,
+        "traded_quantity_7d": 12500,
+        "trade_count_7d": 42,
+        "production_points": 1,
+        "order_book": {
+            "best_bid": 0.079, "best_ask": 0.081,
+            "bid_quantity": 100, "ask_quantity": 200,
+            "bid_value": 7.9, "ask_value": 16.2,
+            "pressure_pct": -34.4, "spread_pct": 2.5,
+            "bids": [{"price": 0.079, "quantity": 100, "order_value": 7.9,
+                      "cumulative_quantity": 100, "cumulative_value": 7.9}],
+            "asks": [{"price": 0.081, "quantity": 200, "order_value": 16.2,
+                      "cumulative_quantity": 200, "cumulative_value": 16.2}],
+        },
+        "order_book_executions": [{
+            "budget": 100,
+            "buy": {"fully_filled": True, "average_price": 0.081, "slippage_pct": 0},
+            "sell": {"fully_filled": False},
+        }],
+    }]))
+
+    assert 'class="col-item text"' in report
+    assert 'class="col-now number"' in report
+    assert 'class="activity-volume number"' in report
+    assert 'class="activity-totals number"' in report
+    assert '<th class="book-item text">Item</th>' in report
+    assert '<th class="book-price number">Best Bid</th>' in report
+    assert '<td class="book-price number">0.079</td>' in report
+    assert '<th class="col-gross-room-pct number">Gross Room %</th>' in report
+    assert "th, td {\n      padding: 8px 9px;\n      border-bottom: 1px solid var(--line);\n      text-align: left;" in report
+    assert "th.number, td.number {\n      text-align: right;" in report
+    assert ".flip-board th,\n    .flip-board td {\n      padding: 12px 10px;\n      max-width: none;\n      text-align: left;" not in report
+    assert "th:nth-child" not in report
+    assert "td:nth-child" not in report
+
+
+def test_report_emits_auditable_buy_sell_and_wait_signals():
+    report = generate_html_report(pd.DataFrame([
+        {
+            "item_name": "Wait Item", "latest_price": 10,
+            "latest_ask": 10.05, "latest_bid": 9.95, "stable_fair_price_7d": 10,
+        },
+        {
+            "item_name": "Sell Item", "latest_price": 10.2,
+            "latest_ask": 10.3, "latest_bid": 10.2, "stable_fair_price_7d": 10,
+        },
+        {
+            "item_name": "Buy Item", "latest_price": 9.8,
+            "latest_ask": 9.8, "latest_bid": 9.7, "stable_fair_price_7d": 10,
+        },
+    ]))
+
+    assert "Buy / Sell Signals" in report
+    assert '<span class="chip chip-buy"><span>+</span>BUY</span>' in report
+    assert '<span class="chip chip-sell"><span>−</span>SELL</span>' in report
+    assert '<span class="chip chip-wait"><span>•</span>WAIT</span>' in report
+    assert '<tr class="signal-buy">' in report
+    assert '<tr class="signal-sell">' in report
+    assert '<tr class="signal-wait">' in report
+    assert "Current best Ask is at or below Buy ≤" in report
+    assert "Current best Bid is at or above Sell ≥" in report
+    assert report.index("Buy Item") < report.index("Sell Item") < report.index("Wait Item")
+
+
+def test_report_is_print_first_and_only_wide_price_evolution_table_scrolls():
+    report = generate_html_report(pd.DataFrame([{
+        "item_name": "Iron",
+        "latest_price": 0.08,
+        "latest_ask": 0.079,
+        "latest_bid": 0.078,
+        "stable_fair_price_7d": 0.081,
+    }]))
+
+    assert "<details" not in report
+    assert ".table-wrap { overflow: visible; }" in report
+    assert ".price-evolution-table {" in report
+    assert "overflow-x: auto" in report
+    assert "@media print" in report
+    assert "@page { size: landscape; margin: 10mm; }" in report
+    assert "thead { display: table-header-group; }" in report
+    assert ".price-evolution-table { overflow: visible; }" in report
+    assert ".price-evolution-table .report-table { min-width: 0; }" in report
+    assert ".signal-help {" in report
+    assert '<div class="table-wrap compact-table price-guide-table">' in report
+    assert ".price-guide-table .col-signal .chip" in report
+    assert ".price-guide .col-signal" not in report
+
+
+def test_market_trends_splits_price_change_and_price_evolution_keeps_read_on_one_line():
+    report = generate_html_report(pd.DataFrame([{
+        "item_name": "Scraps",
+        "latest_price": 0.212,
+        "current_price": 0.212,
+        "percent_change_7d": 1.92,
+        "low_7d": 0.207,
+        "high_7d": 0.215,
+        "traded_quantity_7d": 11_900_000,
+        "trade_count_7d": 28_000,
+        "trades_7d": 28_000,
+        "momentum_7d_pct": 1.92,
+        "tendency_labels_7d": "Range-bound, Stable",
+    }]))
+
+    assert '<div class="table-wrap compact-table market-trends-table">' in report
+    assert '<th class="col-latest number">Latest</th>' in report
+    assert '<th class="col-7d-change-pct number">7D Change %</th>' in report
+    assert "Price / 7D Change" not in report
+    assert '<div class="table-wrap compact-table price-evolution-table">' in report
+    assert ".price-evolution-table .col-read { width: 26%; min-width: 0; max-width: none; white-space: nowrap; }" in report
+
+
+def test_completed_activity_bar_uses_production_adjusted_work_and_excludes_unknown_factors():
+    report = generate_html_report(pd.DataFrame([
+        {
+            "item_name": "Iron", "traded_quantity_7d": 1_000,
+            "traded_value_7d": 80, "trade_count_7d": 40, "production_points": 1,
+        },
+        {
+            "item_name": "Steel", "traded_quantity_7d": 200,
+            "traded_value_7d": 320, "trade_count_7d": 20, "production_points": 10,
+        },
+        {
+            "item_name": "Case1", "traded_quantity_7d": 500,
+            "traded_value_7d": 1_500, "trade_count_7d": 5, "production_points": None,
+        },
+    ]))
+
+    assert "Completed Value is the sum of transaction price × quantity" in report
+    assert 'aria-label="1.5K completed transaction value; 100.0% of the highest-value market"' in report
+    assert 'aria-label="1.0K production-adjusted work volume; 50.0% of the busiest comparable item"' in report
+    assert 'aria-label="2.0K production-adjusted work volume; 100.0% of the busiest comparable item"' in report
+    assert 'aria-label="N/A production-adjusted work volume; 0.0% of the busiest comparable item"' in report
+    assert report.index('aria-label="1.5K completed transaction value') < report.index('aria-label="320 completed transaction value')
+    assert report.index('aria-label="320 completed transaction value') < report.index('aria-label="80 completed transaction value')
+    assert "500 units" in report
+    assert "5 trades" in report
+
+    top_report = generate_html_report(pd.DataFrame([
+        {"item_name": "Iron", "traded_quantity_7d": 1_000, "traded_value_7d": 80, "production_points": 1},
+        {"item_name": "Steel", "traded_quantity_7d": 200, "traded_value_7d": 320, "production_points": 10},
+    ]), top=1)
+    assert 'aria-label="2.0K production-adjusted work volume; 100.0%' in top_report
+    assert 'aria-label="1.0K production-adjusted work volume' not in top_report
+
+
+def test_scraps_is_never_described_as_inactive_when_price_is_stable():
+    report = generate_html_report(pd.DataFrame([{
+        "item_name": "Scraps",
+        "current_price": 0.212,
+        "latest_price": 0.212,
+        "momentum_7d_pct": 1.92,
+        "traded_value_7d": 2_500_000,
+        "traded_quantity_7d": 11_900_000,
+        "trade_count_7d": 28_000,
+        "trades_7d": 28_000,
+        "tendency_labels_7d": "Range-bound, Stable",
+        "production_points": None,
+    }]))
+
+    assert 'aria-label="2.5M completed transaction value; 100.0% of the highest-value market"' in report
+    assert 'aria-label="Up 1.92 percent over 7 days"' in report
+    assert '<span aria-hidden="true">↑</span> Rising' in report
+    assert "1.92% · 28.0K trades" in report
+    assert "Little net price change" not in report
+    assert ">Price State<" in report
+
+
+def test_report_ignores_unavailable_internal_flip_data():
     report = generate_html_report(pd.DataFrame([{
         "item_name": "Heavy Ammo",
         "flip_verdict": "Unavailable",
@@ -413,15 +669,16 @@ def test_flip_board_collapses_empty_metrics_and_explains_quantity_gap():
         "flip_passive_limit_price": 2.39,
     }]), assumptions=FlipAssumptions(quantity=100))
 
-    assert "No quantity-100 flip can be evaluated yet" in report
-    assert "Historical order books do not contain enough fully executable entry/exit observations at that size" in report
-    assert "0 executable · 30 forecasts" in report
-    assert "Quote age 0.8m" in report
-    assert report.count("Not enough same-size historical fills") == 1
+    assert "Flip Board" not in report
+    assert "Flip ranking is collecting execution history" not in report
+    assert "quantity-100 entry and exit observations" not in report
+    assert "0 executable · 30 forecasts" not in report
+    assert "Quote age 0.8m" not in report
+    assert "Not enough same-size historical fills" not in report
     assert "Limit idea" not in report
     assert ">Entry<" not in report
     assert ">Forecast Exit<" not in report
     assert ">Net<" not in report
-    assert "Best Supported Net Margin" in report
+    assert "Strongest upside signal" not in report
     assert "Trend Highlights" not in report
     assert "Immediate Loss" not in report

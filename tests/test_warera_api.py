@@ -3,6 +3,7 @@ import json
 import pytest
 
 from warera_quant.warera_api import (
+    GAME_CONFIG_ENDPOINT,
     TOP_ORDERS_ENDPOINT,
     TRANSACTIONS_ENDPOINT,
     OrderLevel,
@@ -37,6 +38,19 @@ def test_get_prices_parses_trpc_json_payload():
     api = WarEraMarketApi(FakeClient([_trpc({"json": {"bread": 1.25}})]))
 
     assert api.get_prices() == {"bread": 1.25}
+
+
+def test_get_item_production_points_uses_official_config_and_marks_undefined_items():
+    client = FakeClient([_trpc({"items": {
+        "iron": {"isTradable": True, "productionPoints": 1},
+        "steel": {"isTradable": True, "productionPoints": "10"},
+        "case1": {"isTradable": True},
+        "gun": {"isTradable": False},
+    }})])
+    api = WarEraMarketApi(client)
+
+    assert api.get_item_production_points() == {"iron": 1.0, "steel": 10.0, "case1": None}
+    assert client.calls == [(GAME_CONFIG_ENDPOINT, None)]
 
 
 @pytest.mark.parametrize(
@@ -94,6 +108,7 @@ def test_get_top_orders_sorts_levels_and_discards_zero_quantity():
             {"price": "1.1", "quantity": "2"},
             {"price": "1.2", "quantity": "3"},
             {"price": "9", "quantity": "0"},
+            {"price": "0", "quantity": "999999"},
         ],
         "sellOrders": [
             {"price": "1.5", "quantity": "1"},

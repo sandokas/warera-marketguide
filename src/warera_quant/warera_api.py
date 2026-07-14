@@ -9,6 +9,7 @@ from typing import Any, Protocol
 PRICES_ENDPOINT = "/itemTrading.getPrices"
 TOP_ORDERS_ENDPOINT = "/tradingOrder.getTopOrders"
 TRANSACTIONS_ENDPOINT = "/transaction.getPaginatedTransactions"
+GAME_CONFIG_ENDPOINT = "/gameConfig.getGameConfig"
 
 
 class JsonClient(Protocol):
@@ -53,6 +54,29 @@ class WarEraMarketApi:
                 raise WarEraApiError("Expected prices response item codes to be strings.")
             prices[item_code] = _required_float(price, f"price for {item_code}")
         return prices
+
+    def get_item_production_points(self) -> dict[str, float | None]:
+        """Return official work units required to produce one unit of each tradable item."""
+        response = self.client.get_json(GAME_CONFIG_ENDPOINT)
+        data = _trpc_data(response)
+        if not isinstance(data, dict) or not isinstance(data.get("items"), dict):
+            raise WarEraApiError("Expected game config to contain an items object.")
+
+        production_points: dict[str, float | None] = {}
+        for item_code, item in data["items"].items():
+            if not isinstance(item_code, str) or not isinstance(item, dict):
+                raise WarEraApiError("Expected game-config items to map item codes to objects.")
+            if item.get("isTradable") is not True:
+                continue
+            value = item.get("productionPoints")
+            if value is None:
+                production_points[item_code] = None
+                continue
+            points = _required_float(value, f"productionPoints for {item_code}")
+            if points <= 0:
+                raise WarEraApiError(f"Expected productionPoints for {item_code} to be positive.")
+            production_points[item_code] = points
+        return production_points
 
     def get_top_orders(self, item_code: str, limit: int) -> TopOrders:
         response = self.client.get_json(
@@ -154,7 +178,9 @@ def _order_list(value: Any, field_name: str) -> list[OrderLevel]:
             raise WarEraApiError(f"Expected {entry_name}.price to be non-negative.")
         if quantity < 0:
             raise WarEraApiError(f"Expected {entry_name}.quantity to be non-negative.")
-        if quantity > 0:
+        # Zero-price orders are not executable market depth and occasionally
+        # appear as placeholders in the upstream response.
+        if price > 0 and quantity > 0:
             levels.append(OrderLevel(price=price, quantity=quantity))
     return levels
 

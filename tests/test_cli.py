@@ -3,7 +3,52 @@ import sys
 import pandas as pd
 import pytest
 
-from warera_quant.cli import main
+import warera_quant.cli as cli_module
+from warera_quant.cli import build_parser, main
+
+
+def test_order_book_sync_defaults_to_api_maximum():
+    args = build_parser().parse_args([])
+    assert args.order_limit == 100
+
+
+def test_from_db_preserves_structured_order_book_for_report(monkeypatch, tmp_path):
+    class DummyStore:
+        def __init__(self, _path):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    captured = {}
+    book = {"best_bid": 9, "best_ask": 10, "bids": [], "asks": []}
+    monkeypatch.setattr(cli_module, "MarketStore", DummyStore)
+    monkeypatch.setattr(
+        cli_module,
+        "load_market_rows",
+        lambda _store, **_kwargs: [{
+            "item_name": "Bread",
+            "order_book": book,
+            "order_book_executions": [],
+        }],
+    )
+
+    def capture_outputs(df, output_dir, **_kwargs):
+        captured["book"] = df.iloc[0]["order_book"]
+        return output_dir / "market_trends.csv", output_dir / "market_report.html"
+
+    monkeypatch.setattr(cli_module, "write_outputs", capture_outputs)
+    monkeypatch.setattr(sys, "argv", [
+        "warera-quant", "--from-db", "--market-db", str(tmp_path / "market.sqlite3"),
+        "--output", str(tmp_path / "output"), "--quiet",
+    ])
+
+    main()
+
+    assert captured["book"] == book
 
 
 @pytest.mark.parametrize(
@@ -21,7 +66,7 @@ def test_trade_options_validate_bounds(monkeypatch, option, value):
         main()
 
 
-def test_csv_mode_writes_unavailable_flip_fields_and_visible_assumptions(tmp_path, monkeypatch):
+def test_csv_mode_writes_unavailable_flip_fields_without_assumption_badges(tmp_path, monkeypatch):
     csv_path = tmp_path / "market.csv"
     output = tmp_path / "output"
     pd.DataFrame([{
@@ -40,7 +85,8 @@ def test_csv_mode_writes_unavailable_flip_fields_and_visible_assumptions(tmp_pat
     assert exported.loc[0, "flip_verdict"] == "Unavailable"
     assert exported.loc[0, "flip_quantity"] == 7
     report = (output / "market_report.html").read_text(encoding="utf-8")
-    assert "Quantity: 7" in report
-    assert "Fees assumed: 2.50% per side" in report
-    assert "Minimum margin: 3.00%" in report
-    assert "Max quote age: 15m" in report
+    assert 'aria-label="Analysis assumptions"' not in report
+    assert "Quantity <strong>7</strong>" not in report
+    assert "Fees <strong>2.50% / side</strong>" not in report
+    assert "Min margin <strong>3.00%</strong>" not in report
+    assert "Freshness <strong>≤ 15m</strong>" not in report
