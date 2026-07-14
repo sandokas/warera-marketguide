@@ -38,6 +38,7 @@ def test_calculate_metrics_basic():
     assert m.status == "OK"
     assert round(m.mid_price, 3) == 7.200
     assert round(m.spread_pct, 2) == 4.15
+    assert round(m.crossing_loss_pct, 2) == 4.08
     assert m.trading_attractiveness is not None
 
 
@@ -56,6 +57,13 @@ def test_one_tick_spread_is_not_exploitable():
     assert m.spread_pct == 0
     assert m.trading_attractiveness is None
     assert m.status == "Insufficient score data"
+
+
+def test_crossing_loss_is_available_without_trade_history():
+    m = calculate_metrics({"item_name": "Oil", "bid": 0.086, "ask": 0.087})
+
+    assert m.crossing_loss_pct == pytest.approx(1.149425)
+    assert m.status == "Missing: trades_7d, high_7d, low_7d"
 
 
 def test_preserves_explicit_fair_price_fields():

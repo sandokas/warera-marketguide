@@ -28,6 +28,7 @@ class MarketMetrics:
     min_tick: float = 0.001
     spread: Optional[float] = None
     spread_pct: Optional[float] = None
+    crossing_loss_pct: Optional[float] = None
     range_pct: Optional[float] = None
     stable_range_pct_7d: Optional[float] = None
     depth_imbalance_pct: Optional[float] = None
@@ -108,19 +109,23 @@ def calculate_metrics(row: dict) -> MarketMetrics:
         if value is None:
             missing.append(field_name)
 
-    mid_price = spread = spread_pct = range_pct = momentum_7d_pct = trading_attractiveness = None
+    mid_price = spread = spread_pct = crossing_loss_pct = range_pct = momentum_7d_pct = trading_attractiveness = None
     avg_price = None
     status = "OK"
 
-    if missing:
-        status = "Missing: " + ", ".join(missing)
-    else:
-        assert bid is not None and ask is not None and trades_7d is not None and high_7d is not None and low_7d is not None
+    if bid is not None and ask is not None:
         mid_price = (bid + ask) / 2
         raw_spread = ask - bid
         spread = 0 if raw_spread <= min_tick or math.isclose(raw_spread, min_tick) else raw_spread - min_tick
         if mid_price > 0:
             spread_pct = spread / mid_price * 100
+        if ask > 0:
+            crossing_loss_pct = max(raw_spread, 0.0) / ask * 100
+
+    if missing:
+        status = "Missing: " + ", ".join(missing)
+    else:
+        assert bid is not None and ask is not None and trades_7d is not None and high_7d is not None and low_7d is not None
         avg_price = (high_7d + low_7d) / 2
         if avg_price > 0:
             range_pct = (high_7d - low_7d) / avg_price * 100
@@ -167,6 +172,7 @@ def calculate_metrics(row: dict) -> MarketMetrics:
         min_tick=min_tick,
         spread=spread,
         spread_pct=spread_pct,
+        crossing_loss_pct=crossing_loss_pct,
         range_pct=range_pct,
         stable_range_pct_7d=stable_range_pct_7d,
         depth_imbalance_pct=depth_imbalance_pct,

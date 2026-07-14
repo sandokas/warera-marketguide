@@ -808,22 +808,20 @@ def _relative_chart_path(chart_path: str | Path | None, output_dir: Path) -> str
 
 def _swing_read(row: pd.Series) -> str:
     momentum = row.get("momentum_7d_pct")
-    spread = row.get("spread_pct")
     trades = row.get("trades_7d")
 
     has_momentum = momentum is not None and not pd.isna(momentum)
-    has_spread = spread is not None and not pd.isna(spread)
     has_trades = trades is not None and not pd.isna(trades) and trades > 0
 
+    if not has_trades:
+        return "Insufficient completed trades"
     if has_momentum and momentum >= 2 and has_trades:
-        return "Price is high; consider selling"
+        return "Price rose; momentum is not a sell signal"
     if has_momentum and momentum <= -2 and has_trades:
-        return "Price is low; consider buying"
-    if has_spread and spread >= 1 and has_trades:
-        return "Wide bid/ask; use limit orders"
+        return "Price fell; no reversal confirmed"
     if has_momentum:
-        return "Quiet market; trade near the range edges"
-    return "Check live order book"
+        return "Little net price change"
+    return "Insufficient trend history"
 
 
 def generate_html_report(
@@ -1096,18 +1094,19 @@ def generate_html_report(
             columns = [
                 column for column in [
                     "item_name", "ask", "bid", last_col, "low_7d", "high_7d",
-                    "momentum_7d_pct", "trades_7d", "swing_read"
+                    "crossing_loss_pct", "momentum_7d_pct", "trades_7d", "swing_read"
                 ]
                 if column and column in trend.columns
             ]
             trend_table = trend[columns].rename(columns={
                 "item_name": "Item",
-                "ask": "Buy Ask",
-                "bid": "Sell Bid",
+                "ask": "Ask (You Pay)",
+                "bid": "Bid (You Receive)",
                 "current_price": "Last",
                 "latest_price": "Last",
                 "low_7d": f"{metric_window} Low",
                 "high_7d": f"{metric_window} High",
+                "crossing_loss_pct": "Immediate Loss %",
                 "momentum_7d_pct": f"{metric_window} Momentum %",
                 "trades_7d": f"{metric_window} Trades",
                 "swing_read": "Read",
@@ -1115,7 +1114,7 @@ def generate_html_report(
             blocks.append(
                 f"""    <section>
       <h2>Price Evolution Lens</h2>
-      <p class="muted">Price-first view of bid, ask, last price, range, change, and trade count.</p>
+      <p class="muted">Ask is what you pay; bid is what you receive. Immediate Loss is the buy-at-ask, sell-at-bid loss before fees. Momentum describes history, not a trade recommendation.</p>
       {_compact_table_html(trend_table, table_kind="trend")}
     </section>"""
             )

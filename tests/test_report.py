@@ -3,7 +3,7 @@ import pandas as pd
 from warera_quant.report import generate_html_report, write_outputs
 
 
-def test_swing_lens_shows_actionable_prices_without_score():
+def test_swing_lens_explains_quotes_without_making_momentum_trade_recommendations():
     df = pd.DataFrame([
         {
             "item_name": "Oil",
@@ -14,6 +14,7 @@ def test_swing_lens_shows_actionable_prices_without_score():
             "high_7d": 0.174,
             "low_7d": 0.171,
             "spread_pct": 0.58,
+            "crossing_loss_pct": 0.58,
             "range_pct": 1.74,
             "momentum_7d_pct": -3.5,
             "trading_attractiveness": None,
@@ -27,8 +28,9 @@ def test_swing_lens_shows_actionable_prices_without_score():
     assert "WarEra Market Guide" in report
     assert "Market Trends" in report
     assert "Price Evolution Lens" in report
-    assert "Buy Ask" in report
-    assert "Sell Bid" in report
+    assert "Ask (You Pay)" in report
+    assert "Bid (You Receive)" in report
+    assert "Immediate Loss %" in report
     assert "Last" in report
     assert "Fair Prices And Tomorrow Bias" in report
     assert "What To Pay And What To Expect" in report
@@ -40,7 +42,10 @@ def test_swing_lens_shows_actionable_prices_without_score():
     assert "Trust" in report
     assert "Market-Making Score" not in report
     assert "Insufficient score data" not in report
-    assert "Price is low; consider buying" in report
+    assert "Price fell; no reversal confirmed" in report
+    assert "Price is low; consider buying" not in report
+    assert "Price is high; consider selling" not in report
+    assert "Momentum describes history, not a trade recommendation" in report
 
 
 def test_generate_html_report_shows_all_items_by_default():
