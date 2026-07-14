@@ -33,8 +33,8 @@ def test_swing_lens_shows_actionable_prices_without_score():
     assert "Fair Prices And Tomorrow Bias" in report
     assert "What To Pay And What To Expect" in report
     assert "Fair Price" in report
-    assert "Buy Below" in report
-    assert "Sell Above" in report
+    assert "Buy ≤" in report
+    assert "Sell ≥" in report
     assert "Expected Move" in report
     assert "Signal" in report
     assert "Trust" in report
@@ -123,7 +123,7 @@ def test_report_foregrounds_market_trends_and_writes_compatibility_csv(tmp_path)
     assert "5.900" in report
     assert "Up" in report
     assert "Hold" in report
-    assert "Sell near" in report
+    assert "Above sell line; upward bias" in report
     assert "chip-up" in report
     assert "chip-hold" in report
     assert "signed-positive" in report
@@ -301,3 +301,33 @@ def test_wait_signal_notes_show_buy_target():
 
     assert "Wait" in report
     assert "Buy near" in report
+
+
+def test_fair_price_table_distinguishes_thresholds_from_historical_range():
+    df = pd.DataFrame([
+        {
+            "item_name": "Bread",
+            "last_trade_price": 1.896,
+            "stable_fair_price_7d": 1.829,
+            "stable_range_pct_7d": 5.8366,
+            "min_7d": 1.770,
+            "max_7d": 1.900,
+            "trade_count_7d": 70_000,
+            "volume_7d": 125_000,
+            "latest_spread": 0.007,
+            "latest_spread_pct": 0.37,
+            "tendency_labels_7d": "Rising",
+            "percent_change_7d": 5.8,
+            "trades_7d": 70_000,
+            "momentum_7d_pct": 5.8,
+        }
+    ])
+
+    report = generate_html_report(df, top=0, metric_window="7D")
+
+    assert ">Buy ≤<" in report
+    assert ">Sell ≥<" in report
+    assert ">7D Low<" in report
+    assert ">7D High<" in report
+    assert "model thresholds around Fair, not the historical range" in report
+    assert "Above sell line; upward bias" in report

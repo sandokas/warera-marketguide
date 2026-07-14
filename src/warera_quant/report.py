@@ -262,6 +262,7 @@ def _trade_signal(
 def _next_step_note(
     *,
     signal: str,
+    latest: float | None,
     buy_below: float | None,
     sell_above: float | None,
     reason: str,
@@ -271,8 +272,12 @@ def _next_step_note(
     if signal == "Sell":
         return "Already at sell zone"
     if signal == "Hold" and sell_above is not None:
+        if latest is not None and latest >= sell_above:
+            return "Above sell line; upward bias"
         return f"Sell near {_fmt(sell_above)}"
     if signal == "Wait" and buy_below is not None:
+        if latest is not None and latest <= buy_below:
+            return "Below buy line; downward bias"
         return f"Buy near {_fmt(buy_below)}"
     if signal == "Check depth":
         return reason
@@ -644,7 +649,10 @@ def _column_classes(column: str) -> str:
 def _is_number_column(column: str) -> bool:
     label = str(column).lower()
     return (
-        label in {"now", "latest", "min", "max", "fair", "buy", "sell", "volume", "liquidity", "spread %"}
+        label in {
+            "now", "latest", "min", "max", "fair", "buy", "sell", "buy ≤", "sell ≥",
+            "volume", "liquidity", "spread %",
+        }
         or label.endswith("trades")
         or label.endswith("momentum %")
         or label.endswith("low")
@@ -875,6 +883,7 @@ def generate_html_report(
             )
             next_step = _next_step_note(
                 signal=signal,
+                latest=latest,
                 buy_below=buy_below,
                 sell_above=sell_above,
                 reason=reason,
@@ -885,6 +894,8 @@ def generate_html_report(
                 "fair_price": fair,
                 "buy_below": buy_below,
                 "sell_above": sell_above,
+                "history_low": _first_number(row, f"min_{window_key}", "low_7d"),
+                "history_high": _first_number(row, f"max_{window_key}", "high_7d"),
                 "gap_pct": gap_pct,
                 "signal": signal,
                 "action": _plain_action(latest, buy_below, sell_above, fair, quality),
@@ -937,14 +948,17 @@ def generate_html_report(
 
             fair_view = fair_view.sort_values(["gap_pct", "item_name"], na_position="last").head(display_count)
             table = fair_view[[
-                "item_name", "latest_price", "fair_price", "buy_below", "sell_above", "gap_pct",
+                "item_name", "latest_price", "fair_price", "buy_below", "sell_above",
+                "history_low", "history_high", "gap_pct",
                 "signal", "tomorrow_bias", "confidence", "market_quality", "why"
             ]].rename(columns={
                 "item_name": "Commodity",
                 "latest_price": "Now",
                 "fair_price": "Fair",
-                "buy_below": "Buy",
-                "sell_above": "Sell",
+                "buy_below": "Buy ≤",
+                "sell_above": "Sell ≥",
+                "history_low": f"{metric_window} Low",
+                "history_high": f"{metric_window} High",
                 "gap_pct": "Gap %",
                 "signal": "Signal",
                 "tomorrow_bias": "Expected Move",
@@ -955,7 +969,7 @@ def generate_html_report(
             blocks.append(
                 f"""    <section>
       <h2>What To Pay And What To Expect</h2>
-      <p class="muted">Buy below the buy line, sell above the sell line, and treat thin or volatile markets as confirm-live-depth signals.</p>
+      <p class="muted">Buy ≤ and Sell ≥ are model thresholds around Fair, not the historical range. The {escape(metric_window)} Low and High columns show the actual traded range. Confirm live depth in thin or volatile markets.</p>
       {_compact_table_html(table, table_kind="signal")}
     </section>"""
             )
@@ -1039,7 +1053,7 @@ def generate_html_report(
           <h3>Fair prices</h3>
           <ul>
             <li><strong>Fair:</strong> the report's best estimate of a normal price, smoothed so one odd trade matters less.</li>
-            <li><strong>Buy Below / Sell Above:</strong> suggested limit prices around Fair, widened when the market is jumpy.</li>
+            <li><strong>Buy ≤ / Sell ≥:</strong> model thresholds around Fair, widened when the market is jumpy; they are not historical bounds.</li>
             <li><strong>Use for:</strong> quick limit-order levels before checking live depth.</li>
           </ul>
         </div>
