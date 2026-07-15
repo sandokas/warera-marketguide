@@ -1,8 +1,10 @@
 # WarEra Market Guide
 
-WarEra Market Guide is a local Python reporting tool for market history, price trends, liquidity, and order-book conditions. It can read the included sample CSV, sync live WarEra market data into SQLite, or build a report from an existing market database.
+WarEra Market Guide is an aggressive decision-support tool for trading in the WarEra in-game market. Its goal is to turn real completed transactions and the current order book into clear buy, sell/exit, wait, profit-target, and stop-loss guidance. The report should make the proposed action, price levels, expected opportunity, and risk understandable at a glance.
 
-Live data is normalized at the API boundary and stored in SQLite. Reports and charts read from that database; raw WarEra responses are not persisted.
+This is not a neutral price dashboard. Market history and visualizations exist to support trading decisions. Signals may be aggressive because the market is inside a game, but they must remain traceable to the underlying data and must expose missing history, poor liquidity, and other limitations.
+
+Live data is normalized at the API boundary and stored in SQLite. Reports and charts read from that database; raw WarEra responses are not persisted. See [Project goal and data authority](docs/project-goal.md) for the governing product and price-source rules.
 
 ## Quick start
 
@@ -40,8 +42,10 @@ WARERA_API_BASE_URL=https://api2.warera.io/trpc
 
 Do not commit or hardcode the key. Requests authenticate with the `X-Api-Key` header.
 
-Sync current quotes, full visible order books, completed transactions, and the official
-per-item production-point configuration, then generate a report:
+Sync full visible order books, completed transactions, and the official per-item
+production-point configuration, then generate a report. The game-calculated price endpoint may
+still be collected for compatibility or diagnostics, but it is lagging data and must not drive
+market analysis or trading signals:
 
 ```bash
 PYTHONPATH=src .venv/bin/python run_report.py --live --output output
@@ -124,7 +128,7 @@ The minimum useful CSV fields are:
 item_name,bid,ask,trades_7d,high_7d,low_7d
 ```
 
-`current_price`, `open_7d`, and `close_7d` improve the report but are optional. See `data/sample_market.csv` for a complete example.
+`current_price`, `open_7d`, and `close_7d` improve compatibility-mode reports but are optional. CSV price fields must represent completed transactions supplied by the user, not the lagging game-calculated price endpoint. See `data/sample_market.csv` for a complete example.
 
 ### Custom JSON endpoint
 
@@ -142,16 +146,18 @@ PYTHONPATH=src .venv/bin/python run_report.py \
 
 Run `PYTHONPATH=src .venv/bin/python run_report.py --help` for the complete option list.
 
-## Market semantics
+## Product and market semantics
 
-Executed transactions are the primary price source. The report distinguishes:
+The data-source boundary is strict:
 
-- `last_trade_price`: newest execution in the queried window;
-- `quote_price`: newest price-endpoint observation;
-- `mid_price`: midpoint of the newest best bid and ask;
-- `current_price`: last trade, then quote, then midpoint as fallback.
+- completed transactions synced into SQLite are the source for latest traded price, price history, fair value, ranges, volume, momentum, and signal history;
+- the newest order book is the source for current executable buy and sell prices, available depth, spread, pressure, and slippage;
+- the WarEra price endpoint is a lagging, game-calculated value and is not an input to fair value, trends, signals, targets, or stop losses;
+- missing transaction history remains missing and must not be filled with the price endpoint or the order-book midpoint.
 
-Transaction history drives open, high, low, close, VWAP, median, percentiles, volume, and trend metrics. Current order books are reported transparently as bid/ask quantity, monetary value, spread, pressure, cumulative levels, and fixed-budget slippage. The trading-attractiveness score remains a secondary CSV compatibility metric:
+`last_trade_price` means the newest real execution in the queried window. Best ask means the price a buyer can currently pay, and best bid means the price a seller can currently receive. These concepts must remain separate in calculations and presentation.
+
+Transaction history drives open, high, low, close, VWAP, median, percentiles, volume, trend metrics, and historical signal inputs. Current order books are reported transparently as bid/ask quantity, monetary value, spread, pressure, cumulative levels, and fixed-budget slippage. The trading-attractiveness score remains a secondary CSV compatibility metric:
 
 ```text
 Trading Attractiveness = (Effective Spread % x Window Trades) / Window Range %
@@ -159,35 +165,22 @@ Trading Attractiveness = (Effective Spread % x Window Trades) / Window Range %
 
 Effective spread subtracts the minimum price tick from the raw bid/ask gap.
 
-Database-backed reports also evaluate the fixed `direction-v1` model with walk-forward order-book
-history. The default target is the first snapshot at least 24 hours later and no more than 6 hours
-late. Configure the audit with `--forecast-horizon-hours`,
-`--forecast-target-max-lag-hours`, and `--forecast-min-samples`. Directional accuracy excludes
-no-signal and flat outcomes; execution return intervals require complete historical ask and bid
-sweeps for the same evaluation quantity. CSV and custom JSON inputs have no normalized history and
-therefore report the forecast as `Unavailable` with `Insufficient` evidence.
-
-The Flip Board appears when at least one row can be evaluated and ranks only fresh, fully
-executable opportunities with same-quantity historical exit evidence. When execution history is
-not ready, the report keeps its validated direction signals and replaces the unavailable-only
-table with a compact readiness note. Configure its visible assumptions with `--trade-quantity` (default `1`),
-`--trade-fee-pct` (default `0` per side), `--min-net-margin-pct` (default `1`), and
-`--max-quote-age-minutes` (default `30`). CSV and custom JSON inputs remain usable for descriptive
-history, but their Flip Board verdict is `Unavailable` because normalized depth and validated
-execution forecasts are absent.
+The intended report leads with clear actions rather than a generic market-quality score. Because
+WarEra has no short selling and the report does not know the user's inventory, each item needs two
+independent answers: whether a user without inventory should buy now or wait, and whether a user
+holding inventory should sell now or hold. Sell guidance always means exiting owned inventory.
+The decision layer should show the usable entry or exit price, how much can be traded, the profit
+target, the stop-loss or invalidation level, the expected horizon, and why the signal exists.
+Historical context, activity, order-book structure, price state, and price evolution support that
+decision without duplicating it.
 
 More detail is available in:
 
 - [Market database and architecture](docs/market-db-reporting-spec.md)
 - [Market data semantics](docs/market-data-model-spec.md)
 - [Report and liquidity semantics](docs/market-reporting-liquidity-spec.md)
+- [Project goal and data authority](docs/project-goal.md)
 - [Repository architecture rules](AGENTS.md)
-
-Profit-first implementation specs, in dependency order:
-
-1. [Order-book levels and executable cost](docs/01-execution-cost-spec.md)
-2. [Walk-forward tomorrow-bias validation](docs/02-forecast-validation-spec.md)
-3. [Profit-first Flip Board and report](docs/03-profit-first-flip-report-spec.md)
 
 ## Development
 

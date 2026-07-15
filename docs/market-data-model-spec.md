@@ -1,22 +1,21 @@
 # Market Data Semantics
 
-## Price sources
+## Price authority
 
-The model keeps executions, quotes, and order-book prices distinct:
+The model keeps completed transactions and current order-book prices distinct:
 
-- `last_trade_price` is the newest executed unit price in the queried window.
-- `quote_price` is the newest stored value from the WarEra price endpoint.
-- `mid_price` is `(best_bid + best_ask) / 2` when both sides exist.
-- `current_price` selects `last_trade_price`, then `quote_price`, then `mid_price`.
-- `latest_price` is a compatibility alias for `current_price`.
+- `last_trade_price` is the newest real executed unit price in the queried window and is the latest
+  historical price.
+- `best_ask` is the lowest visible order-book price currently available to a buyer.
+- `best_bid` is the highest visible order-book price currently available to a seller.
+- `mid_price` is `(best_bid + best_ask) / 2` when both sides exist and describes the book only.
+- compatibility fields such as `current_price` and `latest_price`, where retained, must resolve to a
+  completed transaction price and must not fall back to the game-calculated endpoint price or the
+  midpoint.
 
-`quote_gap_pct` measures quote divergence from the last trade:
-
-```text
-(quote_price - last_trade_price) / last_trade_price * 100
-```
-
-It is absent when either price is unavailable or the trade price is not positive.
+The WarEra price endpoint is a lagging value calculated by the game. A stored `quote_price` is
+legacy or diagnostic data, not a market-analysis input. It must not feed transaction metrics, fair
+value, market state, signals, targets, stop losses, or rankings.
 
 ## Transaction metrics
 
@@ -32,7 +31,9 @@ For each report window, stored executions provide:
 
 Volume is the sum of transaction quantities. VWAP weights unit price by positive quantity. The stable fair price combines VWAP (50%), median (30%), and rolling average (20%), reweighting the available inputs. The stable range is the 10th-to-90th percentile span as a percentage of the median.
 
-When a window has no executions, quote observations may provide fallback values for average, minimum, maximum, and fair-price fields. They do not create trade count or volume.
+When a window has no executions, transaction-derived prices and metrics are unavailable. Neither a
+price-endpoint observation nor an order-book midpoint may fill average, minimum, maximum, fair-price,
+momentum, or other transaction-derived fields.
 
 ## Order-book metrics
 
@@ -54,9 +55,17 @@ Positive values indicate more fetched bid depth; negative values indicate more f
 
 Average spread fields use all stored order-book observations inside the selected window.
 
-## Tendency labels
+## Market state and trading guidance
 
-The read model classifies market state using transaction direction, rolling-average position, stable range, trade count, volume, and spread. Labels are descriptive signals such as `Rising`, `Falling`, `Range-bound`, `Volatile`, `Thin`, and `Stable`; they are not standalone buy or sell recommendations.
+The read model classifies market state using completed-transaction direction, rolling-average
+position, stable range, trade count, volume, and current spread. Labels such as `Rising`, `Falling`,
+`Range-bound`, `Volatile`, `Thin`, and `Stable` summarize supporting evidence.
+
+The product's decision layer combines that evidence with transaction-derived valuation and current
+executable order-book conditions. It separately issues entry guidance (`Buy now` or `Wait to buy`)
+for users without inventory and exit guidance (`Sell now` or `Hold`) for users who already own the
+item, with targets and stop-loss or invalidation levels. `Sell now` never represents a short-selling
+recommendation. Market-state labels must not be confused with either action.
 
 ## Liquidity and attractiveness
 
@@ -81,9 +90,13 @@ It rewards effective spread and activity while penalizing a wide historical rang
 
 ## Stored versus derived data
 
-SQLite stores normalized source facts: transactions, quote observations, compact order-book observations, and sync state. Report metrics remain derived so formula changes do not require rewriting history.
+SQLite stores normalized source facts: completed transactions, order-book observations and levels,
+legacy or diagnostic quote observations, and sync state. Report metrics remain derived so formula
+changes do not require rewriting history. Ordinary calculations must ignore the lagging endpoint
+quote.
 
-The current schema intentionally does not store raw responses, individual order-book levels, trader identities, or precomputed report metrics.
+The schema intentionally does not store raw responses, trader identities, or precomputed report
+metrics.
 
 ## Compatibility fields
 

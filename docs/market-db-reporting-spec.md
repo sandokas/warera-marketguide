@@ -2,7 +2,14 @@
 
 ## Purpose
 
-The local SQLite database is the source of truth for live WarEra market history. A live run fetches and stores normalized quotes, order-book observations, and transactions before reports query that stored data.
+The local SQLite database is the source of truth for live WarEra market history. Completed
+transactions are authoritative for historical price and activity calculations. Current order-book
+observations and levels are authoritative for executable prices and visible liquidity. A live run
+fetches and stores normalized market facts before reports query that stored data.
+
+The WarEra price endpoint contains a lagging value calculated by the game. It may be stored for
+compatibility or diagnostics, but it is not an authoritative price and must not feed ordinary
+report, fair-value, trend, target, stop-loss, or signal calculations.
 
 The application performs one sync or report pass per invocation. Scheduling belongs outside the application.
 
@@ -67,11 +74,20 @@ create table transactions (
 
 ### `price_observations`
 
-Stores each quote returned by the price endpoint with its observation timestamp. These quotes are fallbacks and comparison points, not canonical executed prices.
+Stores each value returned by the lagging game-calculated price endpoint with its observation
+timestamp. These records are legacy or diagnostic data. They are not fallbacks for missing
+transactions and are excluded from ordinary market analysis and trading signals.
 
 ### `order_book_observations`
 
-Stores a compact snapshot containing best bid, best ask, aggregate fetched depth on each side, absolute spread, and percentage spread. Individual order levels are not retained.
+Stores a snapshot containing best bid, best ask, aggregate fetched depth on each side, absolute
+spread, and percentage spread.
+
+### `order_book_levels`
+
+Stores the normalized visible bid and ask levels belonging to an order-book observation. These
+levels support quantity-aware execution, depth, and slippage calculations. They describe open
+orders, not completed transaction history.
 
 ### `item_sync_state`
 
@@ -83,7 +99,8 @@ Stores the application schema version. SQLite `user_version` is kept aligned wit
 
 ## Sync behavior
 
-Each sync first stores the current quote set. It then processes every non-excluded item:
+Each sync currently stores the lagging endpoint values for compatibility or diagnostics. It then
+processes every non-excluded item:
 
 1. Mark the item sync attempt.
 2. Fetch its current order book.
@@ -124,7 +141,11 @@ The scores CSV is retained as an identical compatibility output. During `--live 
 
 ## Operational guidance
 
-Sync cadence and report lookback are separate. Cadence determines how often new quotes and order books are sampled; lookback determines which stored records contribute to a report. An hourly run is a reasonable starting point, with shorter intervals useful only for actively traded markets.
+Sync cadence and report lookback are separate. Cadence determines how often new transactions and
+order books are downloaded; lookback determines which stored completed transactions contribute to
+historical calculations. An hourly run is a reasonable starting point, with shorter intervals
+useful only for actively traded markets. Stored game-calculated endpoint values remain excluded
+from those calculations regardless of cadence.
 
 Because the API client spaces requests by 1 second by default and a sync touches every item, frequent full-market runs can take time and generate substantial traffic. Use `--min-interval` in accordance with upstream limits.
 

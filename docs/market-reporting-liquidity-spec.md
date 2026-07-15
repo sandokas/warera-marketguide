@@ -2,7 +2,20 @@
 
 ## Report focus
 
-The HTML report presents market history and market quality: latest execution, fair value, change, range, volume, activity, spread, liquidity, and tendency. Trade-action labels are supporting interpretations, not guarantees or financial advice.
+The HTML report provides aggressive, clear trading guidance for the WarEra in-game market. WarEra
+has no short selling, so the report must answer two position-dependent questions independently:
+whether a user without inventory should buy now or wait, and whether a user holding inventory
+should sell now or hold. It must show the relevant entry, target, stop-loss or invalidation level,
+executable quantity, expected opportunity, and risk. A sell signal always means exiting inventory
+the user already owns.
+
+Latest execution, fair value, change, range, volume, activity, spread, liquidity, market state, and
+price evolution support those decisions. They are not competing goals and should not be repeated
+across tables without a distinct purpose.
+
+All historical price and activity fields come from completed transactions stored in SQLite. Current
+execution and liquidity fields come from the newest order book. The lagging game-calculated price
+endpoint must not appear as a fallback or signal input.
 
 ## Display conventions
 
@@ -33,22 +46,22 @@ bar width = row liquidity / maximum displayed liquidity * 100
 
 It supports quick comparison within one report and should not be compared as an absolute scale across separate reports.
 
-## Compact market table
+## Table responsibilities
 
-The main table keeps these concepts separate:
+Each table must state and answer one decision question. At minimum, the report should keep these
+concepts visibly distinct:
 
-- item;
-- latest price;
-- percentage change;
-- historical minimum and maximum;
-- stable fair price;
-- traded volume;
-- completed trade count;
-- latest spread percentage;
-- relative liquidity;
-- market state.
+- buyer action: buy now or wait to buy;
+- holder action: sell now or hold;
+- valuation: latest completed transaction, historical range, and transaction-derived fair value;
+- execution: best ask, best bid, available quantity, spread, and slippage;
+- activity: completed volume, value, and transaction count;
+- direction: transaction-derived momentum and price state;
+- risk plan: target, stop loss or invalidation, downside, and expected horizon.
 
-The detail sections add fair-price thresholds, tomorrow bias, action context, and item notes where enough data is available.
+Columns that answer different questions must not be combined merely because they fit in one table.
+Supporting visualizations—including the order book, activity bars, price-state indicators, and price
+evolution—should be retained when their calculation and purpose are clear.
 
 ## Output behavior
 
