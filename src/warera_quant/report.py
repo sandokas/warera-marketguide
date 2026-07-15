@@ -8,7 +8,12 @@ from typing import Iterable
 
 import pandas as pd
 
-from .metrics import FlipAssumptions, MarketMetrics
+from .metrics import (
+    FlipAssumptions,
+    MarketMetrics,
+    calculate_range_position_pct,
+    classify_market_trend_pattern,
+)
 
 
 _FLIP_REASON_LABELS = {
@@ -469,13 +474,17 @@ def _html_page(title: str, body: str) -> str:
     .book-summary .book-profile-cell {{ width: 41%; }}
     .book-summary .book-pressure {{ width: 13%; white-space: nowrap; }}
     .book-summary .book-spread {{ width: 6%; }}
-    .activity-table .report-table,
-    .market-trends-table .report-table {{
+    .activity-table .report-table {{
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }}
+    .market-trends-table {{
       overflow-x: auto;
       border: 1px solid var(--line);
       border-radius: 8px;
       scrollbar-color: var(--line) var(--bg);
     }}
+    .market-trends-table .report-table {{ min-width: 820px; border: 0; border-radius: 0; }}
     .activity-table th, .activity-table td,
     .market-trends-table th, .market-trends-table td {{ padding: 7px 6px; }}
     .activity-table .activity-item {{ width: 12%; font-weight: 700; }}
@@ -491,13 +500,27 @@ def _html_page(title: str, body: str) -> str:
     .activity-number,
     .activity-total-line {{ display: block; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }}
     .activity-total-line + .activity-total-line {{ margin-top: 2px; color: var(--muted); font-size: 0.75rem; }}
-    .market-trends-table .col-item {{ width: 11%; font-weight: 700; }}
-    .market-trends-table .col-latest {{ width: 9%; }}
-    .market-trends-table .col-7d-change-pct {{ width: 9%; }}
-    .market-trends-table .col-range {{ width: 14%; }}
-    .market-trends-table .col-activity {{ width: 20%; }}
-    .market-trends-table .col-spread-pct {{ width: 8%; min-width: 0; }}
-    .market-trends-table .col-price-state {{ width: 29%; min-width: 0; max-width: none; white-space: nowrap; }}
+    .market-trends-table th,
+    .market-trends-table td {{ padding: 6px 8px; vertical-align: middle; white-space: nowrap; }}
+    .market-trends-table .col-item {{ width: 17%; font-weight: 700; white-space: nowrap; }}
+    .market-trends-table .col-last-trade {{ width: 12%; }}
+    .market-trends-table .col-1d-change,
+    .market-trends-table .col-7d-change,
+    .market-trends-table .col-30d-change {{ width: 10%; }}
+    .market-trends-table .col-30d-position {{ width: 23%; }}
+    .market-trends-table .col-pattern {{ width: 18%; }}
+    .trend-change {{ display: inline-flex; align-items: center; justify-content: flex-end; gap: 4px; min-width: 66px; }}
+    .trend-arrow {{ width: 0.9em; text-align: center; font-size: 0.78rem; }}
+    .position-cell {{ display: inline-flex; align-items: center; gap: 7px; }}
+    .position-track {{ position: relative; width: 52px; height: 4px; border-radius: 999px; background: #334155; }}
+    .position-dot {{ position: absolute; top: 50%; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); transform: translate(-50%, -50%); }}
+    .position-label {{ color: var(--muted); font-size: 0.72rem; }}
+    .pattern-label {{ display: inline-flex; align-items: center; gap: 6px; font-weight: 700; }}
+    .pattern-mark {{ width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }}
+    .pattern-rise .pattern-mark, .pattern-rebound .pattern-mark {{ background: var(--good); }}
+    .pattern-fall .pattern-mark, .pattern-pullback .pattern-mark {{ background: var(--bad); }}
+    .pattern-flat .pattern-mark {{ background: var(--amber); }}
+    .pattern-mixed .pattern-mark {{ background: var(--accent); }}
     .state-chips {{ display: inline-flex; flex-wrap: nowrap; gap: 4px; white-space: nowrap; }}
     .depth-profile {{ width: 100%; min-width: 0; }}
     .depth-profile-labels {{
@@ -687,7 +710,12 @@ def _compact_table_html(df: pd.DataFrame, *, table_kind: str = "trend") -> str:
         f"<tbody>{''.join(body_rows)}</tbody>"
         "</table>"
     )
-    return f'<div class="table-wrap compact-table {kind_class}">{table}</div>'
+    accessibility = (
+        ' role="region" aria-label="Market trends table" tabindex="0"'
+        if table_kind == "market-trends"
+        else ""
+    )
+    return f'<div class="table-wrap compact-table {kind_class}"{accessibility}>{table}</div>'
 
 
 def _trend_label(value: object) -> str:
@@ -1181,16 +1209,24 @@ def _is_number_column(column: str) -> bool:
         or label.endswith("low")
         or label.endswith("high")
         or label.endswith("traded value")
+        or label.endswith("change")
+        or label.endswith("position")
         or "%" in label
         or "ask" in label
         or "bid" in label
-        or label in {"last", "samples"}
+        or label in {"last", "last trade", "samples"}
     )
 
 
 def _render_table_cell(column: str, value: object) -> str:
     if column == "7D Trend":
         return _trend_label(value)
+    if column in {"1D Change", "7D Change", "30D Change"}:
+        return _trend_change(value)
+    if column == "30D Position":
+        return _trend_position(value)
+    if column == "Pattern":
+        return _trend_pattern(value)
     if column == "Signal":
         return _profit_signal_chip(value)
     if column == "Evidence":
@@ -1259,6 +1295,58 @@ def _signed_number(value: object, *, invert: bool = False) -> str:
     return f'<span class="{css_class}">{escape(_fmt(number))}</span>'
 
 
+def _trend_change(value: object) -> str:
+    number = _number(value)
+    if number is None:
+        return "N/A"
+    if number > 0.5:
+        css_class, arrow = "signed-positive", "▲"
+    elif number < -0.5:
+        css_class, arrow = "signed-negative", "▼"
+    else:
+        css_class, arrow = "signed-neutral", "●"
+    return (
+        f'<span class="trend-change {css_class}">'
+        f'<span class="trend-arrow" aria-hidden="true">{arrow}</span>{number:+.2f}%</span>'
+    )
+
+
+def _trend_position(value: object) -> str:
+    if value == "Flat":
+        return '<span class="position-label">Flat</span>'
+    number = _number(value)
+    if number is None:
+        return "N/A"
+    label = "Near floor" if number <= 33 else "Middle" if number <= 66 else "Near ceiling"
+    return (
+        f'<span class="position-cell" title="{number:.1f}% through the 30D completed-trade range">'
+        '<span class="position-track" aria-hidden="true">'
+        f'<span class="position-dot" style="left:{number:.1f}%"></span></span>'
+        f'<span>{number:.0f}%</span><span class="position-label">{label}</span></span>'
+    )
+
+
+def _trend_pattern(value: object) -> str:
+    label, _, description = str(value).partition("|")
+    tone = {
+        "Persistent rise": "rise",
+        "Persistent fall": "fall",
+        "Rebound": "rebound",
+        "Pullback": "pullback",
+        "Flat": "flat",
+        "Mixed": "mixed",
+    }.get(label, "insufficient")
+    title = escape(description or label, quote=True)
+    accessible_name = escape(
+        f"{label} — {description}" if description else label,
+        quote=True,
+    )
+    return (
+        f'<span class="pattern-label pattern-{tone}" title="{title}" aria-label="{accessible_name}">'
+        f'<span class="pattern-mark" aria-hidden="true"></span>{escape(label)}</span>'
+    )
+
+
 def _relative_chart_path(chart_path: str | Path | None, output_dir: Path) -> str | None:
     if chart_path is None:
         return None
@@ -1300,36 +1388,46 @@ def generate_html_report(
     blocks.append(_order_book_html(df, display_count))
     blocks.append(_activity_html(df, window_key, metric_window, display_count))
 
-    trend_candidates = df.copy()
-    if not trend_candidates.empty:
-        change_col = _column(df, f"percent_change_{window_key}", "momentum_7d_pct")
-        volume_col = _column(df, f"volume_{window_key}", f"traded_quantity_{window_key}")
-        trades_col = _column(df, f"trade_count_{window_key}", "trades_7d")
-        sort_cols = [col for col in [volume_col] if col]
-        if sort_cols:
-            trend_candidates = trend_candidates.sort_values(sort_cols, ascending=False, na_position="last")
-        view = trend_candidates.head(display_count).copy()
+    if not df.empty:
+        view = df.head(display_count).copy()
         trend_rows = []
         for _, row in view.iterrows():
-            low = _first_number(row, f"min_{window_key}", "low_7d")
-            high = _first_number(row, f"max_{window_key}", "high_7d")
-            volume = _number(row.get(volume_col)) if volume_col else None
-            trades = _number(row.get(trades_col)) if trades_col else None
-            state_col = _column(df, f"tendency_labels_{window_key}", f"tendency_{window_key}")
+            changes = {
+                horizon: _number(row.get(f"percent_change_{horizon.lower()}"))
+                for horizon in ("1D", "7D", "30D")
+            }
+            # Legacy inputs may expose only the historical 7D momentum field.
+            if changes["7D"] is None:
+                changes["7D"] = _number(row.get("momentum_7d_pct"))
+            pattern = classify_market_trend_pattern(
+                change_1d_pct=changes["1D"],
+                change_7d_pct=changes["7D"],
+                change_30d_pct=changes["30D"],
+            )
+            last_trade = _number(row.get("last_trade_price"))
+            low_30d = _number(row.get("min_30d"))
+            high_30d = _number(row.get("max_30d"))
+            position: float | str | None = None
+            if changes["30D"] is not None and low_30d is not None and high_30d is not None:
+                position = (
+                    "Flat"
+                    if high_30d == low_30d
+                    else calculate_range_position_pct(last_price=last_trade, low=low_30d, high=high_30d)
+                )
             trend_rows.append({
                 "Item": row.get("item_name", "Unknown"),
-                "Latest": _first_number(row, "latest_price", "current_price"),
-                "7D Change %": _number(row.get(change_col)) if change_col else None,
-                "Range": f"{_fmt(low)} – {_fmt(high)}" if low is not None and high is not None else "N/A",
-                "Activity": f"{_fmt_compact(volume)} units / {_fmt_compact(trades)} trades" if volume is not None and trades is not None else "N/A",
-                "Spread %": _first_number(row, "latest_spread_pct", f"average_spread_pct_{window_key}", "spread_pct"),
-                "Price State": row.get(state_col) if state_col else "Insufficient history",
+                "Last Trade": last_trade,
+                "1D Change": changes["1D"],
+                "7D Change": changes["7D"],
+                "30D Change": changes["30D"],
+                "30D Position": position,
+                "Pattern": f"{pattern.label}|{pattern.description}",
             })
         trend_table = pd.DataFrame(trend_rows)
         blocks.append(
             f"""    <section>
       <h2>Market Trends</h2>
-      <p class="muted">Price state describes price behaviour only. Completed activity is shown separately in units and trades so a stable price is never mistaken for an inactive market.</p>
+      <p class="muted">Completed transaction trends; descriptive context, not a trade signal.</p>
       {_compact_table_html(trend_table, table_kind="market-trends")}
     </section>"""
         )

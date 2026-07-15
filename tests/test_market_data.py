@@ -245,6 +245,24 @@ def test_load_market_rows_applies_each_window_boundary(tmp_path):
     assert row["close_7d"] == 3.0
 
 
+def test_window_change_requires_two_distinct_transaction_timestamps(tmp_path):
+    with _store(tmp_path) as store:
+        store.upsert_transactions(
+            "bread",
+            [
+                _transaction("tx-a", "2026-06-30T10:00:00Z", money=10, quantity=1),
+                _transaction("tx-b", "2026-06-30T10:00:00Z", money=12, quantity=1),
+            ],
+            fetched_at=NOW,
+        )
+
+        row = load_market_rows(store, windows=["1D"], now=NOW)[0]
+
+    assert row["trade_count_1d"] == 2
+    assert row["distinct_trade_timestamp_count_1d"] == 1
+    assert row["percent_change_1d"] is None
+
+
 def test_load_market_rows_keeps_legacy_metric_fields_for_current_report(tmp_path):
     with _store(tmp_path) as store:
         store.upsert_transactions(

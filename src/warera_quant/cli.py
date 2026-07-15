@@ -220,7 +220,7 @@ def main() -> None:
             )
             rows = load_market_rows(
                 store,
-                lookback_days=args.lookback_days,
+                windows=("1D", "7D", "30D"),
                 forecast_horizon_hours=args.forecast_horizon_hours,
                 forecast_target_max_lag_hours=args.forecast_target_max_lag_hours,
                 forecast_min_samples=args.forecast_min_samples,
@@ -247,7 +247,7 @@ def main() -> None:
         with MarketStore(args.market_db) as store:
             rows = load_market_rows(
                 store,
-                lookback_days=args.lookback_days,
+                windows=("1D", "7D", "30D"),
                 forecast_horizon_hours=args.forecast_horizon_hours,
                 forecast_target_max_lag_hours=args.forecast_target_max_lag_hours,
                 forecast_min_samples=args.forecast_min_samples,

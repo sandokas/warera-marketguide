@@ -5,6 +5,7 @@ from warera_quant.metrics import (
     ForecastEvaluationRow,
     FlipAssumptions,
     calculate_book_sweep,
+    calculate_range_position_pct,
     calculate_flip_opportunity,
     calculate_fair_value_guidance,
     calculate_direction_signal,
@@ -12,6 +13,7 @@ from warera_quant.metrics import (
     calculate_notional_book_sweep,
     calculate_metrics,
     classify_future_bid_outcome,
+    classify_market_trend_pattern,
     classify_tendency,
     forecast_evidence_label,
     summarize_forecast_evaluations,
@@ -19,6 +21,32 @@ from warera_quant.metrics import (
     total_upstream_production_points,
 )
 from warera_quant.warera_api import OrderLevel
+
+
+@pytest.mark.parametrize(
+    ("changes", "expected"),
+    [
+        ((None, 1, None), "Insufficient history"),
+        ((0.5, -0.5, 0), "Flat"),
+        ((1, 2, 0), "Persistent rise"),
+        ((-1, -2, 0), "Persistent fall"),
+        ((1, -2, 0), "Rebound"),
+        ((-1, 2, 0), "Pullback"),
+        ((1, -2, 3), "Mixed"),
+    ],
+)
+def test_market_trend_pattern_classes(changes, expected):
+    result = classify_market_trend_pattern(
+        change_1d_pct=changes[0], change_7d_pct=changes[1], change_30d_pct=changes[2]
+    )
+
+    assert result.label == expected
+
+
+def test_range_position_is_clamped_and_flat_ranges_are_unusable():
+    assert calculate_range_position_pct(last_price=12, low=8, high=10) == 100
+    assert calculate_range_position_pct(last_price=7, low=8, high=10) == 0
+    assert calculate_range_position_pct(last_price=10, low=10, high=10) is None
 
 
 def test_fair_value_guidance_uses_executable_prices_fees_and_position_specific_actions():

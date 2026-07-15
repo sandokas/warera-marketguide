@@ -57,6 +57,72 @@ class DirectionSignal:
 
 
 @dataclass(frozen=True)
+class MarketTrendPattern:
+    """Descriptive cross-horizon transaction-price pattern."""
+
+    label: str
+    directions: tuple[tuple[str, str], ...]
+
+    @property
+    def description(self) -> str:
+        if not self.directions:
+            return "No usable completed-transaction horizons"
+        return ", ".join(f"{horizon}: {direction}" for horizon, direction in self.directions)
+
+
+def classify_market_trend_pattern(
+    *,
+    change_1d_pct: object = None,
+    change_7d_pct: object = None,
+    change_30d_pct: object = None,
+) -> MarketTrendPattern:
+    """Classify persistence and reversal using the table spec's ±0.5% neutral band."""
+
+    changes = (
+        ("1D", _finite_float_or_none(change_1d_pct)),
+        ("7D", _finite_float_or_none(change_7d_pct)),
+        ("30D", _finite_float_or_none(change_30d_pct)),
+    )
+    directions = tuple(
+        (horizon, "Up" if change > 0.5 else "Down" if change < -0.5 else "Flat")
+        for horizon, change in changes
+        if change is not None
+    )
+    direction_by_horizon = dict(directions)
+    usable = tuple(direction_by_horizon.values())
+
+    if len(usable) < 2:
+        label = "Insufficient history"
+    elif all(direction == "Flat" for direction in usable):
+        label = "Flat"
+    elif usable.count("Up") >= 2 and "Down" not in usable:
+        label = "Persistent rise"
+    elif usable.count("Down") >= 2 and "Up" not in usable:
+        label = "Persistent fall"
+    else:
+        short = direction_by_horizon.get("1D")
+        longer = [direction_by_horizon[horizon] for horizon in ("7D", "30D") if horizon in direction_by_horizon]
+        if short == "Up" and "Down" in longer and "Up" not in longer:
+            label = "Rebound"
+        elif short == "Down" and "Up" in longer and "Down" not in longer:
+            label = "Pullback"
+        else:
+            label = "Mixed"
+    return MarketTrendPattern(label=label, directions=directions)
+
+
+def calculate_range_position_pct(*, last_price: object, low: object, high: object) -> float | None:
+    """Return a price's clamped position in a completed-transaction range."""
+
+    last = _finite_float_or_none(last_price)
+    low_value = _finite_float_or_none(low)
+    high_value = _finite_float_or_none(high)
+    if last is None or low_value is None or high_value is None or high_value <= low_value:
+        return None
+    return min(100.0, max(0.0, (last - low_value) / (high_value - low_value) * 100))
+
+
+@dataclass(frozen=True)
 class ForecastEvaluationRow:
     model_version: str
     feature_timestamp: str

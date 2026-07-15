@@ -142,7 +142,7 @@ def test_report_foregrounds_market_trends_and_writes_compatibility_csv(tmp_path)
     assert '<div class="liquidity-fill"' not in report
     assert ">250<" not in report
     assert 'title="250"' not in report
-    assert 'class="col-spread-pct number"' in report
+    assert 'class="col-1d-change number"' in report
     assert "th:nth-child(2), td:nth-child(2)" not in report
     assert "th:nth-last-child(2), td:nth-last-child(2)" not in report
     assert "align-right" not in report
@@ -157,7 +157,7 @@ def test_report_foregrounds_market_trends_and_writes_compatibility_csv(tmp_path)
     assert "min-width: 220px" in report
     assert "grid-template-columns: minmax(72px, 1fr) 48px" not in report
     assert "min-width: 188px" not in report
-    assert 'class="col-activity number"' in report
+    assert 'class="col-30d-position number"' in report
     assert 'class="activity-totals number"' in report
     assert "Market-Making Score" not in report
 
@@ -352,7 +352,7 @@ def test_fair_price_table_distinguishes_thresholds_from_historical_range():
 
     assert ">Break-even Exit VWAP<" not in report
     assert "Fair Value &amp; Buy / Sell Signals" in report
-    assert "Insufficient" not in report
+    assert "forecast evidence" not in report.lower()
 
 
 def test_report_does_not_render_internal_flip_fields():
@@ -577,26 +577,50 @@ def test_report_is_print_first_without_price_evolution_styles():
     assert ".price-guide .col-signal" not in report
 
 
-def test_market_trends_splits_latest_price_and_change_without_price_evolution():
+def test_market_trends_uses_cross_horizon_completed_transaction_fields():
     report = generate_html_report(pd.DataFrame([{
         "item_name": "Scraps",
-        "latest_price": 0.212,
-        "current_price": 0.212,
+        "last_trade_price": 0.212,
+        "percent_change_1d": -1.0,
         "percent_change_7d": 1.92,
-        "low_7d": 0.207,
-        "high_7d": 0.215,
-        "traded_quantity_7d": 11_900_000,
-        "trade_count_7d": 28_000,
-        "trades_7d": 28_000,
-        "momentum_7d_pct": 1.92,
-        "tendency_labels_7d": "Range-bound, Stable",
+        "percent_change_30d": 4.0,
+        "min_30d": 0.180,
+        "max_30d": 0.220,
     }]))
 
-    assert '<div class="table-wrap compact-table market-trends-table">' in report
-    assert '<th class="col-latest number">Latest</th>' in report
-    assert '<th class="col-7d-change-pct number">7D Change %</th>' in report
+    assert '<div class="table-wrap compact-table market-trends-table" role="region" aria-label="Market trends table" tabindex="0">' in report
+    assert '<th class="col-last-trade number">Last Trade</th>' in report
+    assert '<th class="col-1d-change number">1D Change</th>' in report
+    assert '<th class="col-7d-change number">7D Change</th>' in report
+    assert '<th class="col-30d-change number">30D Change</th>' in report
+    assert '<th class="col-30d-position number">30D Position</th>' in report
+    assert '<th class="col-pattern text">Pattern</th>' in report
+    assert "Pullback" in report
+    assert 'aria-label="Pullback — 1D: Down, 7D: Up, 30D: Up"' in report
+    assert "Near ceiling" in report
+    assert ".market-trends-table .col-item { width: 17%; font-weight: 700; white-space: nowrap; }" in report
+    assert "Completed transaction trends; descriptive context, not a trade signal." in report
+    trends_section = report[report.index("<h2>Market Trends</h2>"):report.index("<h2>Item Notes</h2>")]
+    for forbidden in (">Spread %<", ">Activity<", ">Range<", ">Price State<"):
+        assert forbidden not in trends_section
     assert "Price / 7D Change" not in report
     assert '<div class="table-wrap compact-table price-evolution-table">' not in report
+
+
+def test_market_trends_renders_flat_30d_range_without_a_position_graphic():
+    report = generate_html_report(pd.DataFrame([{
+        "item_name": "Oil",
+        "last_trade_price": 0.17,
+        "percent_change_1d": 0.0,
+        "percent_change_7d": 0.0,
+        "percent_change_30d": 0.0,
+        "min_30d": 0.17,
+        "max_30d": 0.17,
+    }]))
+
+    trends_section = report[report.index("<h2>Market Trends</h2>"):report.index("<h2>Item Notes</h2>")]
+    assert '<span class="position-label">Flat</span>' in trends_section
+    assert "position-track" not in trends_section
 
 
 def test_completed_activity_bar_uses_production_adjusted_work_and_excludes_unknown_factors():
@@ -657,10 +681,10 @@ def test_scraps_is_never_described_as_inactive_when_price_is_stable():
     }]))
 
     assert 'aria-label="2.5M completed transaction value; 100.0% of the highest-value market"' in report
-    assert '<span class="signed-positive">1.920</span>' in report
-    assert "11.9M units / 28.0K trades" in report
+    assert '<span class="trend-change signed-positive">' in report
+    assert "11.9M units / 28.0K trades" not in report
     assert "Little net price change" not in report
-    assert ">Price State<" in report
+    assert ">Pattern<" in report
 
 
 def test_report_ignores_unavailable_internal_flip_data():

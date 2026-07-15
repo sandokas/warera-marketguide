@@ -561,6 +561,11 @@ def _window_stats(
 ) -> dict[str, Any]:
     priced_trades = [trade for trade in trades if trade.get("unit_price") is not None]
     trade_prices = [float(trade["unit_price"]) for trade in priced_trades]
+    distinct_trade_timestamps = {
+        trade.get("created_at_epoch", trade.get("created_at"))
+        for trade in priced_trades
+        if trade.get("created_at_epoch", trade.get("created_at")) is not None
+    }
     volume = _sum_numeric(trade.get("quantity") for trade in trades)
     traded_value = _sum_numeric(trade.get("money") for trade in trades)
     vwap_quantity = _sum_numeric(
@@ -578,7 +583,13 @@ def _window_stats(
     close_price = float(priced_trades[-1]["unit_price"]) if priced_trades else None
     percent_change = (
         (close_price - open_price) / open_price * 100
-        if open_price is not None and close_price is not None and open_price > 0
+        if (
+            len(priced_trades) >= 2
+            and len(distinct_trade_timestamps) >= 2
+            and open_price is not None
+            and close_price is not None
+            and open_price > 0
+        )
         else None
     )
     spread_pct = _number_or_none(latest_book.get("spread_pct"))
@@ -624,6 +635,7 @@ def _window_stats(
     stats = {
         "trade_count": len(trades),
         "priced_trade_count": len(priced_trades),
+        "distinct_trade_timestamp_count": len(distinct_trade_timestamps),
         "volume": volume,
         "traded_quantity": volume,
         "traded_value": traded_value,
