@@ -878,7 +878,7 @@ def _price_guide_html(df: pd.DataFrame, window_key: str, display_count: int) -> 
     ).head(display_count).drop(columns="_signal_rank")
     return (
         '<section><div class="eyebrow">Fair-value detail</div><h2>Fair Value &amp; Buy / Sell Signals</h2>'
-        '<p class="muted">BUY: executable Ask ≤ Max Buy. SELL: executable Bid ≥ Rich Sell (for existing holders). Ask Upside is the fee-adjusted return to Fair. WAIT means neither threshold is available now.</p>'
+        '<p class="muted">BUY: executable Ask ≤ Max Buy, with Max Buy capped at P25 or P10 in falling/volatile markets. SELL: executable Bid ≥ Rich Sell (for existing holders). Ask Upside is the fee-adjusted return to Fair. WAIT means neither threshold is available now.</p>'
         + _compact_table_html(view, table_kind="price-guide")
         + '</section>'
     )

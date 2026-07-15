@@ -163,6 +163,7 @@ def build_forecast_features(
         vwap = vwap_value / vwap_quantity if vwap_quantity > 0 else None
         median = _percentile(prices, 50)
         p10 = _percentile(prices, 10)
+        p25 = _percentile(prices, 25)
         p90 = _percentile(prices, 90)
         rolling_average = sum(prices[-5:]) / len(prices[-5:]) if prices else None
         fair_inputs = [
@@ -188,6 +189,7 @@ def build_forecast_features(
             "trailing_vwap": vwap,
             "trailing_median": median,
             "trailing_p10": p10,
+            "trailing_p25": p25,
             "trailing_p90": p90,
             "trailing_volume": sum(_positive_float(row.get("quantity")) or 0.0 for row in trailing),
             "trailing_count": len(trailing),
@@ -430,6 +432,9 @@ def load_market_rows(
         guidance = calculate_fair_value_guidance(
             fair_price=guidance_stats.get("stable_fair_price"),
             rich_exit_price=guidance_stats.get("price_p90"),
+            price_p10=guidance_stats.get("price_p10"),
+            price_p25=guidance_stats.get("price_p25"),
+            market_state=guidance_stats.get("tendency_labels"),
             executable_ask_vwap=entry_sweep.average_price if entry_sweep is not None else None,
             executable_bid_vwap=exit_sweep.average_price if exit_sweep is not None else None,
             entry_fully_filled=bool(entry_sweep and entry_sweep.fully_filled),
@@ -582,6 +587,7 @@ def _window_stats(
     rolling_average = _rolling_average(trade_prices, fallback=average_price)
     median_price = _median(trade_prices)
     price_p10 = _percentile(trade_prices, 10)
+    price_p25 = _percentile(trade_prices, 25)
     price_p90 = _percentile(trade_prices, 90)
     stable_range_pct = (
         (price_p90 - price_p10) / median_price * 100
@@ -627,6 +633,7 @@ def _window_stats(
         "vwap": (vwap_value / vwap_quantity) if vwap_quantity > 0 else None,
         "median": median_price,
         "price_p10": price_p10,
+        "price_p25": price_p25,
         "price_p90": price_p90,
         "stable_fair_price": stable_fair_price,
         "stable_range_pct": stable_range_pct,

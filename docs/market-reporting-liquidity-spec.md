@@ -66,10 +66,11 @@ evolution—should be retained when their calculation and purpose are clear.
 The fair-value guidance table uses one single-line signal per item: `Buy` when the executable Ask
 reaches `Max Buy`, `Sell` when the executable Bid reaches `Rich Sell`, and `Wait` otherwise. Sell is
 explicitly holder guidance, not short-selling advice. Ask and Bid are quantity-aware executable
-VWAPs, `Max Buy` is fee- and margin-adjusted against Fair, `Rich Sell` requires the configured Fair
-premium subject to the empirical upper range, and `Ask Upside` compares the executable Ask with Fair
-after fees. A synthetic symmetric band and the return between its endpoints must not be shown as
-executable room or profit. Table cells must remain one line high.
+VWAPs, `Max Buy` is fee- and margin-adjusted against Fair and capped by P25 or P10 in risky states,
+`Rich Sell` requires the configured Fair premium subject to the empirical upper range, and `Ask
+Upside` compares the executable Ask with Fair after fees. A synthetic symmetric band and the return
+between its endpoints must not be shown as executable room or profit. Table cells must remain one
+line high.
 
 ## Output behavior
 

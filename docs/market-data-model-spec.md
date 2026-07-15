@@ -78,6 +78,16 @@ max_entry = F * (1 - f) / ((1 + f) * (1 + m))
 net_to_fair = (F * (1 - f) - ask_vwap(q) * (1 + f)) / (ask_vwap(q) * (1 + f))
 ```
 
+`max_entry` is then risk-adjusted without changing the table shape:
+
+```text
+Stable or range-bound:  max_buy = max_entry
+Falling or volatile:    max_buy = min(max_entry, transaction_price_p25)
+Falling and volatile:   max_buy = min(max_entry, transaction_price_p10)
+```
+
+If a required percentile is unavailable, the entry action fails closed to `Wait`.
+
 The market-level rich-exit threshold is Fair plus the configured margin, capped by the
 transaction-price 90th percentile and never allowed below Fair. A holder receives `Sell` only when
 `bid_vwap(q)` reaches that threshold. Because the report does not know inventory cost basis, this is

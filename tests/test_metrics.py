@@ -60,6 +60,35 @@ def test_fair_value_guidance_fails_closed_for_unfilled_quotes():
     assert guidance.holder_action == "SELL"
 
 
+@pytest.mark.parametrize(
+    ("state", "expected_max", "expected_action"),
+    [
+        ("Stable", 10 / 1.01, "BUY"),
+        ("Falling", 9.5, "BUY"),
+        ("Volatile", 9.5, "BUY"),
+        ("Falling, Volatile", 9.0, "WAIT"),
+    ],
+)
+def test_fair_value_guidance_risk_adjusts_max_buy_by_market_state(
+    state, expected_max, expected_action
+):
+    guidance = calculate_fair_value_guidance(
+        fair_price=10,
+        rich_exit_price=11,
+        price_p10=9,
+        price_p25=9.5,
+        market_state=state,
+        executable_ask_vwap=9.25,
+        executable_bid_vwap=9.1,
+        entry_fully_filled=True,
+        exit_fully_filled=True,
+        assumptions=FlipAssumptions(minimum_net_margin_pct=1),
+    )
+
+    assert guidance.max_entry_price == pytest.approx(expected_max)
+    assert guidance.entry_action == expected_action
+
+
 def test_book_sweep_calculates_multilevel_buy_vwap_without_mutating_input():
     levels = [OrderLevel(11, 5), OrderLevel(10, 5)]
 

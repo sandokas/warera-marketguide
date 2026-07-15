@@ -108,6 +108,9 @@ def calculate_fair_value_guidance(
     *,
     fair_price: object,
     rich_exit_price: object,
+    price_p10: object = None,
+    price_p25: object = None,
+    market_state: object = None,
     executable_ask_vwap: object,
     executable_bid_vwap: object,
     entry_fully_filled: bool,
@@ -116,13 +119,16 @@ def calculate_fair_value_guidance(
 ) -> FairValueGuidance:
     """Build position-specific guidance from valuation and executable prices.
 
-    Fair is the expected exit reference for an entry decision.  The rich-exit
-    threshold requires the configured premium over Fair, capped by the
-    empirical upper transaction percentile. It intentionally does not claim a
-    holder profit because inventory cost basis is unknown.
+    Fair is the expected exit reference for an entry decision. Falling or
+    volatile markets cap Max Buy at P25; a market with both labels uses P10.
+    The rich-exit threshold requires the configured premium over Fair, capped
+    by the empirical upper transaction percentile. It intentionally does not
+    claim a holder profit because inventory cost basis is unknown.
     """
     fair = _finite_float_or_none(fair_price)
     empirical_rich_exit = _finite_float_or_none(rich_exit_price)
+    p10 = _finite_float_or_none(price_p10)
+    p25 = _finite_float_or_none(price_p25)
     ask = _finite_float_or_none(executable_ask_vwap) if entry_fully_filled else None
     bid = _finite_float_or_none(executable_bid_vwap) if exit_fully_filled else None
     fee_rate = assumptions.fee_pct_per_side / 100
@@ -131,6 +137,13 @@ def calculate_fair_value_guidance(
     max_entry = None
     if fair is not None and fair > 0:
         max_entry = fair * (1 - fee_rate) / ((1 + fee_rate) * (1 + minimum_margin))
+        state_text = str(market_state or "").lower()
+        falling = "falling" in state_text
+        volatile = "volatile" in state_text
+        if falling and volatile:
+            max_entry = min(max_entry, p10) if p10 is not None and p10 > 0 else None
+        elif falling or volatile:
+            max_entry = min(max_entry, p25) if p25 is not None and p25 > 0 else None
     rich_exit = None
     if fair is not None and fair > 0:
         margin_exit = fair * (1 + minimum_margin)

@@ -171,6 +171,7 @@ def test_load_market_rows_computes_window_statistics(tmp_path):
     assert stats["vwap"] == pytest.approx(190 / 40)
     assert stats["median"] == 5.0
     assert stats["price_p10"] == pytest.approx(2.6)
+    assert stats["price_p25"] == pytest.approx(3.5)
     assert stats["price_p90"] == pytest.approx(5.8)
     assert stats["stable_fair_price"] == pytest.approx(((190 / 40) * 0.5) + (5 * 0.3) + (((2 + 5 + 6) / 3) * 0.2))
     assert stats["stable_range_pct"] == pytest.approx((5.8 - 2.6) / 5 * 100)
