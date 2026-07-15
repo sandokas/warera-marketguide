@@ -586,6 +586,13 @@ def test_market_trends_uses_cross_horizon_completed_transaction_fields():
         "percent_change_30d": 4.0,
         "min_30d": 0.180,
         "max_30d": 0.220,
+        "trend_path_30d": [
+            {"timestamp": 1_780_000_000, "price": 0.190},
+            {"timestamp": 1_780_518_400, "price": 0.205},
+            {"timestamp": 1_781_036_800, "price": 0.212},
+        ],
+        "trend_path_30d_start_epoch": 1_780_000_000,
+        "trend_path_30d_end_epoch": 1_782_592_000,
     }]))
 
     assert '<div class="table-wrap compact-table market-trends-table" role="region" aria-label="Market trends table" tabindex="0">' in report
@@ -593,13 +600,18 @@ def test_market_trends_uses_cross_horizon_completed_transaction_fields():
     assert '<th class="col-1d-change number">1D Change</th>' in report
     assert '<th class="col-7d-change number">7D Change</th>' in report
     assert '<th class="col-30d-change number">30D Change</th>' in report
+    assert '<th class="col-30d-path text">30D Path</th>' in report
     assert '<th class="col-30d-position number">30D Position</th>' in report
     assert '<th class="col-pattern text">Pattern</th>' in report
     assert "Pullback" in report
     assert 'aria-label="Pullback — 1D: Down, 7D: Up, 30D: Up"' in report
     assert "Near ceiling" in report
-    assert ".market-trends-table .col-item { width: 17%; font-weight: 700; white-space: nowrap; }" in report
+    assert ".market-trends-table .col-item { width: 14%; font-weight: 700; white-space: nowrap; }" in report
+    assert "grid-template-columns: 56px 36px minmax(72px, 1fr)" in report
+    assert '<svg class="trend-path"' in report
+    assert "3 daily observations spanning 12 of 30 days" in report
     assert "Completed transaction trends; descriptive context, not a trade signal." in report
+    assert "Mini paths are independently scaled; compare shape, not height." in report
     trends_section = report[report.index("<h2>Market Trends</h2>"):report.index("<h2>Item Notes</h2>")]
     for forbidden in (">Spread %<", ">Activity<", ">Range<", ">Price State<"):
         assert forbidden not in trends_section

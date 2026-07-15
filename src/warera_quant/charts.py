@@ -17,6 +17,56 @@ import mplfinance as mpf
 import pandas as pd
 
 
+def render_trend_path_svg(
+    points: Iterable[Mapping[str, Any]],
+    *,
+    aria_label: str,
+    window_start: int,
+    window_end: int,
+    width: int = 96,
+    height: int = 28,
+) -> str | None:
+    """Render a compact, time-proportional path from completed-trade observations."""
+    by_timestamp: dict[int, float] = {}
+    for point in points:
+        try:
+            timestamp = int(point.get("timestamp"))
+            price = float(point.get("price"))
+        except (TypeError, ValueError):
+            continue
+        if window_start <= timestamp <= window_end and price > 0:
+            by_timestamp[timestamp] = price
+    usable = sorted(by_timestamp.items())
+    if len(usable) < 2 or window_end <= window_start:
+        return None
+
+    padding = 2.5
+    time_span = window_end - window_start
+    prices = [price for _, price in usable]
+    low, high = min(prices), max(prices)
+    price_span = high - low
+    coordinates = []
+    for timestamp, price in usable:
+        x = padding + (timestamp - window_start) / time_span * (width - 2 * padding)
+        y = height / 2 if price_span == 0 else padding + (high - price) / price_span * (height - 2 * padding)
+        coordinates.append((x, y))
+    path_points = " ".join(f"{x:.1f},{y:.1f}" for x, y in coordinates)
+    latest_x, latest_y = coordinates[-1]
+    safe_label = (
+        aria_label.replace("&", "&amp;")
+        .replace('"', "&quot;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+    return (
+        f'<svg class="trend-path" viewBox="0 0 {width} {height}" role="img" '
+        f'aria-label="{safe_label}" preserveAspectRatio="none">'
+        f'<polyline class="trend-path-line" points="{path_points}" />'
+        f'<circle class="trend-path-latest" cx="{latest_x:.1f}" cy="{latest_y:.1f}" r="2.2" />'
+        "</svg>"
+    )
+
+
 def _transaction_frame(transactions: Iterable[dict[str, Any]]) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for transaction in transactions:

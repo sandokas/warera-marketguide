@@ -1,6 +1,6 @@
 # Proposed Market Trends Table
 
-Status: proposal for product review; not yet implemented.
+Status: implemented.
 
 ## Purpose
 
@@ -52,6 +52,7 @@ revert to a selected-window summary.
 | 1D Change | First-to-last completed price change over 1D | Shows the immediate move. |
 | 7D Change | First-to-last completed price change over 7D | Shows the intermediate move. |
 | 30D Change | First-to-last completed price change over 30D | Shows the prevailing move. |
+| 30D Path | Independently scaled path of the last completed trade per UTC day | Shows choppiness and the route between the 30D endpoints without replacing the precise horizon changes. |
 | 30D Position | Last Trade's position between the 30D completed low and high | Distinguishes a move near its historical floor, middle, or ceiling without implying fair value. |
 | Pattern | Deterministic cross-horizon classification | Summarizes persistence or reversal without issuing a recommendation. |
 
@@ -81,6 +82,13 @@ The position is clamped to `0–100%` to tolerate boundary and rounding effects.
 the 30D low, display `Flat`; if 30D history is unusable, display `N/A`. The UI may pair the number with
 `Near floor` (`0–33%`), `Middle` (`>33–66%`), or `Near ceiling` (`>66–100%`). These are location labels,
 not valuation claims.
+
+`30D Path` uses the last valid completed-transaction price for each UTC day in the 30D window. It is
+rendered only when at least two daily observations with distinct timestamps are available. The
+horizontal domain is always the full 30D window, leaving blank space where no completed daily
+observation exists. Each row is independently scaled to its own observed daily-price range, so
+readers compare shape, not height. The line must not be reconstructed from the horizon-change
+percentages.
 
 ## Pattern classification
 
@@ -112,8 +120,13 @@ thresholds, or signal generation.
 - Render changes as signed percentages with consistent up, down, and neutral colors.
 - Render Pattern as a single compact label, with a tooltip or accessible description that lists the
   horizon directions used.
+- Render 30D Position as fixed internal tracks for bar, percentage, and location label. Use spacing,
+  not visible separators or internal borders.
+- Render 30D Path as a neutral, time-proportional sparkline with no axes, fill, grid, or horizon
+  dividers. Emphasize only the latest point and provide an accessible low/high/latest summary.
 - Keep every cell to one line on the normal report width; allow horizontal scrolling on narrow screens.
 - State above the table: `Completed transaction trends; descriptive context, not a trade signal.`
+  Also state: `Mini paths are independently scaled; compare shape, not height.`
 - Missing values must say `N/A` or `Insufficient history`; do not substitute the WarEra price endpoint,
   an order-book midpoint, bid, ask, fair value, or another horizon.
 

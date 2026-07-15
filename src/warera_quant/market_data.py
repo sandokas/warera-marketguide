@@ -344,6 +344,13 @@ def load_market_rows(
             _add_flattened_window_stats(row, window, stats)
 
         row["windows"] = window_stats
+        row["trend_path_30d"] = (
+            _daily_last_trade_prices(_rows_since(trades, since_epochs["30D"], "created_at_epoch"))
+            if "30D" in since_epochs
+            else []
+        )
+        row["trend_path_30d_start_epoch"] = since_epochs.get("30D")
+        row["trend_path_30d_end_epoch"] = int(now.timestamp()) if "30D" in since_epochs else None
         _add_legacy_metric_fields(row, report_windows, window_stats)
         forecast = evaluate_item_forecast(
             store,
@@ -720,6 +727,22 @@ def _add_legacy_metric_fields(
 
 def _rows_since(rows: list[dict[str, Any]], since_epoch: int, field: str) -> list[dict[str, Any]]:
     return [row for row in rows if row[field] >= since_epoch]
+
+
+def _daily_last_trade_prices(trades: list[dict[str, Any]]) -> list[dict[str, float | int]]:
+    """Return the last valid completed-trade price for each UTC day."""
+    daily: dict[str, dict[str, float | int]] = {}
+    for trade in trades:
+        epoch = trade.get("created_at_epoch")
+        price = _number_or_none(trade.get("unit_price"))
+        if epoch is None or price is None or price <= 0:
+            continue
+        timestamp = int(epoch)
+        day = datetime.fromtimestamp(timestamp, tz=timezone.utc).date().isoformat()
+        previous = daily.get(day)
+        if previous is None or timestamp >= int(previous["timestamp"]):
+            daily[day] = {"timestamp": timestamp, "price": price}
+    return sorted(daily.values(), key=lambda point: int(point["timestamp"]))
 
 
 def _display_name(item_code: str) -> str:

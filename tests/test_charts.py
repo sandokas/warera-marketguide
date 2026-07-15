@@ -11,6 +11,7 @@ from warera_quant.charts import (
     normalize_ohlc,
     plot_price_chart,
     render_featured_chart,
+    render_trend_path_svg,
 )
 
 
@@ -20,6 +21,48 @@ def _trade(created_at: str, price: float, quantity: float = 1) -> dict:
         "price": price,
         "quantity": quantity,
     }
+
+
+def test_trend_path_svg_uses_time_proportional_points_and_accessible_label():
+    svg = render_trend_path_svg(
+        [
+            {"timestamp": 0, "price": 10},
+            {"timestamp": 10, "price": 12},
+            {"timestamp": 30, "price": 11},
+        ],
+        aria_label='30D path: low 10 & high 12',
+        window_start=0,
+        window_end=30,
+    )
+
+    assert svg is not None
+    assert 'aria-label="30D path: low 10 &amp; high 12"' in svg
+    assert 'points="2.5,25.5 32.8,2.5 93.5,14.0"' in svg
+    assert '<circle class="trend-path-latest" cx="93.5" cy="14.0"' in svg
+
+
+def test_trend_path_svg_requires_two_distinct_timestamps():
+    assert render_trend_path_svg(
+        [{"timestamp": 1, "price": 10}],
+        aria_label="Insufficient",
+        window_start=0,
+        window_end=30,
+    ) is None
+
+
+def test_trend_path_svg_preserves_blank_time_without_observations():
+    svg = render_trend_path_svg(
+        [
+            {"timestamp": 20, "price": 10},
+            {"timestamp": 25, "price": 12},
+        ],
+        aria_label="Sparse path",
+        window_start=0,
+        window_end=30,
+    )
+
+    assert svg is not None
+    assert 'points="63.2,25.5 78.3,2.5"' in svg
 
 
 def test_build_ohlc_uses_15_minute_buckets():

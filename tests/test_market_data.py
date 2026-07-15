@@ -243,6 +243,13 @@ def test_load_market_rows_applies_each_window_boundary(tmp_path):
     assert row["trade_count_1y"] == 3
     assert row["open_7d"] == 7.0
     assert row["close_7d"] == 3.0
+    assert row["trend_path_30d"] == [
+        {"timestamp": int(datetime(2026, 6, 22, 11, 59, 59, tzinfo=timezone.utc).timestamp()), "price": 10.0},
+        {"timestamp": int(datetime(2026, 6, 23, 12, tzinfo=timezone.utc).timestamp()), "price": 7.0},
+        {"timestamp": int(datetime(2026, 6, 29, 12, tzinfo=timezone.utc).timestamp()), "price": 3.0},
+    ]
+    assert row["trend_path_30d_start_epoch"] == int((NOW - timedelta(days=30)).timestamp())
+    assert row["trend_path_30d_end_epoch"] == int(NOW.timestamp())
 
 
 def test_window_change_requires_two_distinct_transaction_timestamps(tmp_path):

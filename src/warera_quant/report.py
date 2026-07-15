@@ -8,6 +8,7 @@ from typing import Iterable
 
 import pandas as pd
 
+from .charts import render_trend_path_svg
 from .metrics import (
     FlipAssumptions,
     MarketMetrics,
@@ -491,7 +492,7 @@ def _html_page(title: str, body: str) -> str:
       border-radius: 8px;
       scrollbar-color: var(--line) var(--bg);
     }}
-    .market-trends-table .report-table {{ min-width: 820px; border: 0; border-radius: 0; }}
+    .market-trends-table .report-table {{ min-width: 960px; border: 0; border-radius: 0; }}
     .activity-table th, .activity-table td,
     .market-trends-table th, .market-trends-table td {{ padding: 7px 6px; }}
     .activity-table .activity-item {{ width: 12%; font-weight: 700; }}
@@ -509,19 +510,25 @@ def _html_page(title: str, body: str) -> str:
     .activity-total-line + .activity-total-line {{ margin-top: 2px; color: var(--muted); font-size: 0.75rem; }}
     .market-trends-table th,
     .market-trends-table td {{ padding: 6px 8px; vertical-align: middle; white-space: nowrap; }}
-    .market-trends-table .col-item {{ width: 17%; font-weight: 700; white-space: nowrap; }}
-    .market-trends-table .col-last-trade {{ width: 12%; }}
+    .market-trends-table .col-item {{ width: 14%; font-weight: 700; white-space: nowrap; }}
+    .market-trends-table .col-last-trade {{ width: 9%; }}
     .market-trends-table .col-1d-change,
     .market-trends-table .col-7d-change,
-    .market-trends-table .col-30d-change {{ width: 10%; }}
-    .market-trends-table .col-30d-position {{ width: 23%; }}
-    .market-trends-table .col-pattern {{ width: 18%; }}
+    .market-trends-table .col-30d-change {{ width: 8%; }}
+    .market-trends-table .col-30d-path {{ width: 12%; }}
+    .market-trends-table .col-30d-position {{ width: 24%; }}
+    .market-trends-table .col-pattern {{ width: 17%; }}
     .trend-change {{ display: inline-flex; align-items: center; justify-content: flex-end; gap: 4px; min-width: 66px; }}
     .trend-arrow {{ width: 0.9em; text-align: center; font-size: 0.78rem; }}
-    .position-cell {{ display: inline-flex; align-items: center; gap: 7px; }}
-    .position-track {{ position: relative; width: 52px; height: 4px; border-radius: 999px; background: #334155; }}
+    .position-cell {{ display: grid; grid-template-columns: 56px 36px minmax(72px, 1fr); align-items: center; column-gap: 8px; width: 100%; }}
+    .position-track {{ position: relative; width: 56px; height: 4px; border-radius: 999px; background: #334155; }}
     .position-dot {{ position: absolute; top: 50%; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); transform: translate(-50%, -50%); }}
+    .position-value {{ text-align: right; font-variant-numeric: tabular-nums; }}
+    .position-empty {{ color: var(--muted); text-align: center; }}
     .position-label {{ color: var(--muted); font-size: 0.72rem; }}
+    .trend-path {{ display: block; width: 96px; height: 28px; overflow: visible; color: var(--muted); }}
+    .trend-path-line {{ fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }}
+    .trend-path-latest {{ fill: var(--accent); stroke: var(--panel); stroke-width: 1; vector-effect: non-scaling-stroke; }}
     .pattern-label {{ display: inline-flex; align-items: center; gap: 6px; font-weight: 700; }}
     .pattern-mark {{ width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }}
     .pattern-rise .pattern-mark, .pattern-rebound .pattern-mark {{ background: var(--good); }}
@@ -1232,6 +1239,8 @@ def _render_table_cell(column: str, value: object) -> str:
         return _trend_change(value)
     if column == "30D Position":
         return _trend_position(value)
+    if column == "30D Path":
+        return _trend_path(value)
     if column == "Pattern":
         return _trend_pattern(value)
     if column == "Signal":
@@ -1320,17 +1329,63 @@ def _trend_change(value: object) -> str:
 
 def _trend_position(value: object) -> str:
     if value == "Flat":
-        return '<span class="position-label">Flat</span>'
+        return _empty_trend_position("Flat")
     number = _number(value)
     if number is None:
-        return "N/A"
+        return _empty_trend_position("N/A")
     label = "Near floor" if number <= 33 else "Middle" if number <= 66 else "Near ceiling"
     return (
         f'<span class="position-cell" title="{number:.1f}% through the 30D completed-trade range">'
         '<span class="position-track" aria-hidden="true">'
         f'<span class="position-dot" style="left:{number:.1f}%"></span></span>'
-        f'<span>{number:.0f}%</span><span class="position-label">{label}</span></span>'
+        f'<span class="position-value">{number:.0f}%</span>'
+        f'<span class="position-label">{label}</span></span>'
     )
+
+
+def _empty_trend_position(label: str) -> str:
+    return (
+        f'<span class="position-cell" aria-label="30D position: {escape(label)}">'
+        '<span class="position-empty" aria-hidden="true">—</span>'
+        '<span class="position-value position-empty" aria-hidden="true">—</span>'
+        f'<span class="position-label">{escape(label)}</span></span>'
+    )
+
+
+def _trend_path(value: object) -> str:
+    if not isinstance(value, dict):
+        return "N/A"
+    points = value.get("points")
+    if not isinstance(points, list) or len(points) < 2:
+        return "N/A"
+    low = _number(value.get("low"))
+    high = _number(value.get("high"))
+    latest = _number(value.get("latest"))
+    window_start = _number(value.get("window_start"))
+    window_end = _number(value.get("window_end"))
+    direction = str(value.get("direction") or "flat").lower()
+    if low is None or high is None or latest is None or window_start is None or window_end is None:
+        return "N/A"
+    timestamps = sorted(
+        int(point["timestamp"])
+        for point in points
+        if isinstance(point, dict) and _number(point.get("timestamp")) is not None
+    )
+    if len(timestamps) < 2:
+        return "N/A"
+    coverage_days = max(1, round((timestamps[-1] - timestamps[0]) / 86_400))
+    window_days = max(1, round((window_end - window_start) / 86_400))
+    label = (
+        f"30D price path: {len(points)} daily observations spanning "
+        f"{coverage_days} of {window_days} days; "
+        f"low {_fmt(low)}, high {_fmt(high)}, latest {_fmt(latest)}; overall {direction}."
+    )
+    return render_trend_path_svg(
+        points,
+        aria_label=label,
+        window_start=int(window_start),
+        window_end=int(window_end),
+    ) or "N/A"
 
 
 def _trend_pattern(value: object) -> str:
@@ -1421,12 +1476,29 @@ def generate_html_report(
                     if high_30d == low_30d
                     else calculate_range_position_pct(last_price=last_trade, low=low_30d, high=high_30d)
                 )
+            path_points = row.get("trend_path_30d")
+            path_direction = (
+                "up"
+                if changes["30D"] is not None and changes["30D"] > 0.5
+                else "down"
+                if changes["30D"] is not None and changes["30D"] < -0.5
+                else "flat"
+            )
             trend_rows.append({
                 "Item": row.get("item_name", "Unknown"),
                 "Last Trade": last_trade,
                 "1D Change": changes["1D"],
                 "7D Change": changes["7D"],
                 "30D Change": changes["30D"],
+                "30D Path": {
+                    "points": path_points if isinstance(path_points, list) else [],
+                    "low": low_30d,
+                    "high": high_30d,
+                    "latest": last_trade,
+                    "direction": path_direction,
+                    "window_start": row.get("trend_path_30d_start_epoch"),
+                    "window_end": row.get("trend_path_30d_end_epoch"),
+                },
                 "30D Position": position,
                 "Pattern": f"{pattern.label}|{pattern.description}",
             })
@@ -1434,7 +1506,7 @@ def generate_html_report(
         blocks.append(
             f"""    <section>
       <h2>Market Trends</h2>
-      <p class="muted">Completed transaction trends; descriptive context, not a trade signal.</p>
+      <p class="muted">Completed transaction trends; descriptive context, not a trade signal. Mini paths are independently scaled; compare shape, not height.</p>
       {_compact_table_html(trend_table, table_kind="market-trends")}
     </section>"""
         )
