@@ -106,28 +106,49 @@ def _first_number(row: pd.Series, *columns: str) -> float | None:
 
 
 def _fair_price(row: pd.Series, window_key: str) -> float | None:
+    bid = _first_number(row, "bid", "latest_bid")
+    ask = _first_number(row, "ask", "latest_ask")
+    midpoint = (bid + ask) / 2 if bid is not None and ask is not None else None
     return _first_number(
         row,
-        "fair_reference_7d",
         f"stable_fair_price_{window_key}",
         "stable_fair_price_7d",
         f"vwap_{window_key}",
-        f"median_{window_key}",
         f"average_{window_key}",
         f"rolling_average_{window_key}",
-        "vwap_7d",
-        "median_7d",
-        "average_7d",
-        "rolling_average_7d",
-    )
+        "last_trade_price",
+        "current_price",
+        "latest_price",
+        "quote_price",
+        "mid_price",
+    ) or midpoint
+
+
+def _fair_price_band(row: pd.Series, window_key: str) -> tuple[float | None, float | None, float | None]:
+    fair = _fair_price(row, window_key)
+    if fair is None:
+        return None, None, None
+
+    spread = _first_number(row, "latest_spread", "spread")
+    stable_range_pct = _first_number(row, f"stable_range_pct_{window_key}", "stable_range_pct_7d")
+    volatility_band = fair * stable_range_pct / 100 * 0.35 if stable_range_pct is not None else None
+    if spread is not None and spread > 0:
+        half_band = spread / 2
+    else:
+        half_band = max(fair * 0.01, 0.001)
+    if volatility_band is not None:
+        half_band = max(half_band, volatility_band)
+    return fair, max(0.0, fair - half_band), fair + half_band
 
 
 def _latest_price(row: pd.Series) -> float | None:
     return _first_number(row, "last_trade_price", "current_price", "latest_price", "quote_price", "mid_price")
 
 
-def _fair_gap_pct(row: pd.Series, window_key: str) -> float | None:
-    return _first_number(row, f"fair_gap_{window_key}_pct", "fair_gap_7d_pct")
+def _price_gap_pct(latest: float | None, fair: float | None) -> float | None:
+    if latest is None or fair is None or fair <= 0:
+        return None
+    return (latest - fair) / fair * 100
 
 
 def _window_key(metric_window: str) -> str:
