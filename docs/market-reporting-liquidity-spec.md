@@ -9,8 +9,8 @@ should sell now or hold. It must show the relevant entry, target, stop-loss or i
 executable quantity, expected opportunity, and risk. A sell signal always means exiting inventory
 the user already owns.
 
-Latest execution, fair value, change, range, volume, activity, spread, liquidity, market state, and
-price evolution support those decisions. They are not competing goals and should not be repeated
+Latest execution, fair value, change, range, volume, activity, spread, liquidity, and market state
+support those decisions. They are not competing goals and should not be repeated
 across tables without a distinct purpose.
 
 All historical price and activity fields come from completed transactions stored in SQLite. Current
@@ -55,13 +55,17 @@ concepts visibly distinct:
 - holder action: sell now or hold;
 - valuation: latest completed transaction, historical range, and transaction-derived fair value;
 - execution: best ask, best bid, available quantity, spread, and slippage;
-- activity: completed volume, value, and transaction count;
+- activity: completed volume, value, transaction count, and total upstream Production Points (PP)
+  per item used for embodied PP-equivalent volume comparisons;
 - direction: transaction-derived momentum and price state;
 - risk plan: target, stop loss or invalidation, downside, and expected horizon.
 
 Columns that answer different questions must not be combined merely because they fit in one table.
-Supporting visualizations—including the order book, activity bars, price-state indicators, and price
-evolution—should be retained when their calculation and purpose are clear.
+Supporting visualizations—including the order book, activity bars, and price-state indicators—should
+be retained when their calculation and purpose are clear.
+
+The fixed PP-per-item reference values and the distinction between direct recipe PP and full
+upstream PP are documented in [Production Points by Factory Item](production-points-reference.md).
 
 The fair-value guidance table uses one single-line signal per item: `Buy` when the executable Ask
 reaches `Max Buy`, `Sell` when the executable Bid reaches `Rich Sell`, and `Wait` otherwise. Sell is

@@ -97,11 +97,13 @@ PYTHONPATH=src .venv/bin/python run_report.py \
 When no input option is supplied, the CLI uses the default market database if it exists; otherwise it uses `data/sample_market.csv`. Prefer `--from-db` or an explicit CSV path in scripts so the input is clear.
 
 Completed activity uses two bars. Completed Value sums transaction price × quantity
-for every item and determines the row order. Production-adjusted Work multiplies
-completed units by the official `productionPoints` required per item; for example,
-1 steel (10 points) is comparable with 10 iron (1 point each). Items without an
-official production-point value still rank by Completed Value and show `N/A` only
-for the production-adjusted bar.
+for every item and determines the row order. PP-equivalent Volume multiplies completed
+units by the total upstream Production Points (PP) required for one item; for example,
+1 Steel represents 20 total PP: 10 PP in its direct recipe plus 10 PP for its 10 Iron.
+This is an embodied-effort comparison, not actual production during the report window.
+Item rows must not be summed because ingredient and processed-item trades can overlap.
+Items without a defined factory chain still rank by Completed Value and show `N/A` only
+for PP fields.
 
 ## Charts
 
@@ -171,14 +173,16 @@ independent answers: whether a user without inventory should buy now or wait, an
 holding inventory should sell now or hold. Sell guidance always means exiting owned inventory.
 The decision layer should show the usable entry or exit price, how much can be traded, the profit
 target, the stop-loss or invalidation level, the expected horizon, and why the signal exists.
-Historical context, activity, order-book structure, price state, and price evolution support that
-decision without duplicating it.
+Historical context, activity, order-book structure, and price state support that decision without
+duplicating it.
 
 More detail is available in:
 
 - [Market database and architecture](docs/market-db-reporting-spec.md)
 - [Market data semantics](docs/market-data-model-spec.md)
 - [Report and liquidity semantics](docs/market-reporting-liquidity-spec.md)
+- [Production Points by factory item](docs/production-points-reference.md)
+- [Proposed Market Trends table](docs/market-trends-table-spec.md)
 - [Project goal and data authority](docs/project-goal.md)
 - [Repository architecture rules](AGENTS.md)
 

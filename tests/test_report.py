@@ -4,7 +4,7 @@ from warera_quant.metrics import FlipAssumptions
 from warera_quant.report import generate_html_report, write_outputs
 
 
-def test_swing_lens_explains_quotes_without_making_momentum_trade_recommendations():
+def test_report_omits_redundant_price_evolution_lens():
     df = pd.DataFrame([
         {
             "item_name": "Oil",
@@ -28,13 +28,10 @@ def test_swing_lens_explains_quotes_without_making_momentum_trade_recommendation
     assert "<!doctype html>" in report
     assert "WarEra Market Guide" in report
     assert "Market Trends" in report
-    assert "Price Evolution Lens" in report
-    assert ">Ask<" in report
-    assert ">Bid<" in report
+    assert "Price Evolution Lens" not in report
     assert "(You Pay)" not in report
     assert "(You Receive)" not in report
-    assert "Crossing Cost %" in report
-    assert "Last" in report
+    assert "Crossing Cost %" not in report
     assert "Market intelligence, without the noise." in report
     assert "Largest price gaps" in report
     assert "Flip Board" not in report
@@ -45,12 +42,9 @@ def test_swing_lens_explains_quotes_without_making_momentum_trade_recommendation
     assert "Trust" not in report
     assert "Market-Making Score" not in report
     assert "Insufficient score data" not in report
-    assert 'aria-label="Down 3.50 percent over 7 days"' in report
-    assert '<span aria-hidden="true">↓</span> Falling' in report
-    assert "3.50% · 100 trades" in report
     assert "Price is low; consider buying" not in report
     assert "Price is high; consider selling" not in report
-    assert "Momentum describes history, not a trade recommendation" in report
+    assert "Momentum describes history, not a trade recommendation" not in report
 
 
 def test_generate_html_report_shows_all_items_by_default():
@@ -224,7 +218,7 @@ def test_report_formats_volume_and_trade_counts_without_decimal_suffix():
     assert "31641" in report
     assert "31641.000" not in report
     assert ">31.6K units<" in report
-    assert "Completed Value / Production-adjusted Work" in report
+    assert "Completed Value / PP-equivalent Volume" in report
     assert ">Units / Trades<" in report
 
 
@@ -561,7 +555,7 @@ def test_report_emits_auditable_position_specific_guidance():
     assert report.index("Buy Item") < report.index("Sell Item") < report.index("Wait Item")
 
 
-def test_report_is_print_first_and_only_wide_price_evolution_table_scrolls():
+def test_report_is_print_first_without_price_evolution_styles():
     report = generate_html_report(pd.DataFrame([{
         "item_name": "Iron",
         "latest_price": 0.08,
@@ -572,20 +566,18 @@ def test_report_is_print_first_and_only_wide_price_evolution_table_scrolls():
 
     assert "<details" not in report
     assert ".table-wrap { overflow: visible; }" in report
-    assert ".price-evolution-table {" in report
+    assert ".price-evolution-table" not in report
     assert "overflow-x: auto" in report
     assert "@media print" in report
     assert "@page { size: landscape; margin: 10mm; }" in report
     assert "thead { display: table-header-group; }" in report
-    assert ".price-evolution-table { overflow: visible; }" in report
-    assert ".price-evolution-table .report-table { min-width: 0; }" in report
     assert ".signal-help {" in report
     assert '<div class="table-wrap compact-table price-guide-table">' in report
     assert ".price-guide-table .col-signal .chip" in report
     assert ".price-guide .col-signal" not in report
 
 
-def test_market_trends_splits_price_change_and_price_evolution_keeps_read_on_one_line():
+def test_market_trends_splits_latest_price_and_change_without_price_evolution():
     report = generate_html_report(pd.DataFrame([{
         "item_name": "Scraps",
         "latest_price": 0.212,
@@ -604,42 +596,50 @@ def test_market_trends_splits_price_change_and_price_evolution_keeps_read_on_one
     assert '<th class="col-latest number">Latest</th>' in report
     assert '<th class="col-7d-change-pct number">7D Change %</th>' in report
     assert "Price / 7D Change" not in report
-    assert '<div class="table-wrap compact-table price-evolution-table">' in report
-    assert ".price-evolution-table .col-read { width: 26%; min-width: 0; max-width: none; white-space: nowrap; }" in report
+    assert '<div class="table-wrap compact-table price-evolution-table">' not in report
 
 
 def test_completed_activity_bar_uses_production_adjusted_work_and_excludes_unknown_factors():
     report = generate_html_report(pd.DataFrame([
         {
             "item_name": "Iron", "traded_quantity_7d": 1_000,
-            "traded_value_7d": 80, "trade_count_7d": 40, "production_points": 1,
+            "traded_value_7d": 80, "trade_count_7d": 40,
+            "production_points": 1, "total_production_points": 1,
         },
         {
             "item_name": "Steel", "traded_quantity_7d": 200,
-            "traded_value_7d": 320, "trade_count_7d": 20, "production_points": 10,
+            "traded_value_7d": 320, "trade_count_7d": 20,
+            "production_points": 10, "total_production_points": 20,
         },
         {
             "item_name": "Case1", "traded_quantity_7d": 500,
-            "traded_value_7d": 1_500, "trade_count_7d": 5, "production_points": None,
+            "traded_value_7d": 1_500, "trade_count_7d": 5,
+            "production_points": None, "total_production_points": None,
         },
     ]))
 
     assert "Completed Value is the sum of transaction price × quantity" in report
+    assert '>Total PP : Item</th>' in report
+    assert 'title="1 total upstream Production Point (PP) per item">1 : 1</td>' in report
+    assert 'title="20 total upstream Production Points (PP) per item">20 : 1</td>' in report
+    assert 'title="Total upstream PP-per-item ratio unavailable">N/A</td>' in report
     assert 'aria-label="1.5K completed transaction value; 100.0% of the highest-value market"' in report
-    assert 'aria-label="1.0K production-adjusted work volume; 50.0% of the busiest comparable item"' in report
-    assert 'aria-label="2.0K production-adjusted work volume; 100.0% of the busiest comparable item"' in report
-    assert 'aria-label="N/A production-adjusted work volume; 0.0% of the busiest comparable item"' in report
+    assert 'aria-label="1.0K PP-equivalent completed volume; 25.0% of the busiest comparable item"' in report
+    assert 'aria-label="4.0K PP-equivalent completed volume; 100.0% of the busiest comparable item"' in report
+    assert 'aria-label="N/A PP-equivalent completed volume; 0.0% of the busiest comparable item"' in report
     assert report.index('aria-label="1.5K completed transaction value') < report.index('aria-label="320 completed transaction value')
     assert report.index('aria-label="320 completed transaction value') < report.index('aria-label="80 completed transaction value')
     assert "500 units" in report
     assert "5 trades" in report
 
     top_report = generate_html_report(pd.DataFrame([
-        {"item_name": "Iron", "traded_quantity_7d": 1_000, "traded_value_7d": 80, "production_points": 1},
-        {"item_name": "Steel", "traded_quantity_7d": 200, "traded_value_7d": 320, "production_points": 10},
+        {"item_name": "Iron", "traded_quantity_7d": 1_000, "traded_value_7d": 80,
+         "production_points": 1, "total_production_points": 1},
+        {"item_name": "Steel", "traded_quantity_7d": 200, "traded_value_7d": 320,
+         "production_points": 10, "total_production_points": 20},
     ]), top=1)
-    assert 'aria-label="2.0K production-adjusted work volume; 100.0%' in top_report
-    assert 'aria-label="1.0K production-adjusted work volume' not in top_report
+    assert 'aria-label="4.0K PP-equivalent completed volume; 100.0%' in top_report
+    assert 'aria-label="1.0K PP-equivalent completed volume' not in top_report
 
 
 def test_scraps_is_never_described_as_inactive_when_price_is_stable():
@@ -657,9 +657,8 @@ def test_scraps_is_never_described_as_inactive_when_price_is_stable():
     }]))
 
     assert 'aria-label="2.5M completed transaction value; 100.0% of the highest-value market"' in report
-    assert 'aria-label="Up 1.92 percent over 7 days"' in report
-    assert '<span aria-hidden="true">↑</span> Rising' in report
-    assert "1.92% · 28.0K trades" in report
+    assert '<span class="signed-positive">1.920</span>' in report
+    assert "11.9M units / 28.0K trades" in report
     assert "Little net price change" not in report
     assert ">Price State<" in report
 

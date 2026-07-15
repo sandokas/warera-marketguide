@@ -16,6 +16,7 @@ from warera_quant.metrics import (
     forecast_evidence_label,
     summarize_forecast_evaluations,
     summarize_order_book,
+    total_upstream_production_points,
 )
 from warera_quant.warera_api import OrderLevel
 
@@ -354,6 +355,32 @@ def test_calculate_metrics_basic():
     assert round(m.spread_pct, 2) == 4.15
     assert round(m.crossing_loss_pct, 2) == 4.08
     assert m.trading_attractiveness is not None
+    assert m.total_production_points == 80
+
+
+@pytest.mark.parametrize(
+    ("item", "expected"),
+    [
+        ("Grain", 1), ("Limestone", 1), ("Lead", 1), ("Petroleum", 1),
+        ("Mysterious Plant", 1), ("Iron", 1), ("Wood", 1),
+        ("Livestock", 20), ("Fish", 40),
+        ("Steel", 20), ("Concrete", 20), ("Oil", 2), ("Bread", 20),
+        ("Steak", 40), ("Cooked Fish", 80), ("Paper", 2),
+        ("Light Ammo", 2), ("Ammo", 8),
+        ("Heavy Ammo", 32), ("Pill", 400),
+    ],
+)
+def test_total_upstream_production_points_covers_factory_items(item, expected):
+    assert total_upstream_production_points(item_name=item) == expected
+
+
+def test_total_upstream_production_points_accepts_item_codes_and_rejects_unknown_items():
+    assert total_upstream_production_points(item_code="cookedFish") == 80
+    assert total_upstream_production_points(item_code="heavy_ammo") == 32
+    assert total_upstream_production_points(item_code="coca") == 1
+    assert total_upstream_production_points(item_code="cocain") == 400
+    assert total_upstream_production_points(item_name="Cocaine") == 400
+    assert total_upstream_production_points(item_name="Case 1") is None
 
 
 def test_one_tick_spread_is_not_exploitable():

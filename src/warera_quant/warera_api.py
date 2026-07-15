@@ -56,7 +56,7 @@ class WarEraMarketApi:
         return prices
 
     def get_item_production_points(self) -> dict[str, float | None]:
-        """Return official work units required to produce one unit of each tradable item."""
+        """Return official Production Points consumed to produce one unit of each tradable item."""
         response = self.client.get_json(GAME_CONFIG_ENDPOINT)
         data = _trpc_data(response)
         if not isinstance(data, dict) or not isinstance(data.get("items"), dict):

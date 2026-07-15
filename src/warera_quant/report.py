@@ -342,76 +342,6 @@ def _html_page(title: str, body: str) -> str:
     .signed-positive {{ color: var(--good); font-weight: 700; }}
     .signed-negative {{ color: var(--bad); font-weight: 700; }}
     .signed-neutral {{ color: var(--muted); }}
-    .evolution-key {{
-      display: flex;
-      flex-wrap: wrap;
-      gap: 7px;
-      margin: 0 0 10px;
-    }}
-    .evolution-key > span {{
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      min-height: 29px;
-      padding: 4px 9px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: rgba(17, 24, 38, 0.78);
-      color: var(--muted);
-      font-size: 0.72rem;
-    }}
-    .evolution-key b {{ font-size: 0.76rem; }}
-    .evolution-key .key-up b {{ color: var(--good); }}
-    .evolution-key .key-down b {{ color: var(--bad); }}
-    .evolution-key .key-flat b {{ color: var(--accent); }}
-    .evolution-key .key-cost b {{ color: var(--amber); }}
-    .momentum-indicator {{
-      display: inline-flex;
-      align-items: center;
-      justify-content: flex-end;
-      gap: 5px;
-      min-width: 72px;
-      padding: 3px 7px;
-      border: 1px solid transparent;
-      border-radius: 999px;
-      font-weight: 750;
-      font-variant-numeric: tabular-nums;
-    }}
-    .momentum-icon {{ font-size: 0.92rem; line-height: 1; }}
-    .momentum-up {{
-      color: var(--good);
-      background: rgba(15, 118, 110, 0.2);
-      border-color: rgba(110, 231, 183, 0.22);
-    }}
-    .momentum-down {{
-      color: var(--bad);
-      background: rgba(63, 31, 31, 0.58);
-      border-color: rgba(248, 113, 113, 0.22);
-    }}
-    .momentum-flat {{
-      color: var(--accent);
-      background: rgba(21, 59, 87, 0.55);
-      border-color: rgba(125, 211, 252, 0.22);
-    }}
-    .crossing-cost {{
-      display: inline-flex;
-      align-items: center;
-      justify-content: flex-end;
-      gap: 5px;
-      color: var(--amber);
-      font-weight: 700;
-      font-variant-numeric: tabular-nums;
-    }}
-    .crossing-cost::before {{
-      width: 5px;
-      height: 5px;
-      border-radius: 50%;
-      background: currentColor;
-      content: "";
-    }}
-    .read-summary {{ display: grid; grid-template-columns: 70px 1fr; gap: 7px; align-items: center; }}
-    .read-direction {{ font-weight: 750; white-space: nowrap; }}
-    .read-detail {{ color: var(--muted); font-size: 0.76rem; white-space: nowrap; }}
     ul {{ margin: 0; padding-left: 1.2rem; }}
     li + li {{ margin-top: 6px; }}
     code {{
@@ -540,26 +470,24 @@ def _html_page(title: str, body: str) -> str:
     .book-summary .book-pressure {{ width: 13%; white-space: nowrap; }}
     .book-summary .book-spread {{ width: 6%; }}
     .activity-table .report-table,
-    .market-trends-table .report-table,
-    .price-evolution-table {{
+    .market-trends-table .report-table {{
       overflow-x: auto;
       border: 1px solid var(--line);
       border-radius: 8px;
       scrollbar-color: var(--line) var(--bg);
     }}
-    .price-evolution-table .report-table {{ min-width: 1040px; table-layout: fixed; border: 0; border-radius: 0; }}
     .activity-table th, .activity-table td,
-    .market-trends-table th, .market-trends-table td,
-    .price-evolution-table th, .price-evolution-table td {{ padding: 7px 6px; }}
-    .activity-table .activity-item {{ width: 14%; font-weight: 700; }}
-    .activity-table .activity-volume {{ width: 64%; }}
+    .market-trends-table th, .market-trends-table td {{ padding: 7px 6px; }}
+    .activity-table .activity-item {{ width: 12%; font-weight: 700; }}
+    .activity-table .activity-ratio {{ width: 12%; white-space: nowrap; }}
+    .activity-table .activity-volume {{ width: 54%; }}
     .activity-table .activity-totals {{ width: 22%; }}
     .activity-volume-content {{ display: grid; gap: 4px; }}
     .activity-metric {{ display: grid; grid-template-columns: 54px minmax(0, 1fr) 58px; gap: 7px; align-items: center; }}
     .activity-metric-label {{ color: var(--muted); font-size: 0.7rem; text-align: left; white-space: nowrap; }}
     .activity-track {{ height: 12px; overflow: hidden; border-radius: 3px; background: #0b1220; }}
     .activity-fill {{ height: 100%; min-width: 1px; border-radius: 3px; background: linear-gradient(90deg, #0f766e, #6ee7b7); }}
-    .activity-fill-work {{ background: linear-gradient(90deg, #1d4ed8, #7dd3fc); }}
+    .activity-fill-pp {{ background: linear-gradient(90deg, #1d4ed8, #7dd3fc); }}
     .activity-number,
     .activity-total-line {{ display: block; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }}
     .activity-total-line + .activity-total-line {{ margin-top: 2px; color: var(--muted); font-size: 0.75rem; }}
@@ -570,41 +498,6 @@ def _html_page(title: str, body: str) -> str:
     .market-trends-table .col-activity {{ width: 20%; }}
     .market-trends-table .col-spread-pct {{ width: 8%; min-width: 0; }}
     .market-trends-table .col-price-state {{ width: 29%; min-width: 0; max-width: none; white-space: nowrap; }}
-    .price-evolution-table th {{ vertical-align: bottom; }}
-    .price-evolution-table th small {{
-      display: block;
-      margin-top: 1px;
-      color: var(--muted);
-      font-size: 0.62rem;
-      font-weight: 600;
-      letter-spacing: 0;
-      text-transform: none;
-    }}
-    .price-evolution-table tbody tr {{ transition: background-color 120ms ease; }}
-    .price-evolution-table tbody tr:hover {{ background: rgba(56, 189, 248, 0.075); }}
-    .price-evolution-table tbody tr.momentum-up .col-item {{ box-shadow: inset 3px 0 var(--good); }}
-    .price-evolution-table tbody tr.momentum-down .col-item {{ box-shadow: inset 3px 0 var(--bad); }}
-    .price-evolution-table tbody tr.momentum-flat .col-item {{ box-shadow: inset 3px 0 var(--accent); }}
-    .price-evolution-table .col-item {{
-      position: sticky;
-      left: 0;
-      z-index: 1;
-      width: 11%;
-      background: var(--panel);
-      font-weight: 700;
-    }}
-    .price-evolution-table thead .col-item {{ z-index: 2; background: #172a45; }}
-    .price-evolution-table tbody tr:nth-child(even) .col-item {{ background: #141d2c; }}
-    .price-evolution-table tbody tr:hover .col-item {{ background: #17263a; }}
-    .price-evolution-table .col-ask,
-    .price-evolution-table .col-bid,
-    .price-evolution-table .col-last,
-    .price-evolution-table .col-7d-low,
-    .price-evolution-table .col-7d-high {{ width: 7%; }}
-    .price-evolution-table .col-crossing-cost-pct {{ width: 10%; }}
-    .price-evolution-table .col-7d-momentum-pct {{ width: 9%; }}
-    .price-evolution-table .col-7d-trades {{ width: 9%; }}
-    .price-evolution-table .col-read {{ width: 26%; min-width: 0; max-width: none; white-space: nowrap; }}
     .state-chips {{ display: inline-flex; flex-wrap: nowrap; gap: 4px; white-space: nowrap; }}
     .depth-profile {{ width: 100%; min-width: 0; }}
     .depth-profile-labels {{
@@ -756,8 +649,6 @@ def _html_page(title: str, body: str) -> str:
       thead {{ display: table-header-group; }}
       tr, .note, .summary-card {{ break-inside: avoid; page-break-inside: avoid; }}
       .report-table {{ font-size: 8.5pt; }}
-      .price-evolution-table {{ overflow: visible; }}
-      .price-evolution-table .report-table {{ min-width: 0; }}
       .chart {{ max-height: 165mm; }}
     }}
   </style>
@@ -774,9 +665,7 @@ def _html_page(title: str, body: str) -> str:
 def _compact_table_html(df: pd.DataFrame, *, table_kind: str = "trend") -> str:
     kind_class = f"{table_kind}-table"
     header = "".join(
-        f'<th class="{_column_classes(column)}"'
-        f'{" scope=\"col\"" if table_kind == "price-evolution" else ""}>'
-        f'{_render_table_header(column, table_kind=table_kind)}</th>'
+        f'<th class="{_column_classes(column)}">{escape(str(column))}</th>'
         for column in df.columns
     )
     body_rows = []
@@ -791,11 +680,6 @@ def _compact_table_html(df: pd.DataFrame, *, table_kind: str = "trend") -> str:
             signal = str(row.get("Signal", "")).strip().lower()
             if signal in {"buy", "sell", "wait"}:
                 row_class = f' class="signal-{signal}"'
-        elif table_kind == "price-evolution":
-            momentum_column = next((column for column in df.columns if str(column).endswith("Momentum %")), "")
-            momentum = _number(row.get(momentum_column))
-            tone = "flat" if momentum is None or abs(momentum) < 0.005 else "up" if momentum > 0 else "down"
-            row_class = f' class="momentum-{tone}"'
         body_rows.append(f"<tr{row_class}>{cells}</tr>")
     table = (
         '<table class="report-table">'
@@ -804,25 +688,6 @@ def _compact_table_html(df: pd.DataFrame, *, table_kind: str = "trend") -> str:
         "</table>"
     )
     return f'<div class="table-wrap compact-table {kind_class}">{table}</div>'
-
-
-def _render_table_header(column: str, *, table_kind: str) -> str:
-    if table_kind != "price-evolution":
-        return escape(str(column))
-    labels = {
-        "Ask": ("Ask", "you pay"),
-        "Bid": ("Bid", "you receive"),
-        "Last": ("Last", "completed"),
-        "7D Low": ("7D Low", "range floor"),
-        "7D High": ("7D High", "range ceiling"),
-        "Crossing Cost %": ("Crossing Cost %", "before fees"),
-        "7D Momentum %": ("7D Momentum %", "historical"),
-        "7D Trades": ("7D Trades", "completed"),
-        "Read": ("At a glance", "direction · activity"),
-    }
-    label, detail = labels.get(str(column), (str(column), ""))
-    sublabel = f"<small>{escape(detail)}</small>" if detail else ""
-    return f"<span>{escape(label)}</span>{sublabel}"
 
 
 def _trend_label(value: object) -> str:
@@ -888,46 +753,62 @@ def _activity_html(df: pd.DataFrame, window_key: str, metric_window: str, displa
     rows: list[dict[str, object]] = []
     for _, row in df.iterrows():
         units = _first_number(row, f"traded_quantity_{window_key}", f"volume_{window_key}")
-        production_points = _first_number(row, "production_points")
+        total_production_points = _first_number(row, "total_production_points")
         rows.append({
             "Item": row.get("item_name", "Unknown"),
             "Value": _first_number(row, f"traded_value_{window_key}"),
             "Units": units,
             "Trades": _first_number(row, f"trade_count_{window_key}", "trades_7d"),
-            "Production Points": production_points,
-            "Work Volume": units * production_points if units is not None and production_points is not None else None,
+            "Total Production Points": total_production_points,
+            "PP-equivalent Volume": (
+                units * total_production_points
+                if units is not None and total_production_points is not None
+                else None
+            ),
         })
     if not rows:
         return ""
     rows.sort(key=lambda row: (-(_number(row["Value"]) or 0.0), str(row["Item"])))
     rows = rows[:display_count]
-    work_volumes = [_number(row["Work Volume"]) or 0.0 for row in rows if _number(row["Work Volume"]) is not None]
-    max_work_volume = max(work_volumes, default=0.0)
+    pp_volumes = [
+        _number(row["PP-equivalent Volume"]) or 0.0
+        for row in rows
+        if _number(row["PP-equivalent Volume"]) is not None
+    ]
+    max_pp_volume = max(pp_volumes, default=0.0)
     max_turnover = max((_number(row["Value"]) or 0.0 for row in rows), default=0.0)
     body = []
     for row in rows:
         units = _number(row["Units"])
         value = _number(row["Value"])
         trades = _number(row["Trades"])
-        work_volume = _number(row["Work Volume"])
-        work_width = work_volume / max_work_volume * 100 if work_volume is not None and max_work_volume > 0 else 0.0
+        total_production_points = _number(row["Total Production Points"])
+        pp_volume = _number(row["PP-equivalent Volume"])
+        pp_width = pp_volume / max_pp_volume * 100 if pp_volume is not None and max_pp_volume > 0 else 0.0
         turnover_width = value / max_turnover * 100 if value is not None and max_turnover > 0 else 0.0
         unit_label = _fmt_compact(units) if units is not None else "N/A"
-        work_label = _fmt_compact(work_volume) if work_volume is not None else "N/A"
+        pp_label = _fmt_compact(pp_volume) if pp_volume is not None else "N/A"
         value_label = _fmt_compact(value) if value is not None else "N/A"
         trade_label = _fmt_compact(trades) if trades is not None else "N/A"
+        ratio_label = f"{total_production_points:g} : 1" if total_production_points is not None else "N/A"
+        ratio_title = (
+            f"{total_production_points:g} total upstream Production {'Point' if total_production_points == 1 else 'Points'} (PP) per item"
+            if total_production_points is not None
+            else "Total upstream PP-per-item ratio unavailable"
+        )
         body.append(
             '<tr>'
             f'<td class="activity-item text">{escape(str(row["Item"]))}</td>'
+            f'<td class="activity-ratio number" title="{escape(ratio_title)}">{escape(ratio_label)}</td>'
             '<td class="activity-volume number"><div class="activity-volume-content">'
             '<div class="activity-metric"><span class="activity-metric-label">Value</span>'
             f'<div class="activity-track" role="img" aria-label="{escape(value_label)} completed transaction value; {turnover_width:.1f}% of the highest-value market">'
             f'<div class="activity-fill" style="width: {turnover_width:.1f}%"></div></div>'
             f'<span class="activity-number">{escape(value_label)}</span></div>'
-            '<div class="activity-metric"><span class="activity-metric-label">Prod. work</span>'
-            f'<div class="activity-track" role="img" aria-label="{escape(work_label)} production-adjusted work volume; {work_width:.1f}% of the busiest comparable item">'
-            f'<div class="activity-fill activity-fill-work" style="width: {work_width:.1f}%"></div></div>'
-            f'<span class="activity-number" title="{escape(_fmt(work_volume, 0) if work_volume is not None else "N/A")}">{escape(work_label)}</span></div>'
+            '<div class="activity-metric"><span class="activity-metric-label">PP equiv.</span>'
+            f'<div class="activity-track" role="img" aria-label="{escape(pp_label)} PP-equivalent completed volume; {pp_width:.1f}% of the busiest comparable item">'
+            f'<div class="activity-fill activity-fill-pp" style="width: {pp_width:.1f}%"></div></div>'
+            f'<span class="activity-number" title="{escape(_fmt(pp_volume, 0) if pp_volume is not None else "N/A")}">{escape(pp_label)}</span></div>'
             '</div></td>'
             '<td class="activity-totals number">'
             f'<span class="activity-total-line">{escape(unit_label)} units</span>'
@@ -935,10 +816,11 @@ def _activity_html(df: pd.DataFrame, window_key: str, metric_window: str, displa
         )
     return (
         '<section><h2>Completed Market Activity</h2>'
-        f'<p class="muted">Actual completed trading over {escape(metric_window)}. Completed Value is the sum of transaction price × quantity and controls the row order for every item. Production-adjusted Work is completed units × production points where an official recipe exists. Scraps therefore ranks normally by value; only its production bar is N/A. Open orders are not included.</p>'
+        f'<p class="muted">Actual completed trading over {escape(metric_window)}. Completed Value is the sum of transaction price × quantity and controls the row order for every item. Total PP : Item includes the direct recipe and all upstream ingredient production; PP-equivalent Volume is completed units × Total PP per item. It compares embodied production effort but is not actual production during this window. Item rows must not be summed because ingredient and processed-item trades can overlap. Items without a defined factory chain rank normally by value and show N/A for PP fields. Open orders are not included.</p>'
         '<div class="table-wrap compact-table activity-table"><table class="report-table">'
         '<thead><tr><th class="activity-item text">Item</th>'
-        '<th class="activity-volume number">Completed Value / Production-adjusted Work</th>'
+        '<th class="activity-ratio number" title="Total upstream Production Points required for one item">Total PP : Item</th>'
+        '<th class="activity-volume number">Completed Value / PP-equivalent Volume</th>'
         '<th class="activity-totals number">Units / Trades</th></tr></thead>'
         f'<tbody>{"".join(body)}</tbody></table></div></section>'
     )
@@ -1319,75 +1201,14 @@ def _render_table_cell(column: str, value: object) -> str:
         return _chip(str(value), _market_tone(value))
     if column in {"Market State", "Price State"}:
         return _market_state_chips(value)
-    if column == "Crossing Cost %":
-        return _crossing_cost_indicator(value)
-    if column == "Read":
-        return _swing_read_indicator(value)
     if column == "Volume" or column == "Units" or column.endswith("Traded Value"):
         number = _number(value)
         if number is None:
             return escape(_fmt_report_value(value, column=column))
         return f'<span title="{escape(_fmt(number, 0))}">{escape(_fmt_compact(number))}</span>'
-    if column.endswith("Momentum %"):
-        return _momentum_indicator(value)
     if column in {"Gap %", "Change %", "Net to Fair %", "Ask Upside %"} or column.endswith("Change %"):
         return _signed_number(value, invert=column == "Gap %")
     return escape(_fmt_report_value(value, column=column))
-
-
-def _momentum_indicator(value: object) -> str:
-    number = _number(value)
-    if number is None:
-        return '<span class="momentum-indicator momentum-flat" aria-label="Momentum unavailable">—</span>'
-    if abs(number) < 0.005:
-        tone, icon, direction = "flat", "→", "Flat"
-    elif number > 0:
-        tone, icon, direction = "up", "↑", "Up"
-    else:
-        tone, icon, direction = "down", "↓", "Down"
-    label = f"{abs(number):.2f}%" if tone != "flat" else "0.00%"
-    return (
-        f'<span class="momentum-indicator momentum-{tone}" '
-        f'aria-label="{direction} {abs(number):.2f} percent over 7 days" '
-        f'title="Historical price movement: {direction.lower()} {abs(number):.2f}%">'
-        f'<span class="momentum-icon" aria-hidden="true">{icon}</span>{label}</span>'
-    )
-
-
-def _crossing_cost_indicator(value: object) -> str:
-    number = _number(value)
-    if number is None:
-        return '<span class="crossing-cost" aria-label="Crossing cost unavailable">—</span>'
-    return (
-        f'<span class="crossing-cost" aria-label="{number:.2f} percent crossing cost before fees" '
-        f'title="Buy at ask, then sell at bid: {number:.2f}% cost before fees">{number:.2f}%</span>'
-    )
-
-
-def _swing_read_indicator(value: object) -> str:
-    if not isinstance(value, dict):
-        return escape(_fmt_report_value(value))
-    status = str(value.get("status", ""))
-    momentum = _number(value.get("momentum"))
-    trades = _number(value.get("trades"))
-    if status:
-        return f'<span class="read-detail">{escape(status)}</span>'
-    if momentum is None:
-        direction, tone, icon, change = "No trend", "flat", "→", ""
-    elif abs(momentum) < 0.005:
-        direction, tone, icon, change = "Flat", "flat", "→", "0.00%"
-    elif momentum > 0:
-        direction, tone, icon, change = "Rising", "up", "↑", f"{abs(momentum):.2f}%"
-    else:
-        direction, tone, icon, change = "Falling", "down", "↓", f"{abs(momentum):.2f}%"
-    activity = f"{_fmt_compact(trades)} trades" if trades is not None else "Activity unavailable"
-    detail = f"{change} · {activity}" if change else activity
-    return (
-        '<span class="read-summary">'
-        f'<span class="read-direction signed-{"positive" if tone == "up" else "negative" if tone == "down" else "neutral"}">'
-        f'<span aria-hidden="true">{icon}</span> {direction}</span>'
-        f'<span class="read-detail">{escape(detail)}</span></span>'
-    )
 
 
 def _chip(label: str, tone: str, *, prefix: str | None = None) -> str:
@@ -1446,20 +1267,6 @@ def _relative_chart_path(chart_path: str | Path | None, output_dir: Path) -> str
         return path.relative_to(output_dir).as_posix()
     except ValueError:
         return path.as_posix()
-
-
-def _swing_read(row: pd.Series) -> dict[str, object]:
-    momentum = row.get("momentum_7d_pct")
-    trades = row.get("trades_7d")
-
-    has_momentum = momentum is not None and not pd.isna(momentum)
-    has_trades = trades is not None and not pd.isna(trades) and trades > 0
-
-    if not has_trades:
-        return {"status": "Insufficient completed trades"}
-    if has_momentum:
-        return {"momentum": float(momentum), "trades": float(trades)}
-    return {"status": "Insufficient trend history"}
 
 
 def generate_html_report(
@@ -1526,60 +1333,6 @@ def generate_html_report(
       {_compact_table_html(trend_table, table_kind="market-trends")}
     </section>"""
         )
-
-    swing_price_columns = [
-        column for column in ["bid", "ask", "current_price", "latest_price", "low_7d", "high_7d"]
-        if column in df.columns
-    ]
-    swing_candidates = df[df[swing_price_columns].notna().any(axis=1)].copy() if swing_price_columns else pd.DataFrame()
-    if not swing_candidates.empty:
-        trend = swing_candidates.copy()
-        if not trend.empty:
-            if "momentum_7d_pct" not in trend.columns:
-                trend["momentum_7d_pct"] = None
-            if "trades_7d" not in trend.columns:
-                trend["trades_7d"] = None
-            trend["abs_momentum"] = pd.to_numeric(trend["momentum_7d_pct"], errors="coerce").abs()
-            trend = trend.sort_values(
-                ["abs_momentum", "trades_7d"],
-                ascending=[False, False],
-                na_position="last",
-            ).head(display_count)
-            trend["swing_read"] = trend.apply(_swing_read, axis=1)
-            last_col = _column(trend, "current_price", "latest_price")
-            columns = [
-                column for column in [
-                    "item_name", "ask", "bid", last_col, "low_7d", "high_7d",
-                    "crossing_loss_pct", "momentum_7d_pct", "trades_7d", "swing_read"
-                ]
-                if column and column in trend.columns
-            ]
-            trend_table = trend[columns].rename(columns={
-                "item_name": "Item",
-                "ask": "Ask",
-                "bid": "Bid",
-                "current_price": "Last",
-                "latest_price": "Last",
-                "low_7d": f"{metric_window} Low",
-                "high_7d": f"{metric_window} High",
-                "crossing_loss_pct": "Crossing Cost %",
-                "momentum_7d_pct": f"{metric_window} Momentum %",
-                "trades_7d": f"{metric_window} Trades",
-                "swing_read": "Read",
-            })
-            blocks.append(
-                f"""    <section>
-      <h2>Price Evolution Lens</h2>
-      <p class="muted">Compare today’s quote with the seven-day range, direction, and completed activity. Momentum describes history, not a trade recommendation.</p>
-      <div class="evolution-key" aria-label="Price Evolution legend">
-        <span class="key-up"><b>↑ Rising</b> price increased</span>
-        <span class="key-down"><b>↓ Falling</b> price decreased</span>
-        <span class="key-flat"><b>→ Flat</b> little net change</span>
-        <span class="key-cost"><b>● Crossing cost</b> ask-to-bid cost before fees</span>
-      </div>
-      {_compact_table_html(trend_table, table_kind="price-evolution")}
-    </section>"""
-            )
 
     note_rows = df.head(display_count).copy()
     if not note_rows.empty:

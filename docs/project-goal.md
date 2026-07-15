@@ -93,8 +93,8 @@ they help answer its question. A column that mixes valuation, execution, activit
 risk without making the distinction explicit should be moved, renamed, or removed.
 
 The existing visual forms may be retained when they communicate their assigned question well,
-including the order-book visualization, activity bars, price-state indicators, and price-evolution
-view. Visual quality does not override semantic clarity.
+including the order-book visualization, activity bars, and price-state indicators. Visual quality
+does not override semantic clarity.
 
 ## Non-goals
 

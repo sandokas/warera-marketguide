@@ -1,11 +1,51 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
 
 FORECAST_MODEL_VERSION = "direction-v1"
+
+# Fixed WarEra production-chain mechanics. Values include the direct recipe PP plus the PP needed
+# to produce every consumed ingredient. Update these values when the game recipes change.
+TOTAL_UPSTREAM_PRODUCTION_POINTS = {
+    "grain": 1.0,
+    "limestone": 1.0,
+    "lead": 1.0,
+    "petroleum": 1.0,
+    "mysteriousplant": 1.0,
+    "coca": 1.0,
+    "iron": 1.0,
+    "wood": 1.0,
+    "livestock": 20.0,
+    "fish": 40.0,
+    "steel": 20.0,
+    "concrete": 20.0,
+    "oil": 2.0,
+    "paper": 2.0,
+    "bread": 20.0,
+    "steak": 40.0,
+    "cookedfish": 80.0,
+    "lightammo": 2.0,
+    "ammo": 8.0,
+    "heavyammo": 32.0,
+    "pill": 400.0,
+    "cocain": 400.0,
+    "cocaine": 400.0,
+}
+
+
+def total_upstream_production_points(*, item_code: object = None, item_name: object = None) -> float | None:
+    """Return fixed full-chain Production Points required for one factory item."""
+    for value in (item_code, item_name):
+        if value is None:
+            continue
+        key = re.sub(r"[^a-z0-9]", "", str(value).lower())
+        if key in TOTAL_UPSTREAM_PRODUCTION_POINTS:
+            return TOTAL_UPSTREAM_PRODUCTION_POINTS[key]
+    return None
 
 
 @dataclass(frozen=True)
@@ -789,6 +829,7 @@ class MarketMetrics:
     trades_7d: Optional[float]
     high_7d: Optional[float]
     low_7d: Optional[float]
+    total_production_points: Optional[float] = None
     open_7d: Optional[float] = None
     close_7d: Optional[float] = None
     average_7d: Optional[float] = None
@@ -852,6 +893,7 @@ def calculate_metrics(row: dict) -> MarketMetrics:
     item_name = str(row.get("item_name") or row.get("name") or row.get("item") or "Unknown")
     item_code = row.get("item_code")
     item_code = str(item_code) if item_code is not None else None
+    total_production_points = total_upstream_production_points(item_code=item_code, item_name=item_name)
     bid = _float_or_none(row.get("bid"))
     ask = _float_or_none(row.get("ask"))
     current_price = _float_or_none(
@@ -948,6 +990,7 @@ def calculate_metrics(row: dict) -> MarketMetrics:
         trades_7d=trades_7d,
         high_7d=high_7d,
         low_7d=low_7d,
+        total_production_points=total_production_points,
         open_7d=open_7d,
         close_7d=close_7d,
         average_7d=average_7d,
