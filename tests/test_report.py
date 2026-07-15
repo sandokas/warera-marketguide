@@ -623,6 +623,16 @@ def test_market_trends_renders_flat_30d_range_without_a_position_graphic():
     assert "position-track" not in trends_section
 
 
+def test_market_trends_preserves_last_trade_price_precision():
+    report = generate_html_report(pd.DataFrame([{
+        "item_name": "Petroleum",
+        "last_trade_price": 0.1722,
+    }]))
+
+    trends_section = report[report.index("<h2>Market Trends</h2>"):report.index("<h2>Item Notes</h2>")]
+    assert '<td class="col-last-trade number">0.172</td>' in trends_section
+
+
 def test_completed_activity_bar_uses_production_adjusted_work_and_excludes_unknown_factors():
     report = generate_html_report(pd.DataFrame([
         {

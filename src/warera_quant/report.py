@@ -66,11 +66,18 @@ def _fmt_report_value(value: object, *, column: str | None = None) -> str:
         return "N/A"
     if isinstance(value, (int, float)):
         label = str(column or "").lower()
-        if any(token in label for token in ("volume", "trade", "sample")) or label in {"liquidity"}:
+        if (
+            "volume" in label
+            or "sample" in label
+            or label == "trades"
+            or label.endswith("trades")
+            or "trade count" in label
+            or label == "liquidity"
+        ):
             return _fmt(value, 0)
         if "%" in label:
             return _fmt(value, 2)
-        if label in {"now", "latest", "min", "max", "fair", "buy", "sell", "last"} or label.endswith(("low", "high")):
+        if label in {"now", "latest", "min", "max", "fair", "buy", "sell", "last", "last trade"} or label.endswith(("low", "high")):
             return _fmt(value, 3)
         if "price" in label or label in {"open", "close", "vwap", "average", "median", "rolling average"}:
             return _fmt(value, 3)
