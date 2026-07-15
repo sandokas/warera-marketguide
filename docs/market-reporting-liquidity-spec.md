@@ -63,6 +63,14 @@ Columns that answer different questions must not be combined merely because they
 Supporting visualizations—including the order book, activity bars, price-state indicators, and price
 evolution—should be retained when their calculation and purpose are clear.
 
+The fair-value guidance table uses one single-line signal per item: `Buy` when the executable Ask
+reaches `Max Buy`, `Sell` when the executable Bid reaches `Rich Sell`, and `Wait` otherwise. Sell is
+explicitly holder guidance, not short-selling advice. Ask and Bid are quantity-aware executable
+VWAPs, `Max Buy` is fee- and margin-adjusted against Fair, `Rich Sell` requires the configured Fair
+premium subject to the empirical upper range, and `Ask Upside` compares the executable Ask with Fair
+after fees. A synthetic symmetric band and the return between its endpoints must not be shown as
+executable room or profit. Table cells must remain one line high.
+
 ## Output behavior
 
 `--top 0` displays all items; a positive value limits ranked HTML sections. CSV outputs retain the full calculated data frame. The report rank follows the metric sort order, and the automatic featured chart candidate follows that same order.

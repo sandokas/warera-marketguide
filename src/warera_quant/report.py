@@ -106,43 +106,20 @@ def _first_number(row: pd.Series, *columns: str) -> float | None:
 
 
 def _fair_price(row: pd.Series, window_key: str) -> float | None:
-    bid = _first_number(row, "bid", "latest_bid")
-    ask = _first_number(row, "ask", "latest_ask")
-    midpoint = (bid + ask) / 2 if bid is not None and ask is not None else None
     return _first_number(
         row,
+        "guide_fair_price",
         f"stable_fair_price_{window_key}",
         "stable_fair_price_7d",
         f"vwap_{window_key}",
+        f"median_{window_key}",
         f"average_{window_key}",
         f"rolling_average_{window_key}",
-        "last_trade_price",
-        "current_price",
-        "latest_price",
-        "quote_price",
-        "mid_price",
-    ) or midpoint
-
-
-def _fair_price_band(row: pd.Series, window_key: str) -> tuple[float | None, float | None, float | None]:
-    fair = _fair_price(row, window_key)
-    if fair is None:
-        return None, None, None
-
-    spread = _first_number(row, "latest_spread", "spread")
-    stable_range_pct = _first_number(row, f"stable_range_pct_{window_key}", "stable_range_pct_7d")
-    volatility_band = fair * stable_range_pct / 100 * 0.35 if stable_range_pct is not None else None
-    if spread is not None and spread > 0:
-        half_band = spread / 2
-    else:
-        half_band = max(fair * 0.01, 0.001)
-    if volatility_band is not None:
-        half_band = max(half_band, volatility_band)
-    return fair, max(0.0, fair - half_band), fair + half_band
+    )
 
 
 def _latest_price(row: pd.Series) -> float | None:
-    return _first_number(row, "last_trade_price", "current_price", "latest_price", "quote_price", "mid_price")
+    return _first_number(row, "last_trade_price", "current_price", "latest_price")
 
 
 def _price_gap_pct(latest: float | None, fair: float | None) -> float | None:
@@ -524,13 +501,13 @@ def _html_page(title: str, body: str) -> str:
     .price-guide-table th, .price-guide-table td {{ padding: 7px 5px; }}
     .price-guide-table .col-item {{ width: 12%; min-width: 0; font-weight: 700; white-space: nowrap; }}
     .price-guide-table .col-signal {{ width: 8%; text-align: left; white-space: nowrap; }}
-    .price-guide-table .col-now,
+    .price-guide-table .col-ask,
+    .price-guide-table .col-bid,
     .price-guide-table .col-fair,
-    .price-guide-table .col-buy,
-    .price-guide-table .col-sell {{ width: 8%; white-space: nowrap; }}
-    .price-guide-table .col-gap-pct {{ width: 9%; white-space: nowrap; }}
-    .price-guide-table .col-gross-room-pct {{ width: 10%; white-space: nowrap; }}
-    .price-guide-table .col-price-state {{ width: 29%; white-space: nowrap; }}
+    .price-guide-table .col-max-buy,
+    .price-guide-table .col-rich-sell {{ width: 8%; white-space: nowrap; }}
+    .price-guide-table .col-ask-upside-pct {{ width: 10%; white-space: nowrap; }}
+    .price-guide-table .col-price-state {{ width: 30%; white-space: nowrap; }}
     .price-guide-table tr.signal-buy {{ background: linear-gradient(90deg, rgba(15, 118, 110, 0.22), transparent 32%); }}
     .price-guide-table tr.signal-sell {{ background: linear-gradient(90deg, rgba(127, 29, 29, 0.23), transparent 32%); }}
     .signal-help {{
@@ -859,34 +836,26 @@ def _trend_label(value: object) -> str:
     return _chip("Flat", "flat", prefix="→")
 
 
-def _profit_signal(row: pd.Series, buy_below: float | None, sell_above: float | None) -> str:
-    best_bid = _first_number(row, "latest_bid", "bid")
-    best_ask = _first_number(row, "latest_ask", "ask")
-    if best_bid is not None and sell_above is not None and best_bid >= sell_above:
-        return "SELL"
-    if best_ask is not None and buy_below is not None and best_ask <= buy_below:
-        return "BUY"
-    return "WAIT"
-
-
 def _price_guide_html(df: pd.DataFrame, window_key: str, display_count: int) -> str:
     rows = []
     for _, row in df.iterrows():
-        fair, buy_below, sell_above = _fair_price_band(row, window_key)
-        gross_room_pct = (
-            (sell_above - buy_below) / buy_below * 100
-            if buy_below is not None and sell_above is not None and buy_below > 0
-            else None
-        )
+        fair = _fair_price(row, window_key)
+        entry_value = row.get("guide_entry_action")
+        holder_value = row.get("guide_holder_action")
+        entry_action = entry_value if isinstance(entry_value, str) and entry_value in {"BUY", "WAIT"} else "WAIT"
+        holder_action = holder_value if isinstance(holder_value, str) and holder_value in {"SELL", "HOLD"} else "HOLD"
+        signal = "BUY" if entry_action == "BUY" else "SELL" if holder_action == "SELL" else "WAIT"
+        ask = _first_number(row, "guide_executable_ask_vwap", "latest_ask", "ask")
+        bid = _first_number(row, "guide_executable_bid_vwap", "latest_bid", "bid")
         rows.append({
             "Item": row.get("item_name", "Unknown"),
-            "Signal": _profit_signal(row, buy_below, sell_above),
-            "Now": _latest_price(row),
+            "Signal": signal,
+            "Ask": ask,
+            "Bid": bid,
             "Fair": fair,
-            "Gap %": _price_gap_pct(_latest_price(row), fair),
-            "Buy ≤": buy_below,
-            "Sell ≥": sell_above,
-            "Gross Room %": gross_room_pct,
+            "Max Buy": _first_number(row, "guide_max_entry_price"),
+            "Rich Sell": _first_number(row, "guide_rich_exit_price", f"price_p90_{window_key}", "price_p90_7d"),
+            "Ask Upside %": _first_number(row, "guide_net_to_fair_pct"),
             "Price State": _present(
                 row.get("tendency_labels_7d"),
                 _present(
@@ -903,19 +872,13 @@ def _price_guide_html(df: pd.DataFrame, window_key: str, display_count: int) -> 
     view = pd.DataFrame(rows)
     view["_signal_rank"] = view["Signal"].map({"BUY": 0, "SELL": 1, "WAIT": 2}).fillna(3)
     view = view.sort_values(
-        ["_signal_rank", "Gross Room %", "Item"],
+        ["_signal_rank", "Ask Upside %", "Item"],
         ascending=[True, False, True],
         na_position="last",
     ).head(display_count).drop(columns="_signal_rank")
     return (
         '<section><div class="eyebrow">Fair-value detail</div><h2>Fair Value &amp; Buy / Sell Signals</h2>'
-        '<p class="muted">Fair is the same historical reference used in the price-gap cards above. Gap compares Now with Fair; Buy ≤ and Sell ≥ show the calculated limit zones around that reference.</p>'
-        '<div class="signal-help">'
-        '<span class="buy-rule"><strong>BUY</strong>Current best Ask is at or below Buy ≤.</span>'
-        '<span class="sell-rule"><strong>SELL</strong>Current best Bid is at or above Sell ≥.</span>'
-        '<span class="wait-rule"><strong>WAIT</strong>Neither profitable limit zone is available now.</span>'
-        '</div>'
-        '<p class="signal-warning">Gross Room is the planned Buy ≤ to Sell ≥ return before fees; both orders must fill. Never buy at Ask and immediately sell at Bid—that locks in the spread loss.</p>'
+        '<p class="muted">BUY: executable Ask ≤ Max Buy. SELL: executable Bid ≥ Rich Sell (for existing holders). Ask Upside is the fee-adjusted return to Fair. WAIT means neither threshold is available now.</p>'
         + _compact_table_html(view, table_kind="price-guide")
         + '</section>'
     )
@@ -1099,6 +1062,7 @@ def _profit_signal_chip(value: object) -> str:
         "BUY": ("buy", "+"),
         "SELL": ("sell", "−"),
         "WAIT": ("wait", "•"),
+        "HOLD": ("wait", "•"),
     }.get(label, ("check", "•"))
     return _chip(label, tone, prefix=icon)
 
@@ -1326,6 +1290,7 @@ def _is_number_column(column: str) -> bool:
     return (
         label in {
             "now", "latest", "min", "max", "fair", "buy", "sell", "buy ≤", "sell ≥",
+            "max entry", "rich ≥", "max buy", "rich sell",
             "volume", "liquidity", "spread %", "units", "trades", "rank",
             "range", "activity",
         }
@@ -1365,7 +1330,7 @@ def _render_table_cell(column: str, value: object) -> str:
         return f'<span title="{escape(_fmt(number, 0))}">{escape(_fmt_compact(number))}</span>'
     if column.endswith("Momentum %"):
         return _momentum_indicator(value)
-    if column in {"Gap %", "Change %"} or column.endswith("Change %"):
+    if column in {"Gap %", "Change %", "Net to Fair %", "Ask Upside %"} or column.endswith("Change %"):
         return _signed_number(value, invert=column == "Gap %")
     return escape(_fmt_report_value(value, column=column))
 
@@ -1620,7 +1585,7 @@ def generate_html_report(
     if not note_rows.empty:
         notes: list[str] = []
         for _, row in note_rows.iterrows():
-            fair, buy_below, sell_above = _fair_price_band(row, window_key)
+            fair = _fair_price(row, window_key)
             volume = _first_number(row, f"volume_{window_key}", f"traded_quantity_{window_key}")
             trades = _first_number(row, f"trade_count_{window_key}", "trades_7d")
             detail_items = [

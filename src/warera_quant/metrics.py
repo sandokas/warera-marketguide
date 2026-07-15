@@ -88,6 +88,94 @@ class FlipAssumptions:
 
 
 @dataclass(frozen=True)
+class FairValueGuidance:
+    quantity: float
+    entry_action: str
+    holder_action: str
+    executable_ask_vwap: float | None
+    executable_bid_vwap: float | None
+    fair_price: float | None
+    ask_gap_pct: float | None
+    bid_gap_pct: float | None
+    max_entry_price: float | None
+    rich_exit_price: float | None
+    net_to_fair_pct: float | None
+    entry_fully_filled: bool
+    exit_fully_filled: bool
+
+
+def calculate_fair_value_guidance(
+    *,
+    fair_price: object,
+    rich_exit_price: object,
+    executable_ask_vwap: object,
+    executable_bid_vwap: object,
+    entry_fully_filled: bool,
+    exit_fully_filled: bool,
+    assumptions: FlipAssumptions,
+) -> FairValueGuidance:
+    """Build position-specific guidance from valuation and executable prices.
+
+    Fair is the expected exit reference for an entry decision.  The rich-exit
+    threshold requires the configured premium over Fair, capped by the
+    empirical upper transaction percentile. It intentionally does not claim a
+    holder profit because inventory cost basis is unknown.
+    """
+    fair = _finite_float_or_none(fair_price)
+    empirical_rich_exit = _finite_float_or_none(rich_exit_price)
+    ask = _finite_float_or_none(executable_ask_vwap) if entry_fully_filled else None
+    bid = _finite_float_or_none(executable_bid_vwap) if exit_fully_filled else None
+    fee_rate = assumptions.fee_pct_per_side / 100
+    minimum_margin = assumptions.minimum_net_margin_pct / 100
+
+    max_entry = None
+    if fair is not None and fair > 0:
+        max_entry = fair * (1 - fee_rate) / ((1 + fee_rate) * (1 + minimum_margin))
+    rich_exit = None
+    if fair is not None and fair > 0:
+        margin_exit = fair * (1 + minimum_margin)
+        rich_exit = (
+            max(fair, min(empirical_rich_exit, margin_exit))
+            if empirical_rich_exit is not None and empirical_rich_exit > 0
+            else margin_exit
+        )
+
+    ask_gap = (ask - fair) / fair * 100 if ask is not None and fair is not None and fair > 0 else None
+    bid_gap = (bid - fair) / fair * 100 if bid is not None and fair is not None and fair > 0 else None
+    net_to_fair = (
+        (fair * (1 - fee_rate) - ask * (1 + fee_rate)) / (ask * (1 + fee_rate)) * 100
+        if ask is not None and ask > 0 and fair is not None and fair > 0
+        else None
+    )
+
+    entry_action = (
+        "BUY"
+        if ask is not None and max_entry is not None and ask <= max_entry
+        else "WAIT"
+    )
+    holder_action = (
+        "SELL"
+        if bid is not None and rich_exit is not None and rich_exit > 0 and bid >= rich_exit
+        else "HOLD"
+    )
+    return FairValueGuidance(
+        quantity=float(assumptions.quantity),
+        entry_action=entry_action,
+        holder_action=holder_action,
+        executable_ask_vwap=ask,
+        executable_bid_vwap=bid,
+        fair_price=fair,
+        ask_gap_pct=ask_gap,
+        bid_gap_pct=bid_gap,
+        max_entry_price=max_entry,
+        rich_exit_price=rich_exit,
+        net_to_fair_pct=net_to_fair,
+        entry_fully_filled=bool(entry_fully_filled),
+        exit_fully_filled=bool(exit_fully_filled),
+    )
+
+
+@dataclass(frozen=True)
 class FlipOpportunity:
     item_code: str | None
     item_name: str

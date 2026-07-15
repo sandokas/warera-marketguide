@@ -39,7 +39,7 @@ def test_swing_lens_explains_quotes_without_making_momentum_trade_recommendation
     assert "Largest price gaps" in report
     assert "Flip Board" not in report
     assert "Break-even Exit VWAP" not in report
-    assert ">Entry<" not in report
+    assert "Fair Value &amp; Buy / Sell Signals" in report
     assert "Strongest upside signal" not in report
     assert "Strongest downside signal" not in report
     assert "Trust" not in report
@@ -357,7 +357,7 @@ def test_fair_price_table_distinguishes_thresholds_from_historical_range():
     report = generate_html_report(df, top=0, metric_window="7D")
 
     assert ">Break-even Exit VWAP<" not in report
-    assert "Buy / Sell Signals" in report
+    assert "Fair Value &amp; Buy / Sell Signals" in report
     assert "Insufficient" not in report
 
 
@@ -392,7 +392,7 @@ def test_report_does_not_render_internal_flip_fields():
 
     assert "Flip Board" not in report
     assert "Downside P10 net margin" not in report
-    assert ">Entry<" not in report
+    assert "Fair Value &amp; Buy / Sell Signals" in report
     assert ">Forecast Exit<" not in report
     assert ">Expected Net<" not in report
     assert "Largest discount" in report
@@ -449,12 +449,12 @@ def test_report_restores_price_guide_and_renders_transparent_market_depth():
         }],
     }]))
 
-    assert report.index("Largest price gaps") < report.index("Buy / Sell Signals")
-    assert report.index("Buy / Sell Signals") < report.index("Current Order Book")
+    assert report.index("Largest price gaps") < report.index("Fair Value &amp; Buy / Sell Signals")
+    assert report.index("Fair Value &amp; Buy / Sell Signals") < report.index("Current Order Book")
     assert '<th class="col-fair number">Fair</th>' in report
-    assert '<th class="col-gap-pct number">Gap %</th>' in report
-    assert "Fair is the same historical reference used in the price-gap cards above" in report
-    assert ">Buy ≤<" in report and ">Sell ≥<" in report
+    assert '<th class="col-ask number">Ask</th>' in report
+    assert '<th class="col-bid number">Bid</th>' in report
+    assert ">Max Buy<" in report and ">Rich Sell<" in report
     assert '<span class="chip chip-down">Falling</span>' in report
     assert "Current Order Book" in report
     assert "Buy orders vs sell orders" in report
@@ -477,8 +477,7 @@ def test_report_restores_price_guide_and_renders_transparent_market_depth():
     assert ".flip-board" not in report
     assert "Executable fixed-budget depth" not in report
     assert "Insufficient visible depth" not in report
-    assert ">Gross Room %<" in report
-    assert "Never buy at Ask and immediately sell at Bid—that locks in the spread loss" in report
+    assert ">Ask Upside %<" in report
     assert "Completed Market Activity" in report
     assert "Liquidity depth score" not in report
 
@@ -511,13 +510,13 @@ def test_report_aligns_text_left_and_numbers_right_with_semantic_classes():
     }]))
 
     assert 'class="col-item text"' in report
-    assert 'class="col-now number"' in report
+    assert 'class="col-ask number"' in report
     assert 'class="activity-volume number"' in report
     assert 'class="activity-totals number"' in report
     assert '<th class="book-item text">Item</th>' in report
     assert '<th class="book-price number">Best Bid</th>' in report
     assert '<td class="book-price number">0.079</td>' in report
-    assert '<th class="col-gross-room-pct number">Gross Room %</th>' in report
+    assert '<th class="col-ask-upside-pct number">Ask Upside %</th>' in report
     assert "th, td {\n      padding: 8px 9px;\n      border-bottom: 1px solid var(--line);\n      text-align: left;" in report
     assert "th.number, td.number {\n      text-align: right;" in report
     assert ".flip-board th,\n    .flip-board td {\n      padding: 12px 10px;\n      max-width: none;\n      text-align: left;" not in report
@@ -525,31 +524,40 @@ def test_report_aligns_text_left_and_numbers_right_with_semantic_classes():
     assert "td:nth-child" not in report
 
 
-def test_report_emits_auditable_buy_sell_and_wait_signals():
+def test_report_emits_auditable_position_specific_guidance():
     report = generate_html_report(pd.DataFrame([
         {
             "item_name": "Wait Item", "latest_price": 10,
             "latest_ask": 10.05, "latest_bid": 9.95, "stable_fair_price_7d": 10,
+            "guide_entry_action": "WAIT", "guide_holder_action": "HOLD",
+            "guide_max_entry_price": 9.9, "guide_rich_exit_price": 10.2,
+            "guide_net_to_fair_pct": -0.5,
         },
         {
             "item_name": "Sell Item", "latest_price": 10.2,
             "latest_ask": 10.3, "latest_bid": 10.2, "stable_fair_price_7d": 10,
+            "guide_entry_action": "WAIT", "guide_holder_action": "SELL",
+            "guide_max_entry_price": 9.9, "guide_rich_exit_price": 10.2,
+            "guide_net_to_fair_pct": -2.9,
         },
         {
             "item_name": "Buy Item", "latest_price": 9.8,
             "latest_ask": 9.8, "latest_bid": 9.7, "stable_fair_price_7d": 10,
+            "guide_entry_action": "BUY", "guide_holder_action": "HOLD",
+            "guide_max_entry_price": 9.9, "guide_rich_exit_price": 10.2,
+            "guide_net_to_fair_pct": 2.04,
         },
     ]))
 
-    assert "Buy / Sell Signals" in report
+    assert "Fair Value &amp; Buy / Sell Signals" in report
     assert '<span class="chip chip-buy"><span>+</span>BUY</span>' in report
     assert '<span class="chip chip-sell"><span>−</span>SELL</span>' in report
     assert '<span class="chip chip-wait"><span>•</span>WAIT</span>' in report
     assert '<tr class="signal-buy">' in report
     assert '<tr class="signal-sell">' in report
     assert '<tr class="signal-wait">' in report
-    assert "Current best Ask is at or below Buy ≤" in report
-    assert "Current best Bid is at or above Sell ≥" in report
+    assert "BUY: executable Ask ≤ Max Buy" in report
+    assert "SELL: executable Bid ≥ Rich Sell" in report
     assert report.index("Buy Item") < report.index("Sell Item") < report.index("Wait Item")
 
 
@@ -676,7 +684,7 @@ def test_report_ignores_unavailable_internal_flip_data():
     assert "Quote age 0.8m" not in report
     assert "Not enough same-size historical fills" not in report
     assert "Limit idea" not in report
-    assert ">Entry<" not in report
+    assert "Fair Value &amp; Buy / Sell Signals" in report
     assert ">Forecast Exit<" not in report
     assert ">Net<" not in report
     assert "Strongest upside signal" not in report

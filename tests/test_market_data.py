@@ -337,6 +337,10 @@ def test_load_market_rows_falls_back_to_quote_price_when_no_trade_exists(tmp_pat
     assert row["current_price"] == pytest.approx(97.5)
     assert row["latest_price"] == pytest.approx(97.5)
     assert row["quote_gap_pct"] is None
+    assert row["stable_fair_price_1d"] is None
+    assert row["guide_fair_price"] is None
+    assert row["guide_entry_action"] == "WAIT"
+    assert row["guide_holder_action"] == "HOLD"
 
 
 def test_load_market_rows_uses_low_liquidity_fallback_when_depth_is_missing(tmp_path):

@@ -67,6 +67,23 @@ for users without inventory and exit guidance (`Sell now` or `Hold`) for users w
 item, with targets and stop-loss or invalidation levels. `Sell now` never represents a short-selling
 recommendation. Market-state labels must not be confused with either action.
 
+Fair-value guidance uses quantity-aware order-book sweeps. For configured quantity `q`, the current
+Ask and Bid are the ask-side and bid-side executable VWAPs, and guidance fails closed when the full
+quantity is unavailable. It evaluates the latest stored snapshot; stricter quote-age gating remains
+part of execution/flip eligibility rather than erasing fair-value signals. With per-side fee rate
+`f` and minimum net margin `m`, the maximum entry price for a return to stable fair value `F` is:
+
+```text
+max_entry = F * (1 - f) / ((1 + f) * (1 + m))
+net_to_fair = (F * (1 - f) - ask_vwap(q) * (1 + f)) / (ask_vwap(q) * (1 + f))
+```
+
+The market-level rich-exit threshold is Fair plus the configured margin, capped by the
+transaction-price 90th percentile and never allowed below Fair. A holder receives `Sell` only when
+`bid_vwap(q)` reaches that threshold. Because the report does not know inventory cost basis, this is
+a valuation signal rather than a claim of personal profit. Entry and holder thresholds are
+intentionally not manufactured from a symmetric volatility band.
+
 ## Liquidity and attractiveness
 
 Liquidity describes current market structure. It uses fetched depth with a spread penalty:

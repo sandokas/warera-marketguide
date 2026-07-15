@@ -13,8 +13,10 @@ from .metrics import (
     FORECAST_MODEL_VERSION,
     ForecastEvaluationRow,
     ForecastValidationResult,
+    FairValueGuidance,
     FlipAssumptions,
     calculate_book_sweep,
+    calculate_fair_value_guidance,
     calculate_notional_book_sweep,
     calculate_direction_signal,
     calculate_flip_opportunity,
@@ -376,6 +378,7 @@ def load_market_rows(
         snapshot_at = str(snapshot["observed_at"]) if snapshot is not None else None
         quote_age_minutes = None
         entry_sweep = None
+        exit_sweep = None
         asks = None
         best_bid = None
         best_ask = None
@@ -390,6 +393,7 @@ def load_market_rows(
                 bids = snapshot.get("bids", ())
                 asks = snapshot.get("asks", ())
                 entry_sweep = calculate_book_sweep(asks, side="buy", quantity=assumptions.quantity)
+                exit_sweep = calculate_book_sweep(bids, side="sell", quantity=assumptions.quantity)
                 book_summary = summarize_order_book(bids=bids, asks=asks)
                 row["order_book"] = asdict(book_summary)
                 row["order_book_executions"] = [
@@ -418,6 +422,21 @@ def load_market_rows(
             "gross_flip_return_p90_pct": forecast.gross_flip_return_p90_pct,
         }, assumptions)
         row.update(opportunity_fields(opportunity))
+        guidance_window = next(
+            (window for window in report_windows if window.label == "7D"),
+            report_windows[0],
+        )
+        guidance_stats = window_stats[guidance_window.label]
+        guidance = calculate_fair_value_guidance(
+            fair_price=guidance_stats.get("stable_fair_price"),
+            rich_exit_price=guidance_stats.get("price_p90"),
+            executable_ask_vwap=entry_sweep.average_price if entry_sweep is not None else None,
+            executable_bid_vwap=exit_sweep.average_price if exit_sweep is not None else None,
+            entry_fully_filled=bool(entry_sweep and entry_sweep.fully_filled),
+            exit_fully_filled=bool(exit_sweep and exit_sweep.fully_filled),
+            assumptions=assumptions,
+        )
+        row.update(guidance_fields(guidance))
         rows.append(row)
 
     return rows
@@ -429,6 +448,10 @@ def opportunity_fields(opportunity: object) -> dict[str, Any]:
         "flip_reason_codes": ",".join(values.pop("reason_codes")),
         **{f"flip_{key}": value for key, value in values.items() if key not in {"item_code", "item_name"}},
     }
+
+
+def guidance_fields(guidance: FairValueGuidance) -> dict[str, Any]:
+    return {f"guide_{key}": value for key, value in asdict(guidance).items()}
 
 
 def load_chart_trades(
@@ -554,7 +577,7 @@ def _window_stats(
         else None
     )
     spread_pct = _number_or_none(latest_book.get("spread_pct"))
-    average_price = (sum(trade_prices) / len(trade_prices)) if trade_prices else latest_price
+    average_price = (sum(trade_prices) / len(trade_prices)) if trade_prices else None
     current_price = _select_current_price(last_trade_price, quote_price, mid_price)
     rolling_average = _rolling_average(trade_prices, fallback=average_price)
     median_price = _median(trade_prices)
@@ -575,7 +598,7 @@ def _window_stats(
             ]
             if stats_price is not None
         ],
-        fallback=average_price,
+        fallback=None,
     )
     bid_depth = _number_or_none(latest_book.get("bid_depth")) or 0.0
     ask_depth = _number_or_none(latest_book.get("ask_depth")) or 0.0
@@ -598,8 +621,8 @@ def _window_stats(
         "volume": volume,
         "traded_quantity": volume,
         "traded_value": traded_value,
-        "min": min(trade_prices, default=latest_price),
-        "max": max(trade_prices, default=latest_price),
+        "min": min(trade_prices) if trade_prices else None,
+        "max": max(trade_prices) if trade_prices else None,
         "average": average_price,
         "vwap": (vwap_value / vwap_quantity) if vwap_quantity > 0 else None,
         "median": median_price,

@@ -6,6 +6,7 @@ from warera_quant.metrics import (
     FlipAssumptions,
     calculate_book_sweep,
     calculate_flip_opportunity,
+    calculate_fair_value_guidance,
     calculate_direction_signal,
     calculate_liquidity_score,
     calculate_notional_book_sweep,
@@ -17,6 +18,46 @@ from warera_quant.metrics import (
     summarize_order_book,
 )
 from warera_quant.warera_api import OrderLevel
+
+
+def test_fair_value_guidance_uses_executable_prices_fees_and_position_specific_actions():
+    guidance = calculate_fair_value_guidance(
+        fair_price=10,
+        rich_exit_price=11,
+        executable_ask_vwap=9.6,
+        executable_bid_vwap=11.1,
+        entry_fully_filled=True,
+        exit_fully_filled=True,
+        assumptions=FlipAssumptions(
+            quantity=5,
+            fee_pct_per_side=1,
+            minimum_net_margin_pct=2,
+        ),
+    )
+
+    assert guidance.max_entry_price == pytest.approx(10 * 0.99 / (1.01 * 1.02))
+    assert guidance.rich_exit_price == pytest.approx(10.2)
+    assert guidance.net_to_fair_pct == pytest.approx((10 * 0.99 - 9.6 * 1.01) / (9.6 * 1.01) * 100)
+    assert guidance.ask_gap_pct == pytest.approx(-4)
+    assert guidance.bid_gap_pct == pytest.approx(11)
+    assert guidance.entry_action == "BUY"
+    assert guidance.holder_action == "SELL"
+
+
+def test_fair_value_guidance_fails_closed_for_unfilled_quotes():
+    guidance = calculate_fair_value_guidance(
+        fair_price=10,
+        rich_exit_price=11,
+        executable_ask_vwap=9,
+        executable_bid_vwap=12,
+        entry_fully_filled=False,
+        exit_fully_filled=True,
+        assumptions=FlipAssumptions(max_quote_age_minutes=30),
+    )
+
+    assert guidance.executable_ask_vwap is None
+    assert guidance.entry_action == "WAIT"
+    assert guidance.holder_action == "SELL"
 
 
 def test_book_sweep_calculates_multilevel_buy_vwap_without_mutating_input():
