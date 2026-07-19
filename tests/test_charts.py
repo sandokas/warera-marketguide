@@ -11,8 +11,21 @@ from warera_quant.charts import (
     normalize_ohlc,
     plot_price_chart,
     render_featured_chart,
+    render_table_png,
     render_trend_path_svg,
 )
+
+
+def test_render_table_png_writes_image(tmp_path: Path):
+    output = render_table_png(
+        pd.DataFrame([{"Item": "Bread", "Bid": "1.200", "Ask": "1.300"}]),
+        tmp_path / "tables" / "prices.png",
+        title="Prices",
+    )
+
+    assert output == tmp_path / "tables" / "prices.png"
+    assert output.exists()
+    assert output.stat().st_size > 0
 
 
 def _trade(created_at: str, price: float, quantity: float = 1) -> dict:

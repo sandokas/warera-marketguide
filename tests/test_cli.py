@@ -15,6 +15,11 @@ def test_order_book_sync_defaults_to_api_maximum():
     assert args.order_limit == 100
 
 
+def test_table_pngs_is_opt_in():
+    assert build_parser().parse_args([]).table_pngs is False
+    assert build_parser().parse_args(["--table-pngs"]).table_pngs is True
+
+
 def test_from_db_preserves_structured_order_book_for_report(monkeypatch, tmp_path):
     class DummyStore:
         def __init__(self, _path):

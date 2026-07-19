@@ -15,6 +15,55 @@ logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
 
 import mplfinance as mpf
 import pandas as pd
+from matplotlib import pyplot as plt
+
+
+def render_table_png(
+    table: pd.DataFrame,
+    output_path: str | Path,
+    *,
+    title: str,
+) -> Path:
+    """Render a report table as a standalone PNG image."""
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    display = table.fillna("").astype(str)
+    row_count = max(len(display), 1)
+    column_count = max(len(display.columns), 1)
+    width = min(24.0, max(8.0, column_count * 2.05))
+    height = max(2.4, 1.15 + row_count * 0.42)
+    figure, axis = plt.subplots(figsize=(width, height), dpi=160)
+    figure.patch.set_facecolor("#f7f8fa")
+    axis.set_facecolor("#f7f8fa")
+    axis.axis("off")
+    axis.set_title(title, loc="left", fontsize=15, fontweight="bold", color="#172033", pad=14)
+
+    rendered = axis.table(
+        cellText=display.values.tolist(),
+        colLabels=[str(column) for column in display.columns],
+        cellLoc="left",
+        colLoc="left",
+        loc="upper left",
+        bbox=[0, 0, 1, 0.96],
+    )
+    rendered.auto_set_font_size(False)
+    rendered.set_fontsize(8)
+    for (row, _column), cell in rendered.get_celld().items():
+        cell.set_edgecolor("#d8dde7")
+        cell.set_linewidth(0.5)
+        cell.PAD = 0.045
+        if row == 0:
+            cell.set_facecolor("#25324a")
+            cell.get_text().set_color("white")
+            cell.get_text().set_fontweight("bold")
+        else:
+            cell.set_facecolor("#ffffff" if row % 2 else "#f0f3f8")
+            cell.get_text().set_color("#172033")
+
+    figure.savefig(output, bbox_inches="tight", facecolor=figure.get_facecolor())
+    plt.close(figure)
+    return output
 
 
 def render_trend_path_svg(

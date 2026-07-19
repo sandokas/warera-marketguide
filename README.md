@@ -154,6 +154,14 @@ PYTHONPATH=src .venv/bin/python run_report.py \
 
 The featured chart is written to `output/charts/featured-trade.png` and embedded in the HTML report. Use `--featured-item-code bread` to prefer a particular item and `--chart-min-range-pct 5` to set the minimum visible price range. A moving average is shown only when `--lookback-days` is greater than 1.
 
+Export every table in the generated report as a standalone PNG:
+
+```bash
+PYTHONPATH=src .venv/bin/python run_report.py --table-pngs --output output
+```
+
+The images are written to `output/tables/` in the same order as the HTML report.
+
 ## Other input modes
 
 ### CSV

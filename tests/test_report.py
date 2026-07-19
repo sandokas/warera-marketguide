@@ -1,7 +1,20 @@
 import pandas as pd
 
 from warera_quant.metrics import FlipAssumptions
-from warera_quant.report import generate_html_report, write_outputs
+from warera_quant.report import extract_report_tables, generate_html_report, write_outputs
+
+
+def test_extract_report_tables_preserves_headings_and_cell_text():
+    tables = extract_report_tables(
+        "<section><h2>Prices &amp; Signals</h2><table><thead><tr><th>Item</th>"
+        "<th>Signal</th></tr></thead><tbody><tr><td>Bread</td>"
+        "<td><span>↑</span> Buy</td></tr></tbody></table></section>"
+    )
+
+    assert len(tables) == 1
+    title, table = tables[0]
+    assert title == "Prices & Signals"
+    assert table.to_dict(orient="records") == [{"Item": "Bread", "Signal": "↑ Buy"}]
 
 
 def test_report_omits_redundant_price_evolution_lens():
