@@ -118,13 +118,21 @@ def test_report_foregrounds_market_trends_and_writes_compatibility_csv(tmp_path)
         }
     ])
 
-    trends_path, html_path = write_outputs(df, tmp_path, metric_window="7D")
+    trends_path, html_path = write_outputs(
+        df,
+        tmp_path,
+        metric_window="7D",
+        data_synced_at="2026-06-30T10:00:00Z",
+        data_sync_status="complete",
+    )
     report = html_path.read_text(encoding="utf-8")
 
     assert trends_path.name == "market_trends.csv"
     assert trends_path.exists()
     assert (tmp_path / "market_scores.csv").exists()
     assert "Market intelligence, without the noise." in report
+    assert "Market data synced 2026-06-30 10:00 UTC" in report
+    assert "Report generated " in report
     assert "Market Signals" not in report
     assert "Strongest upside signal" not in report
     assert "Flip Board" not in report

@@ -145,12 +145,17 @@ def sync_market_data(
             _log(progress, f"[{index}/{len(item_codes)}] {item_code}: sync failed: {exc}")
 
     store.insert_order_book_observations(order_books, observed_at)
-    return MarketSyncResult(
+    result = MarketSyncResult(
         observed_at=observed_at,
         prices_observed=len(prices),
         order_books_observed=len(order_books),
         items=item_results,
     )
+    store.record_market_sync(
+        observed_at,
+        status="partial" if result.error_count else "complete",
+    )
+    return result
 
 
 def _sync_item_transactions(

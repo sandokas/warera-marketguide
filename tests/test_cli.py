@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import pytest
+from types import SimpleNamespace
 
 import warera_quant.cli as cli_module
 from warera_quant.cli import build_parser, main
@@ -25,6 +26,12 @@ def test_from_db_preserves_structured_order_book_for_report(monkeypatch, tmp_pat
         def __exit__(self, *_args):
             return None
 
+        def market_sync_metadata(self):
+            return SimpleNamespace(
+                synced_at="2026-06-30T10:00:00Z",
+                status="complete",
+            )
+
     captured = {}
     book = {"best_bid": 9, "best_ask": 10, "bids": [], "asks": []}
     monkeypatch.setattr(cli_module, "MarketStore", DummyStore)
@@ -40,6 +47,7 @@ def test_from_db_preserves_structured_order_book_for_report(monkeypatch, tmp_pat
 
     def capture_outputs(df, output_dir, **_kwargs):
         captured["book"] = df.iloc[0]["order_book"]
+        captured["data_synced_at"] = _kwargs["data_synced_at"]
         return output_dir / "market_trends.csv", output_dir / "market_report.html"
 
     monkeypatch.setattr(cli_module, "write_outputs", capture_outputs)
@@ -51,6 +59,7 @@ def test_from_db_preserves_structured_order_book_for_report(monkeypatch, tmp_pat
     main()
 
     assert captured["book"] == book
+    assert captured["data_synced_at"] == "2026-06-30T10:00:00Z"
 
 
 @pytest.mark.parametrize(

@@ -64,6 +64,12 @@ class HousekeepingSummary:
         )
 
 
+@dataclass(frozen=True)
+class MarketSyncMetadata:
+    synced_at: str
+    status: str
+
+
 class MarketStore:
     def __init__(self, path: str | Path):
         self.path = Path(path)
@@ -104,6 +110,7 @@ class MarketStore:
         if self.user_version() != self.schema_version():
             with connection:
                 connection.execute(f"pragma user_version = {self.schema_version()}")
+        _backfill_market_sync_metadata(connection)
 
     def schema_version(self) -> int:
         connection = self._connect()
@@ -198,6 +205,34 @@ class MarketStore:
                 """,
                 (item_code, attempted_at_text, str(error)),
             )
+
+    def record_market_sync(self, synced_at: datetime, *, status: str) -> None:
+        if status not in {"complete", "partial"}:
+            raise ValueError("market sync status must be 'complete' or 'partial'.")
+        with self._connect():
+            self._connect().executemany(
+                "insert or replace into schema_meta (key, value) values (?, ?)",
+                (
+                    ("last_market_sync_at", _format_datetime(synced_at)),
+                    ("last_market_sync_status", status),
+                ),
+            )
+
+    def market_sync_metadata(self) -> MarketSyncMetadata | None:
+        connection = self._connect()
+        _backfill_market_sync_metadata(connection)
+        rows = connection.execute(
+            "select key, value from schema_meta where key in (?, ?)",
+            ("last_market_sync_at", "last_market_sync_status"),
+        ).fetchall()
+        values = {row["key"]: row["value"] for row in rows}
+        synced_at = values.get("last_market_sync_at")
+        if synced_at is None:
+            return None
+        return MarketSyncMetadata(
+            synced_at=synced_at,
+            status=values.get("last_market_sync_status", "inferred"),
+        )
 
     def upsert_transactions(
         self,
@@ -703,6 +738,36 @@ def _ensure_schema_meta(connection: sqlite3.Connection) -> None:
                 value text not null
             )
             """
+        )
+
+
+def _backfill_market_sync_metadata(connection: sqlite3.Connection) -> None:
+    existing = connection.execute(
+        "select 1 from schema_meta where key = 'last_market_sync_at'"
+    ).fetchone()
+    if existing is not None:
+        return
+    row = connection.execute(
+        """
+        select observed_at
+        from (
+            select observed_at, observed_at_epoch from price_observations
+            union all
+            select observed_at, observed_at_epoch from order_book_observations
+        )
+        order by observed_at_epoch desc
+        limit 1
+        """
+    ).fetchone()
+    if row is None:
+        return
+    with connection:
+        connection.executemany(
+            "insert or replace into schema_meta (key, value) values (?, ?)",
+            (
+                ("last_market_sync_at", row["observed_at"]),
+                ("last_market_sync_status", "inferred"),
+            ),
         )
 
 

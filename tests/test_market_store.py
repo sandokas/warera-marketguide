@@ -347,3 +347,31 @@ def test_housekeeping_vacuums_only_when_free_pages_exist_and_interval_is_due(tmp
         assert first.price_observations_deleted == 499
         assert first.vacuumed is True
         assert second.vacuumed is False
+
+
+def test_market_sync_metadata_persists_across_store_instances(tmp_path):
+    path = tmp_path / "market.sqlite3"
+    synced_at = datetime(2026, 7, 20, 12, tzinfo=timezone.utc)
+    with MarketStore(path) as store:
+        store.record_market_sync(synced_at, status="partial")
+
+    with MarketStore(path) as reopened:
+        metadata = reopened.market_sync_metadata()
+
+    assert metadata is not None
+    assert metadata.synced_at == "2026-07-20T12:00:00Z"
+    assert metadata.status == "partial"
+
+
+def test_existing_database_infers_initial_sync_metadata_from_latest_observation(tmp_path):
+    path = tmp_path / "market.sqlite3"
+    observed_at = datetime(2026, 7, 20, 12, tzinfo=timezone.utc)
+    with MarketStore(path) as store:
+        store.insert_price_observations({"bread": 5}, observed_at)
+
+    with MarketStore(path) as reopened:
+        metadata = reopened.market_sync_metadata()
+
+    assert metadata is not None
+    assert metadata.synced_at == "2026-07-20T12:00:00Z"
+    assert metadata.status == "inferred"

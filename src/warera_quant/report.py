@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 from typing import Iterable
@@ -230,6 +230,7 @@ def _html_page(title: str, body: str) -> str:
     .hero-copy > p {{ margin-bottom: 0; max-width: 650px; }}
     .hero-meta {{ color: var(--muted); font-size: 0.82rem; text-align: left; white-space: nowrap; }}
     .hero-meta strong {{ display: block; margin-bottom: 4px; color: var(--text); font-size: 0.92rem; }}
+    .hero-meta span {{ display: block; }}
     .panel {{
       background: var(--panel);
       border: 1px solid var(--line);
@@ -1428,8 +1429,23 @@ def generate_html_report(
     chart_label: str | None = None,
     output_dir: str | Path = ".",
     assumptions: FlipAssumptions | None = None,
+    data_synced_at: str | None = None,
+    data_sync_status: str | None = None,
 ) -> str:
-    generated = datetime.now().strftime("%Y-%m-%d %H:%M")
+    generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    sync_timestamp = _display_report_timestamp(data_synced_at)
+    sync_status = (
+        " (partial)"
+        if data_sync_status == "partial"
+        else " (inferred)"
+        if data_sync_status == "inferred"
+        else ""
+    )
+    data_freshness = (
+        f"Market data synced {escape(sync_timestamp + sync_status)}"
+        if sync_timestamp is not None
+        else "Market data sync time unavailable"
+    )
     display_count = len(df) if top <= 0 else top
     window_key = _window_key(metric_window)
     blocks: list[str] = []
@@ -1440,7 +1456,7 @@ def generate_html_report(
         <h1>Market intelligence, without the noise.</h1>
         <p class="muted">Completed trades provide price history; current visible orders provide executable prices and market depth.</p>
       </div>
-      <div class="hero-meta"><strong>{escape(metric_window)} analysis window</strong>Updated {escape(generated)}</div>
+      <div class="hero-meta"><strong>{escape(metric_window)} analysis window</strong><span>{data_freshness}</span><span>Report generated {escape(generated)}</span></div>
 </header>
 """
     )
@@ -1556,6 +1572,8 @@ def write_outputs(
     chart_path: str | Path | None = None,
     chart_label: str | None = None,
     assumptions: FlipAssumptions | None = None,
+    data_synced_at: str | None = None,
+    data_sync_status: str | None = None,
 ) -> tuple[Path, Path]:
     assumptions = assumptions or FlipAssumptions()
     export_df = df.copy()
@@ -1599,7 +1617,21 @@ def write_outputs(
             chart_label=chart_label,
             output_dir=out,
             assumptions=assumptions,
+            data_synced_at=data_synced_at,
+            data_sync_status=data_sync_status,
         ),
         encoding="utf-8",
     )
     return trends_csv_path, html_path
+
+
+def _display_report_timestamp(value: str | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return value
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")

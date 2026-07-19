@@ -173,6 +173,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
     output_dir = Path(args.output)
+    data_sync_metadata = None
     try:
         config = load_config(args.config)
     except ConfigError as exc:
@@ -263,6 +264,7 @@ def main() -> None:
                 min_tick=args.min_tick,
                 flip_assumptions=assumptions,
             )
+            data_sync_metadata = store.market_sync_metadata()
         if not args.quiet:
             print(
                 f"Synced {sync_result.prices_observed} price(s), "
@@ -290,6 +292,7 @@ def main() -> None:
                 min_tick=args.min_tick,
                 flip_assumptions=assumptions,
             )
+            data_sync_metadata = store.market_sync_metadata()
         df_in = pd.DataFrame(rows)
     elif args.api_endpoint:
         client = WarEraApiClient(min_interval_seconds=args.min_interval)
@@ -386,6 +389,8 @@ def main() -> None:
         chart_path=chart_path,
         chart_label=chart_label,
         assumptions=assumptions,
+        data_synced_at=data_sync_metadata.synced_at if data_sync_metadata else None,
+        data_sync_status=data_sync_metadata.status if data_sync_metadata else None,
     )
     print(f"Wrote {csv_path}")
     print(f"Wrote {report_path}")

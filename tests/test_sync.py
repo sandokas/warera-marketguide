@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from warera_quant.market_store import MarketStore, SyncSummary
 from warera_quant.sync import sync_market_data
 from warera_quant.warera_api import OrderLevel, TopOrders, TransactionPage
@@ -281,3 +283,49 @@ def test_verbose_sync_logs_transaction_page_import_details(tmp_path):
         for message in messages
     )
     assert any("bread: stopped because API returned no next cursor." in message for message in messages)
+
+
+def test_sync_persists_complete_and_partial_run_status(tmp_path):
+    observed_at = datetime(2026, 6, 30, 10, 0, tzinfo=timezone.utc)
+    api = FakeMarketApi({
+        ("bread", None): PageResponse(
+            items=[_transaction("tx-new", "2026-06-30T09:30:00Z")],
+        ),
+    })
+
+    with _store(tmp_path) as store:
+        complete = sync_market_data(api, store, observed_at=observed_at)
+        metadata = store.market_sync_metadata()
+
+        assert complete.error_count == 0
+        assert metadata is not None
+        assert metadata.synced_at == "2026-06-30T10:00:00Z"
+        assert metadata.status == "complete"
+
+        api.get_top_orders = lambda _item_code, _limit: (_ for _ in ()).throw(RuntimeError("down"))
+        partial_at = datetime(2026, 6, 30, 11, 0, tzinfo=timezone.utc)
+        partial = sync_market_data(api, store, observed_at=partial_at)
+        metadata = store.market_sync_metadata()
+
+        assert partial.error_count == 1
+        assert metadata is not None
+        assert metadata.synced_at == "2026-06-30T11:00:00Z"
+        assert metadata.status == "partial"
+
+
+def test_failed_sync_does_not_advance_persisted_sync_time(tmp_path):
+    synced_at = datetime(2026, 6, 30, 10, 0, tzinfo=timezone.utc)
+    api = FakeMarketApi({})
+
+    with _store(tmp_path) as store:
+        store.record_market_sync(synced_at, status="complete")
+        api.get_prices = lambda: (_ for _ in ()).throw(RuntimeError("offline"))
+
+        with pytest.raises(RuntimeError, match="offline"):
+            sync_market_data(api, store, observed_at=synced_at.replace(hour=11))
+
+        metadata = store.market_sync_metadata()
+
+    assert metadata is not None
+    assert metadata.synced_at == "2026-06-30T10:00:00Z"
+    assert metadata.status == "complete"

@@ -125,6 +125,11 @@ PYTHONPATH=src .venv/bin/python run_report.py \
 
 When no input option is supplied, the CLI uses the default market database if it exists; otherwise it uses `data/sample_market.csv`. Prefer `--from-db` or an explicit CSV path in scripts so the input is clear.
 
+DB-backed reports persist and display the latest completed market-sync timestamp separately from
+the time the report itself was generated. A sync with item-level errors is marked as partial, and a
+failed sync does not advance the stored freshness timestamp. Existing databases infer their initial
+timestamp from the newest stored market observation.
+
 Completed activity uses two bars. Completed Value sums transaction price × quantity
 for every item and determines the row order. PP-equivalent Volume multiplies completed
 units by the total upstream Production Points (PP) required for one item; for example,
