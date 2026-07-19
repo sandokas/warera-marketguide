@@ -3,4 +3,5 @@ pandas>=2.0.0
 python-dotenv>=1.0.0
 tabulate>=0.9.0
 mplfinance>=0.12.10b0
+playwright>=1.48.0
 pytest>=9.1.0

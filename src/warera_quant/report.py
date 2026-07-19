@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import asdict
 from datetime import datetime, timezone
 from html import escape
-from html.parser import HTMLParser
 from pathlib import Path
 from typing import Iterable
 
@@ -1419,67 +1418,6 @@ def _relative_chart_path(chart_path: str | Path | None, output_dir: Path) -> str
         return path.relative_to(output_dir).as_posix()
     except ValueError:
         return path.as_posix()
-
-
-class _ReportTableParser(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__()
-        self.section_title = "Report Table"
-        self._heading_parts: list[str] | None = None
-        self._cell_parts: list[str] | None = None
-        self._row: list[str] | None = None
-        self._headers: list[str] = []
-        self._rows: list[list[str]] = []
-        self._in_header = False
-        self.tables: list[tuple[str, pd.DataFrame]] = []
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag == "h2":
-            self._heading_parts = []
-        elif tag == "table":
-            self._headers, self._rows = [], []
-        elif tag == "thead":
-            self._in_header = True
-        elif tag == "tr":
-            self._row = []
-        elif tag in {"th", "td"}:
-            self._cell_parts = []
-
-    def handle_data(self, data: str) -> None:
-        text = data.strip()
-        if not text:
-            return
-        if self._heading_parts is not None:
-            self._heading_parts.append(text)
-        if self._cell_parts is not None:
-            self._cell_parts.append(text)
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "h2" and self._heading_parts is not None:
-            self.section_title = " ".join(self._heading_parts)
-            self._heading_parts = None
-        elif tag in {"th", "td"} and self._cell_parts is not None:
-            if self._row is not None:
-                self._row.append(" ".join(self._cell_parts))
-            self._cell_parts = None
-        elif tag == "tr" and self._row is not None:
-            if self._in_header:
-                self._headers = self._row
-            elif self._row:
-                self._rows.append(self._row)
-            self._row = None
-        elif tag == "thead":
-            self._in_header = False
-        elif tag == "table" and self._headers:
-            rows = [row[:len(self._headers)] + [""] * (len(self._headers) - len(row)) for row in self._rows]
-            self.tables.append((self.section_title, pd.DataFrame(rows, columns=self._headers)))
-
-
-def extract_report_tables(html: str) -> list[tuple[str, pd.DataFrame]]:
-    """Return the visible report tables with their section headings."""
-    parser = _ReportTableParser()
-    parser.feed(html)
-    return parser.tables
 
 
 def generate_html_report(

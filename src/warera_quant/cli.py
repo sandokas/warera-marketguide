@@ -7,14 +7,14 @@ from pathlib import Path
 import pandas as pd
 
 from .api_client import WarEraApiClient
-from .charts import featured_item_codes, render_featured_chart, render_table_png
+from .charts import featured_item_codes, render_featured_chart, render_report_table_pngs
 from .config import ConfigError, load_config
 from .csv_loader import load_market_csv
 from .json_loader import market_json_to_dataframe
 from .market_data import load_chart_data, load_market_rows, opportunity_fields
 from .market_store import MarketStore
 from .metrics import FlipAssumptions, calculate_flip_opportunity, calculate_metrics
-from .report import combine_market_rows_with_metrics, extract_report_tables, write_outputs
+from .report import combine_market_rows_with_metrics, write_outputs
 from .sync import sync_market_data
 from .warera_api import WarEraMarketApi
 
@@ -400,17 +400,7 @@ def main() -> None:
     print(f"Wrote {csv_path}")
     print(f"Wrote {report_path}")
     if args.table_pngs:
-        table_dir = output_dir / "tables"
-        for index, (title, table) in enumerate(
-            extract_report_tables(report_path.read_text(encoding="utf-8")),
-            start=1,
-        ):
-            slug = "-".join(part for part in title.lower().replace("&", "and").split() if part.isalnum())
-            table_path = render_table_png(
-                table,
-                table_dir / f"{index:02d}-{slug or 'table'}.png",
-                title=title,
-            )
+        for table_path in render_report_table_pngs(report_path, output_dir / "tables"):
             print(f"Wrote {table_path}")
 
 

@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 
@@ -11,21 +12,75 @@ from warera_quant.charts import (
     normalize_ohlc,
     plot_price_chart,
     render_featured_chart,
-    render_table_png,
+    render_report_table_pngs,
     render_trend_path_svg,
 )
 
 
-def test_render_table_png_writes_image(tmp_path: Path):
-    output = render_table_png(
-        pd.DataFrame([{"Item": "Bread", "Bid": "1.200", "Ask": "1.300"}]),
-        tmp_path / "tables" / "prices.png",
-        title="Prices",
+def test_render_report_table_pngs_uses_styled_sections(monkeypatch, tmp_path: Path):
+    report = tmp_path / "market_report.html"
+    report.write_text("<html><section><h2>Prices &amp; Signals</h2><table class='report-table'></table></section></html>")
+    screenshots = []
+
+    class FakeSection:
+        def locator(self, selector):
+            assert selector == "h2"
+            return SimpleNamespace(first=SimpleNamespace(text_content=lambda: "Prices & Signals"))
+
+        def screenshot(self, **kwargs):
+            screenshots.append(kwargs)
+            Path(kwargs["path"]).write_bytes(b"png")
+
+    class FakeSections:
+        def count(self):
+            return 1
+
+        def nth(self, index):
+            assert index == 0
+            return FakeSection()
+
+    class FakePage:
+        def goto(self, url, **kwargs):
+            assert url == report.resolve().as_uri()
+            assert kwargs == {"wait_until": "load"}
+
+        def evaluate(self, expression):
+            assert expression == "document.fonts.ready"
+
+        def locator(self, selector):
+            assert selector == "section:has(table.report-table)"
+            return FakeSections()
+
+    class FakeBrowser:
+        def new_page(self, **kwargs):
+            assert kwargs["viewport"] == {"width": 1440, "height": 1080}
+            return FakePage()
+
+        def close(self):
+            pass
+
+    class FakePlaywright:
+        chromium = SimpleNamespace(
+            launch=lambda **kwargs: FakeBrowser(),
+        )
+
+    class FakeContext:
+        def __enter__(self):
+            return FakePlaywright()
+
+        def __exit__(self, *_args):
+            pass
+
+    monkeypatch.setattr("playwright.sync_api.sync_playwright", lambda: FakeContext())
+    outputs = render_report_table_pngs(
+        report,
+        tmp_path / "tables",
+        browser_executable="/usr/bin/google-chrome",
     )
 
-    assert output == tmp_path / "tables" / "prices.png"
-    assert output.exists()
-    assert output.stat().st_size > 0
+    assert outputs == [tmp_path / "tables" / "01-prices-and-signals.png"]
+    assert outputs[0].read_bytes() == b"png"
+    assert screenshots == [{"path": str(outputs[0]), "animations": "disabled"}]
 
 
 def _trade(created_at: str, price: float, quantity: float = 1) -> dict:

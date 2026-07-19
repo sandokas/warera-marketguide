@@ -4,6 +4,7 @@ from collections.abc import Mapping
 import logging
 import os
 from pathlib import Path
+import shutil
 from typing import Any, Iterable
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/warera-quant-matplotlib")
@@ -15,55 +16,81 @@ logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
 
 import mplfinance as mpf
 import pandas as pd
-from matplotlib import pyplot as plt
 
 
-def render_table_png(
-    table: pd.DataFrame,
-    output_path: str | Path,
-    *,
-    title: str,
-) -> Path:
-    """Render a report table as a standalone PNG image."""
-    output = Path(output_path)
-    output.parent.mkdir(parents=True, exist_ok=True)
+def _chrome_executable(explicit_path: str | Path | None = None) -> str:
+    if explicit_path is not None:
+        executable = Path(explicit_path)
+        if executable.is_file():
+            return str(executable)
+        raise RuntimeError(f"Chrome executable does not exist: {executable}")
 
-    display = table.fillna("").astype(str)
-    row_count = max(len(display), 1)
-    column_count = max(len(display.columns), 1)
-    width = min(24.0, max(8.0, column_count * 2.05))
-    height = max(2.4, 1.15 + row_count * 0.42)
-    figure, axis = plt.subplots(figsize=(width, height), dpi=160)
-    figure.patch.set_facecolor("#f7f8fa")
-    axis.set_facecolor("#f7f8fa")
-    axis.axis("off")
-    axis.set_title(title, loc="left", fontsize=15, fontweight="bold", color="#172033", pad=14)
-
-    rendered = axis.table(
-        cellText=display.values.tolist(),
-        colLabels=[str(column) for column in display.columns],
-        cellLoc="left",
-        colLoc="left",
-        loc="upper left",
-        bbox=[0, 0, 1, 0.96],
+    for name in ("google-chrome", "chromium", "chromium-browser"):
+        executable = shutil.which(name)
+        if executable:
+            return executable
+    raise RuntimeError(
+        "Table PNG export requires Google Chrome or Chromium. "
+        "Set WARERA_CHROME_PATH if the browser is installed outside PATH."
     )
-    rendered.auto_set_font_size(False)
-    rendered.set_fontsize(8)
-    for (row, _column), cell in rendered.get_celld().items():
-        cell.set_edgecolor("#d8dde7")
-        cell.set_linewidth(0.5)
-        cell.PAD = 0.045
-        if row == 0:
-            cell.set_facecolor("#25324a")
-            cell.get_text().set_color("white")
-            cell.get_text().set_fontweight("bold")
-        else:
-            cell.set_facecolor("#ffffff" if row % 2 else "#f0f3f8")
-            cell.get_text().set_color("#172033")
 
-    figure.savefig(output, bbox_inches="tight", facecolor=figure.get_facecolor())
-    plt.close(figure)
-    return output
+
+def _table_image_slug(title: str) -> str:
+    return "-".join(
+        part for part in title.lower().replace("&", "and").split() if part.isalnum()
+    ) or "table"
+
+
+def render_report_table_pngs(
+    report_path: str | Path,
+    output_dir: str | Path,
+    *,
+    browser_executable: str | Path | None = None,
+) -> list[Path]:
+    """Render each styled report table section through a headless browser."""
+    report = Path(report_path).resolve()
+    if not report.is_file():
+        raise FileNotFoundError(f"Report HTML does not exist: {report}")
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as exc:
+        raise RuntimeError(
+            "Table PNG export requires Playwright. Install project dependencies with "
+            "`.venv/bin/python -m pip install -r requirements.txt`."
+        ) from exc
+
+    chrome = _chrome_executable(
+        browser_executable or os.environ.get("WARERA_CHROME_PATH")
+    )
+    destination = Path(output_dir)
+    destination.mkdir(parents=True, exist_ok=True)
+    outputs: list[Path] = []
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            executable_path=chrome,
+            headless=True,
+            args=["--allow-file-access-from-files"],
+        )
+        try:
+            page = browser.new_page(
+                viewport={"width": 1440, "height": 1080},
+                device_scale_factor=2,
+            )
+            page.goto(report.as_uri(), wait_until="load")
+            page.evaluate("document.fonts.ready")
+            sections = page.locator("section:has(table.report-table)")
+            for index in range(sections.count()):
+                section = sections.nth(index)
+                heading = section.locator("h2").first.text_content() or "Report Table"
+                output = destination / f"{index + 1:02d}-{_table_image_slug(heading)}.png"
+                section.screenshot(path=str(output), animations="disabled")
+                outputs.append(output)
+        finally:
+            browser.close()
+
+    return outputs
 
 
 def render_trend_path_svg(
