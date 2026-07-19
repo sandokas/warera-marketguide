@@ -550,8 +550,11 @@ def test_report_emits_auditable_position_specific_guidance():
     assert '<tr class="signal-buy">' in report
     assert '<tr class="signal-sell">' in report
     assert '<tr class="signal-wait">' in report
-    assert "BUY: executable Ask ≤ Max Buy" in report
-    assert "SELL: executable Bid ≥ Rich Sell" in report
+    assert "BUY means Ask is at or below Max Buy" in report
+    assert "SELL means Bid is at or above Rich Sell" in report
+    assert "WAIT means no buy or sell condition is currently met" in report
+    assert "Ask Upside shows the percentage move from the current Ask to Fair" in report
+    assert "after-fee" not in report
     assert report.index("Buy Item") < report.index("Sell Item") < report.index("Wait Item")
 
 
@@ -610,8 +613,8 @@ def test_market_trends_uses_cross_horizon_completed_transaction_fields():
     assert "grid-template-columns: 56px 36px minmax(72px, 1fr)" in report
     assert '<svg class="trend-path"' in report
     assert "3 daily observations spanning 12 of 30 days" in report
-    assert "Completed transaction trends; descriptive context, not a trade signal." in report
-    assert "Mini paths are independently scaled; compare shape, not height." in report
+    assert "Price changes and mini charts use completed trades." in report
+    assert "Each mini chart has its own scale" in report
     trends_section = report[report.index("<h2>Market Trends</h2>"):report.index("<h2>Item Notes</h2>")]
     for forbidden in (">Spread %<", ">Activity<", ">Range<", ">Price State<"):
         assert forbidden not in trends_section
@@ -664,7 +667,7 @@ def test_completed_activity_bar_uses_production_adjusted_work_and_excludes_unkno
         },
     ]))
 
-    assert "Completed Value is the sum of transaction price × quantity" in report
+    assert "ranked by total traded value (price × quantity)" in report
     assert '>Total PP : Item</th>' in report
     assert 'title="1 total upstream Production Point (PP) per item">1 : 1</td>' in report
     assert 'title="20 total upstream Production Points (PP) per item">20 : 1</td>' in report

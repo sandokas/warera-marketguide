@@ -82,6 +82,35 @@ Useful sync options:
 - `--quiet` suppresses progress; `--verbose` shows page-level import details.
 - `--min-tick` changes the price increment removed from the raw spread when calculating trading attractiveness. It defaults to `0.001`.
 
+## Database housekeeping
+
+Housekeeping is an independent operation: it never runs as part of a live sync. Run it explicitly
+whenever desired, or schedule this command separately:
+
+```bash
+PYTHONPATH=src .venv/bin/python run_report.py --housekeeping
+```
+
+The routine prunes expired transactions, price observations, and order-book observations. The
+default configuration in `marketguide.toml` retains 45 days, which leaves headroom for the
+report's 30-day analysis window:
+
+```toml
+[housekeeping]
+enabled = true
+retention_days = 45
+vacuum_interval_days = 30
+```
+
+SQLite reuses pages released by pruning, bounding normal database growth. When free pages exist,
+the database is compacted no more often than `vacuum_interval_days`; set that value to `0` to
+disable compaction. Set `enabled = false` to make the housekeeping command a no-op. A different
+configuration file can be selected with `--config PATH`, and a different database with
+`--market-db PATH`.
+
+Increasing `retention_days` affects future pruning only. Data already removed by housekeeping
+cannot be recovered unless the database was backed up separately.
+
 ## Reports from an existing database
 
 Generate a report without making API calls:

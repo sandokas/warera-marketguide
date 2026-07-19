@@ -70,8 +70,10 @@ recommendation. Market-state labels must not be confused with either action.
 Fair-value guidance uses quantity-aware order-book sweeps. For configured quantity `q`, the current
 Ask and Bid are the ask-side and bid-side executable VWAPs, and guidance fails closed when the full
 quantity is unavailable. It evaluates the latest stored snapshot; stricter quote-age gating remains
-part of execution/flip eligibility rather than erasing fair-value signals. With per-side fee rate
-`f` and minimum net margin `m`, the maximum entry price for a return to stable fair value `F` is:
+part of execution/flip eligibility rather than erasing fair-value signals. The commodity market has
+no transaction fee, so `f` must be zero for commodity guidance. A non-zero per-side fee applies only
+to equipment-market analysis. With fee rate `f` and minimum net margin `m`, the maximum entry price
+for a return to stable fair value `F` is:
 
 ```text
 max_entry = F * (1 - f) / ((1 + f) * (1 + m))

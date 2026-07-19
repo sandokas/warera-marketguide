@@ -1,10 +1,12 @@
 import sys
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import pytest
 
 import warera_quant.cli as cli_module
 from warera_quant.cli import build_parser, main
+from warera_quant.market_store import MarketStore
 
 
 def test_order_book_sync_defaults_to_api_maximum():
@@ -90,3 +92,38 @@ def test_csv_mode_writes_unavailable_flip_fields_without_assumption_badges(tmp_p
     assert "Fees <strong>2.50% / side</strong>" not in report
     assert "Min margin <strong>3.00%</strong>" not in report
     assert "Freshness <strong>≤ 15m</strong>" not in report
+
+
+def test_housekeeping_is_an_independent_command(tmp_path, monkeypatch):
+    database_path = tmp_path / "market.sqlite3"
+    config_path = tmp_path / "marketguide.toml"
+    config_path.write_text(
+        "[housekeeping]\nretention_days = 45\nvacuum_interval_days = 0\n",
+        encoding="utf-8",
+    )
+    now = datetime.now(timezone.utc)
+    with MarketStore(database_path) as store:
+        store.upsert_transactions(
+            "bread",
+            [{
+                "id": "expired",
+                "createdAt": (now - timedelta(days=46)).isoformat(),
+                "transactionType": "trading",
+                "money": 10,
+                "quantity": 2,
+            }],
+            fetched_at=now,
+        )
+
+    monkeypatch.setattr(sys, "argv", [
+        "warera-quant",
+        "--housekeeping",
+        "--market-db", str(database_path),
+        "--config", str(config_path),
+        "--quiet",
+    ])
+
+    main()
+
+    with MarketStore(database_path) as store:
+        assert store.transactions_for_window("bread", 0) == []

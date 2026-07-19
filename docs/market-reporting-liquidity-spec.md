@@ -70,9 +70,10 @@ upstream PP are documented in [Production Points by Factory Item](production-poi
 The fair-value guidance table uses one single-line signal per item: `Buy` when the executable Ask
 reaches `Max Buy`, `Sell` when the executable Bid reaches `Rich Sell`, and `Wait` otherwise. Sell is
 explicitly holder guidance, not short-selling advice. Ask and Bid are quantity-aware executable
-VWAPs, `Max Buy` is fee- and margin-adjusted against Fair and capped by P25 or P10 in risky states,
-`Rich Sell` requires the configured Fair premium subject to the empirical upper range, and `Ask
-Upside` compares the executable Ask with Fair after fees. A synthetic symmetric band and the return
+VWAPs. `Max Buy` is margin-adjusted against Fair and capped by P25 or P10 in risky states. Commodity
+guidance uses no transaction fee; fee adjustment applies only to equipment-market analysis. `Rich
+Sell` requires the configured Fair premium subject to the empirical upper range, and `Ask Upside`
+compares the executable Ask with Fair. A synthetic symmetric band and the return
 between its endpoints must not be shown as executable room or profit. Table cells must remain one
 line high.
 

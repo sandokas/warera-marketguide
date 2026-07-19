@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +45,23 @@ class SyncSummary:
     newest_created_at_epoch: int | None = None
     newest_transaction_id: str | None = None
     synced_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class HousekeepingSummary:
+    cutoff_at: str
+    transactions_deleted: int
+    price_observations_deleted: int
+    order_book_observations_deleted: int
+    vacuumed: bool
+
+    @property
+    def rows_deleted(self) -> int:
+        return (
+            self.transactions_deleted
+            + self.price_observations_deleted
+            + self.order_book_observations_deleted
+        )
 
 
 class MarketStore:
@@ -319,6 +336,62 @@ class MarketStore:
                     """,
                     level_rows,
                 )
+
+    def run_housekeeping(
+        self,
+        *,
+        retention_days: int,
+        vacuum_interval_days: int = 30,
+        now: datetime | None = None,
+    ) -> HousekeepingSummary:
+        if isinstance(retention_days, bool) or not isinstance(retention_days, int) or retention_days < 1:
+            raise ValueError("retention_days must be an integer of at least 1.")
+        if (
+            isinstance(vacuum_interval_days, bool)
+            or not isinstance(vacuum_interval_days, int)
+            or vacuum_interval_days < 0
+        ):
+            raise ValueError("vacuum_interval_days must be a non-negative integer.")
+
+        housekeeping_at = _as_utc(now or _utc_now())
+        cutoff_at = housekeeping_at - timedelta(days=retention_days)
+        cutoff_epoch = _epoch_seconds(cutoff_at)
+        connection = self._connect()
+        with connection:
+            transactions_deleted = connection.execute(
+                "delete from transactions where created_at_epoch < ?",
+                (cutoff_epoch,),
+            ).rowcount
+            price_observations_deleted = connection.execute(
+                "delete from price_observations where observed_at_epoch < ?",
+                (cutoff_epoch,),
+            ).rowcount
+            order_book_observations_deleted = connection.execute(
+                "delete from order_book_observations where observed_at_epoch < ?",
+                (cutoff_epoch,),
+            ).rowcount
+
+        vacuumed = False
+        if vacuum_interval_days > 0 and _vacuum_is_due(
+            connection,
+            housekeeping_at,
+            vacuum_interval_days,
+        ):
+            connection.execute("vacuum")
+            with connection:
+                connection.execute(
+                    "insert or replace into schema_meta (key, value) values (?, ?)",
+                    ("housekeeping_last_vacuum_at", _format_datetime(housekeeping_at)),
+                )
+            vacuumed = True
+
+        return HousekeepingSummary(
+            cutoff_at=_format_datetime(cutoff_at),
+            transactions_deleted=transactions_deleted,
+            price_observations_deleted=price_observations_deleted,
+            order_book_observations_deleted=order_book_observations_deleted,
+            vacuumed=vacuumed,
+        )
 
     def transactions_for_window(self, item_code: str, since_epoch: int) -> list[dict[str, Any]]:
         rows = self._connect().execute(
@@ -633,6 +706,23 @@ def _ensure_schema_meta(connection: sqlite3.Connection) -> None:
         )
 
 
+def _vacuum_is_due(
+    connection: sqlite3.Connection,
+    housekeeping_at: datetime,
+    vacuum_interval_days: int,
+) -> bool:
+    free_pages = int(connection.execute("pragma freelist_count").fetchone()[0])
+    if free_pages == 0:
+        return False
+    row = connection.execute(
+        "select value from schema_meta where key = 'housekeeping_last_vacuum_at'"
+    ).fetchone()
+    if row is None:
+        return True
+    last_vacuum_at = _parse_datetime(row["value"], "housekeeping_last_vacuum_at")
+    return housekeeping_at - last_vacuum_at >= timedelta(days=vacuum_interval_days)
+
+
 def _transaction_row(item_code: str, transaction: dict[str, Any], fetched_at: str) -> dict[str, Any]:
     created_at = _required_string(
         _first_present(transaction, "created_at", "createdAt"),
@@ -809,6 +899,12 @@ def _epoch_seconds(value: datetime) -> int:
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _number_for_hash(value: float | None) -> str:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -282,3 +282,68 @@ def test_order_book_history_with_levels_is_chronological_and_keeps_legacy_rows(t
         "2026-06-30T12:00:00Z",
     ]
     assert rows[0]["bids"] == [{"level_position": 0, "price": 3.0, "quantity": 2.0}]
+
+
+def test_housekeeping_prunes_expired_market_history_and_cascades_levels(tmp_path):
+    now = datetime(2026, 7, 20, 12, tzinfo=timezone.utc)
+    expired_at = now - timedelta(days=46)
+    retained_at = now - timedelta(days=45)
+    with _store(tmp_path) as store:
+        for suffix, observed_at in (("old", expired_at), ("keep", retained_at)):
+            store.upsert_transactions(
+                "bread",
+                [{
+                    "id": f"tx-{suffix}",
+                    "createdAt": observed_at.isoformat(),
+                    "transactionType": "trading",
+                    "money": 10,
+                    "quantity": 2,
+                }],
+                fetched_at=now,
+            )
+            store.insert_price_observations({"bread": 5}, observed_at)
+            store.insert_order_book_observations(
+                {"bread": TopOrders(
+                    buy_orders=[OrderLevel(4, 2)],
+                    sell_orders=[OrderLevel(5, 3)],
+                )},
+                observed_at,
+            )
+
+        summary = store.run_housekeeping(
+            retention_days=45,
+            vacuum_interval_days=0,
+            now=now,
+        )
+
+        assert summary.transactions_deleted == 1
+        assert summary.price_observations_deleted == 1
+        assert summary.order_book_observations_deleted == 1
+        assert summary.rows_deleted == 3
+        assert summary.vacuumed is False
+        assert [row["id"] for row in store.transactions_for_window("bread", 0)] == ["tx-keep"]
+        assert len(store.price_observations_for_window("bread", 0)) == 1
+        assert len(store.order_book_observations_for_window("bread", 0)) == 1
+        level_count = store._connect().execute("select count(*) from order_book_levels").fetchone()[0]
+        assert level_count == 2
+
+
+def test_housekeeping_vacuums_only_when_free_pages_exist_and_interval_is_due(tmp_path):
+    now = datetime(2026, 7, 20, 12, tzinfo=timezone.utc)
+    expired_at = now - timedelta(days=10)
+    with _store(tmp_path) as store:
+        store.insert_price_observations(
+            {f"item-{index}": float(index) for index in range(1, 500)},
+            expired_at,
+        )
+
+        first = store.run_housekeeping(retention_days=1, vacuum_interval_days=30, now=now)
+        second = store.run_housekeeping(
+            retention_days=1,
+            vacuum_interval_days=30,
+            now=now + timedelta(days=1),
+        )
+
+        assert first.price_observations_deleted == 499
+        assert first.vacuumed is True
+        assert second.vacuumed is False

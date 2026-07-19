@@ -785,7 +785,7 @@ def _price_guide_html(df: pd.DataFrame, window_key: str, display_count: int) -> 
     ).head(display_count).drop(columns="_signal_rank")
     return (
         '<section><div class="eyebrow">Fair-value detail</div><h2>Fair Value &amp; Buy / Sell Signals</h2>'
-        '<p class="muted">BUY: executable Ask ≤ Max Buy, with Max Buy capped at P25 or P10 in falling/volatile markets. SELL: executable Bid ≥ Rich Sell (for existing holders). Ask Upside is the fee-adjusted return to Fair. WAIT means neither threshold is available now.</p>'
+        '<p class="muted">Ask is the price to buy now; Bid is the price a holder can sell for now. Fair is the transaction-based reference price. BUY means Ask is at or below Max Buy. SELL means Bid is at or above Rich Sell and applies only to items you already hold. Ask Upside shows the percentage move from the current Ask to Fair. WAIT means no buy or sell condition is currently met. Max Buy is stricter in falling or volatile markets.</p>'
         + _compact_table_html(view, table_kind="price-guide")
         + '</section>'
     )
@@ -858,7 +858,7 @@ def _activity_html(df: pd.DataFrame, window_key: str, metric_window: str, displa
         )
     return (
         '<section><h2>Completed Market Activity</h2>'
-        f'<p class="muted">Actual completed trading over {escape(metric_window)}. Completed Value is the sum of transaction price × quantity and controls the row order for every item. Total PP : Item includes the direct recipe and all upstream ingredient production; PP-equivalent Volume is completed units × Total PP per item. It compares embodied production effort but is not actual production during this window. Item rows must not be summed because ingredient and processed-item trades can overlap. Items without a defined factory chain rank normally by value and show N/A for PP fields. Open orders are not included.</p>'
+        f'<p class="muted">Completed trades during {escape(metric_window)}, ranked by total traded value (price × quantity). Total PP : Item is the production effort for one item, including upstream ingredients. PP-equivalent Volume multiplies traded units by Total PP to compare embodied production effort; it is not actual production. Do not total the rows because raw materials and finished goods can overlap. N/A means no factory chain is defined. Open orders are excluded.</p>'
         '<div class="table-wrap compact-table activity-table"><table class="report-table">'
         '<thead><tr><th class="activity-item text">Item</th>'
         '<th class="activity-ratio number" title="Total upstream Production Points required for one item">Total PP : Item</th>'
@@ -970,7 +970,7 @@ def _order_book_html(df: pd.DataFrame, display_count: int) -> str:
         return ""
     return (
         '<section><h2>Current Order Book</h2>'
-        '<p class="muted">Visible advertised depth from up to 100 orders per side. Green bids extend left and red asks extend right; each segment is one price level sized by order value, with the best prices nearest the centre and walls outlined. Pressure = (bid value − ask value) ÷ (bid value + ask value). Orders can be cancelled.</p>'
+        '<p class="muted">Current visible open orders, up to 100 per side—not completed trades. Best Bid is what a seller can receive; Best Ask is what a buyer can pay. Green represents bids and red represents asks; each segment is a price level sized by order value, with the best prices nearest the centre. Outlined segments mark large order walls. Positive pressure is buy-heavy; negative pressure is sell-heavy. Orders may change or be cancelled.</p>'
         '<div class="table-wrap compact-table book-summary"><table class="report-table">'
         '<thead><tr><th class="book-item text">Item</th><th class="book-price number">Best Bid</th>'
         '<th class="book-wall number">Buy Wall</th><th class="book-profile-cell text">Buy orders vs sell orders</th>'
@@ -1438,7 +1438,7 @@ def generate_html_report(
       <div class="hero-copy">
         <div class="eyebrow">WarEra Market Guide</div>
         <h1>Market intelligence, without the noise.</h1>
-        <p class="muted">Historical price context, completed activity, and the current visible order book in one practical view.</p>
+        <p class="muted">Completed trades provide price history; current visible orders provide executable prices and market depth.</p>
       </div>
       <div class="hero-meta"><strong>{escape(metric_window)} analysis window</strong>Updated {escape(generated)}</div>
 </header>
@@ -1506,7 +1506,7 @@ def generate_html_report(
         blocks.append(
             f"""    <section>
       <h2>Market Trends</h2>
-      <p class="muted">Completed transaction trends; descriptive context, not a trade signal. Mini paths are independently scaled; compare shape, not height.</p>
+      <p class="muted">Price changes and mini charts use completed trades. 30D Position shows where the latest trade sits between the 30-day low and high. Each mini chart has its own scale, so compare direction and shape—not height. This is historical context, not a buy or sell signal.</p>
       {_compact_table_html(trend_table, table_kind="market-trends")}
     </section>"""
         )

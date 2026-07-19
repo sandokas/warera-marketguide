@@ -8,6 +8,7 @@ import pandas as pd
 
 from .api_client import WarEraApiClient
 from .charts import featured_item_codes, render_featured_chart
+from .config import ConfigError, load_config
 from .csv_loader import load_market_csv
 from .json_loader import market_json_to_dataframe
 from .market_data import load_chart_data, load_market_rows, opportunity_fields
@@ -31,8 +32,18 @@ def _parse_param(value: str) -> tuple[str, str]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generate a WarEra Market Guide report.")
     parser.add_argument("--csv", default="data/sample_market.csv", help="Input CSV with market fields.")
+    parser.add_argument(
+        "--config",
+        default="marketguide.toml",
+        help="TOML configuration path (default: marketguide.toml).",
+    )
     parser.add_argument("--live", action="store_true", help="Fetch live WarEra market data from the API.")
     parser.add_argument("--sync", action="store_true", help="Sync live WarEra market data into SQLite, then exit.")
+    parser.add_argument(
+        "--housekeeping",
+        action="store_true",
+        help="Prune and optionally compact the market database, then exit without syncing.",
+    )
     parser.add_argument(
         "--market-db",
         default="data/warera_market.sqlite3",
@@ -107,7 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--trade-fee-pct", type=float, default=0.0,
-        help="Assumed fee percent charged independently per side.",
+        help="Equipment-market fee percent per side. Commodity markets have no fee and must use 0.",
     )
     parser.add_argument(
         "--min-net-margin-pct", type=float, default=1.0,
@@ -162,10 +173,16 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
     output_dir = Path(args.output)
+    try:
+        config = load_config(args.config)
+    except ConfigError as exc:
+        raise SystemExit(str(exc)) from exc
 
-    selected_sources = sum(bool(value) for value in (args.live, args.sync, args.api_endpoint))
+    selected_sources = sum(
+        bool(value) for value in (args.live, args.sync, args.housekeeping, args.api_endpoint)
+    )
     if selected_sources > 1:
-        raise SystemExit("Use only one of --live, --sync, or --api-endpoint.")
+        raise SystemExit("Use only one of --live, --sync, --housekeeping, or --api-endpoint.")
     if args.transaction_backfill and not (args.live or args.sync):
         raise SystemExit("--transaction-backfill requires --live or --sync.")
     if args.chart_ma_window < 1:
@@ -190,6 +207,25 @@ def main() -> None:
         raise SystemExit(str(exc)) from exc
     if args.quiet and args.verbose:
         raise SystemExit("Use only one of --quiet or --verbose.")
+
+    if args.housekeeping:
+        if not config.housekeeping.enabled:
+            if not args.quiet:
+                print("Database housekeeping is disabled in the configuration.", flush=True)
+            return
+        with MarketStore(args.market_db) as store:
+            housekeeping_result = store.run_housekeeping(
+                retention_days=config.housekeeping.retention_days,
+                vacuum_interval_days=config.housekeeping.vacuum_interval_days,
+            )
+        if not args.quiet:
+            compaction = "; compacted database" if housekeeping_result.vacuumed else ""
+            print(
+                f"Housekeeping retained {config.housekeeping.retention_days} day(s) and removed "
+                f"{housekeeping_result.rows_deleted} expired row(s){compaction} from {args.market_db}.",
+                flush=True,
+            )
+        return
 
     if not args.live and not args.sync and not args.api_endpoint and not args.from_db:
         if args.csv == "data/sample_market.csv" and Path(args.market_db).exists():
