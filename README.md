@@ -160,10 +160,11 @@ Export every table in the generated report as a standalone PNG:
 PYTHONPATH=src .venv/bin/python run_report.py --table-pngs --output output
 ```
 
-The images are written to `output/tables/` in the same order as the HTML report. Each PNG is a
-browser-rendered screenshot of its report section, so it preserves the dark theme, signal colors,
-badges, depth graphics, and other HTML styling. The exporter uses Google Chrome or Chromium from
-`PATH`; set `WARERA_CHROME_PATH` if the browser executable is installed elsewhere.
+The images are written to `output/tables/` in the same order as the HTML report. Each PNG captures
+only its browser-rendered table—without the section heading, description, or surrounding whitespace—
+while preserving the dark theme, signal colors, badges, depth graphics, and other HTML styling. The
+exporter uses Google Chrome or Chromium from `PATH`; set `WARERA_CHROME_PATH` if the browser
+executable is installed elsewhere.
 
 ## Other input modes
 

@@ -47,7 +47,7 @@ def render_report_table_pngs(
     *,
     browser_executable: str | Path | None = None,
 ) -> list[Path]:
-    """Render each styled report table section through a headless browser."""
+    """Render each styled report table, without surrounding section copy."""
     report = Path(report_path).resolve()
     if not report.is_file():
         raise FileNotFoundError(f"Report HTML does not exist: {report}")
@@ -84,8 +84,9 @@ def render_report_table_pngs(
             for index in range(sections.count()):
                 section = sections.nth(index)
                 heading = section.locator("h2").first.text_content() or "Report Table"
+                table = section.locator("table.report-table").first
                 output = destination / f"{index + 1:02d}-{_table_image_slug(heading)}.png"
-                section.screenshot(path=str(output), animations="disabled")
+                table.screenshot(path=str(output), animations="disabled")
                 outputs.append(output)
         finally:
             browser.close()

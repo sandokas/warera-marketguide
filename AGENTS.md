@@ -18,6 +18,10 @@ PYTHONPATH=src .venv/bin/python -m pytest tests/test_market_store.py
 
 If `.venv` is missing, follow the setup instructions in `README.md`.
 
+## Published Report Format
+
+Report tables are published as static PNG images, not interactive HTML tables. PNG exports must capture only the table element, without section headings, descriptions, or surrounding whitespace. Every table must fit completely within its image canvas. Do not use horizontal scrolling, scroll containers, clipped overflow, or layouts that require touch or browser interaction. Improve readability with intrinsic table sizing and legible text rather than forced widths.
+
 ## Architecture Boundaries
 
 Keep the market database architecture layered. Do not duplicate API, database, parsing, query, or report-construction logic across modules.

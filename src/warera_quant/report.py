@@ -200,8 +200,13 @@ def _html_page(title: str, body: str) -> str:
       border-radius: 16px;
       box-shadow: 0 18px 50px rgba(0, 0, 0, 0.2);
     }}
+    main > header {{ width: 100%; }}
     h1, h2, h3, p {{ margin-top: 0; }}
     h1 {{ margin-bottom: 7px; font-size: clamp(1.8rem, 4vw, 2.55rem); letter-spacing: -0.035em; }}
+    header h1 {{
+      font-size: clamp(2rem, 3vw, 2.8rem);
+      line-height: 1.08;
+    }}
     h2 {{
       margin-bottom: 8px;
       padding-left: 10px;
@@ -212,7 +217,7 @@ def _html_page(title: str, body: str) -> str:
     h3 {{ margin-bottom: 8px; font-size: 1rem; }}
     section {{ margin-top: 26px; }}
     section > .muted {{
-      max-width: 1040px;
+      max-width: 65ch;
       margin-bottom: 11px;
       font-size: 0.82rem;
       line-height: 1.4;
@@ -226,9 +231,9 @@ def _html_page(title: str, body: str) -> str:
       text-transform: uppercase;
     }}
     .muted {{ color: var(--muted); }}
-    .hero-copy {{ max-width: 700px; }}
-    .hero-copy > p {{ margin-bottom: 0; max-width: 650px; }}
-    .hero-meta {{ color: var(--muted); font-size: 0.82rem; text-align: left; white-space: nowrap; }}
+    .hero-copy {{ flex: 1 1 auto; min-width: 0; max-width: none; }}
+    .hero-copy > p {{ margin-bottom: 0; max-width: 70ch; font-size: 1rem; line-height: 1.45; }}
+    .hero-meta {{ flex: 0 0 auto; color: var(--muted); font-size: 0.82rem; text-align: left; white-space: nowrap; }}
     .hero-meta strong {{ display: block; margin-bottom: 4px; color: var(--text); font-size: 0.92rem; }}
     .hero-meta span {{ display: block; }}
     .panel {{
@@ -366,13 +371,14 @@ def _html_page(title: str, body: str) -> str:
       color: #e2e8f0;
     }}
     table {{
-      width: 100%;
+      width: max-content;
       border-collapse: collapse;
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 8px;
       overflow: hidden;
-      font-size: 0.86rem;
+      font-size: 1.1rem;
+      line-height: 1.18;
     }}
     th, td {{
       padding: 8px 9px;
@@ -394,15 +400,15 @@ def _html_page(title: str, body: str) -> str:
     th {{
       background: #172a45;
       color: #e2e8f0;
-      font-size: 0.75rem;
+      font-size: 1rem;
       font-weight: 750;
       letter-spacing: 0.015em;
     }}
     tbody tr:nth-child(even) {{ background: rgba(30, 41, 59, 0.22); }}
-    .table-wrap {{ overflow: visible; }}
+    .table-wrap {{ width: max-content; overflow: visible; }}
     .compact-table .report-table {{
-      width: 100%;
-      table-layout: fixed;
+      width: max-content;
+      table-layout: auto;
     }}
     .compact-table th, .compact-table td {{
       max-width: none;
@@ -423,35 +429,24 @@ def _html_page(title: str, body: str) -> str:
     }}
     .compact-table .col-commodity,
     .compact-table .col-item {{
-      min-width: 120px;
-      max-width: 200px;
+      min-width: 0;
     }}
     .compact-table .col-notes,
     .compact-table .col-read,
     .compact-table .col-market-state {{
-      min-width: 220px;
-      max-width: 340px;
+      min-width: 0;
     }}
-    .compact-table .col-spread-pct {{
-      width: 76px;
-      min-width: 76px;
-    }}
-    .compact-table .col-volume {{
-      width: 80px;
-      min-width: 80px;
-    }}
-    .price-guide-table {{ overflow: visible; }}
-    .price-guide-table .report-table {{ width: 100%; table-layout: fixed; }}
+    .price-guide-table .report-table {{ width: max-content; table-layout: auto; }}
     .price-guide-table th, .price-guide-table td {{ padding: 7px 5px; }}
-    .price-guide-table .col-item {{ width: 12%; min-width: 0; font-weight: 700; white-space: nowrap; }}
-    .price-guide-table .col-signal {{ width: 8%; text-align: left; white-space: nowrap; }}
+    .price-guide-table .col-item {{ min-width: 0; font-weight: 700; white-space: nowrap; }}
+    .price-guide-table .col-signal {{ text-align: left; white-space: nowrap; }}
     .price-guide-table .col-ask,
     .price-guide-table .col-bid,
     .price-guide-table .col-fair,
     .price-guide-table .col-max-buy,
-    .price-guide-table .col-rich-sell {{ width: 8%; white-space: nowrap; }}
-    .price-guide-table .col-ask-upside-pct {{ width: 10%; white-space: nowrap; }}
-    .price-guide-table .col-price-state {{ width: 30%; white-space: nowrap; }}
+    .price-guide-table .col-rich-sell {{ white-space: nowrap; }}
+    .price-guide-table .col-ask-upside-pct {{ white-space: nowrap; }}
+    .price-guide-table .col-price-state {{ white-space: nowrap; }}
     .price-guide-table tr.signal-buy {{ background: linear-gradient(90deg, rgba(15, 118, 110, 0.22), transparent 32%); }}
     .price-guide-table tr.signal-sell {{ background: linear-gradient(90deg, rgba(127, 29, 29, 0.23), transparent 32%); }}
     .signal-help {{
@@ -466,59 +461,45 @@ def _html_page(title: str, body: str) -> str:
       border-radius: 6px;
       background: rgba(17, 24, 38, 0.8);
       color: var(--muted);
-      font-size: 0.76rem;
-      line-height: 1.35;
+      font-size: 0.92rem;
+      line-height: 1.4;
     }}
-    .signal-help strong {{ display: block; margin-bottom: 2px; font-size: 0.8rem; }}
+    .signal-help strong {{ display: block; margin-bottom: 2px; font-size: 1rem; }}
     .signal-help .buy-rule strong {{ color: var(--good); }}
     .signal-help .sell-rule strong {{ color: var(--bad); }}
     .signal-help .wait-rule strong {{ color: var(--amber); }}
-    .signal-warning {{ margin: 0 0 10px; color: var(--muted); font-size: 0.76rem; }}
-    .book-summary .report-table {{ width: 100%; table-layout: fixed; }}
+    .signal-warning {{ margin: 0 0 10px; color: var(--muted); font-size: 0.92rem; line-height: 1.4; }}
+    .book-summary .report-table {{ width: max-content; table-layout: auto; }}
     .book-summary th, .book-summary td {{ white-space: normal; vertical-align: middle; }}
     .book-summary th, .book-summary td {{ padding: 7px 5px; }}
-    .book-summary .book-item {{ width: 10%; font-weight: 700; }}
-    .book-summary .book-price {{ width: 7%; }}
-    .book-summary .book-wall {{ width: 8%; }}
-    .book-summary .book-profile-cell {{ width: 41%; }}
-    .book-summary .book-pressure {{ width: 13%; white-space: nowrap; }}
-    .book-summary .book-spread {{ width: 6%; }}
+    .book-summary .book-item {{ font-weight: 700; }}
+    .book-summary .book-pressure {{ white-space: nowrap; }}
     .activity-table .report-table {{
       border: 1px solid var(--line);
       border-radius: 8px;
     }}
     .market-trends-table {{
-      overflow-x: auto;
+      overflow: visible;
       border: 1px solid var(--line);
       border-radius: 8px;
-      scrollbar-color: var(--line) var(--bg);
     }}
-    .market-trends-table .report-table {{ min-width: 960px; border: 0; border-radius: 0; }}
+    .market-trends-table .report-table {{ border: 0; border-radius: 0; }}
     .activity-table th, .activity-table td,
     .market-trends-table th, .market-trends-table td {{ padding: 7px 6px; }}
-    .activity-table .activity-item {{ width: 12%; font-weight: 700; }}
-    .activity-table .activity-ratio {{ width: 12%; white-space: nowrap; }}
-    .activity-table .activity-volume {{ width: 54%; }}
-    .activity-table .activity-totals {{ width: 22%; }}
+    .activity-table .activity-item {{ font-weight: 700; }}
+    .activity-table .activity-ratio {{ white-space: nowrap; }}
     .activity-volume-content {{ display: grid; gap: 4px; }}
     .activity-metric {{ display: grid; grid-template-columns: 54px minmax(0, 1fr) 58px; gap: 7px; align-items: center; }}
-    .activity-metric-label {{ color: var(--muted); font-size: 0.7rem; text-align: left; white-space: nowrap; }}
+    .activity-metric-label {{ color: var(--muted); font-size: 0.82rem; text-align: left; white-space: nowrap; }}
     .activity-track {{ height: 12px; overflow: hidden; border-radius: 3px; background: #0b1220; }}
     .activity-fill {{ height: 100%; min-width: 1px; border-radius: 3px; background: linear-gradient(90deg, #0f766e, #6ee7b7); }}
     .activity-fill-pp {{ background: linear-gradient(90deg, #1d4ed8, #7dd3fc); }}
     .activity-number,
     .activity-total-line {{ display: block; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }}
-    .activity-total-line + .activity-total-line {{ margin-top: 2px; color: var(--muted); font-size: 0.75rem; }}
+    .activity-total-line + .activity-total-line {{ margin-top: 2px; color: var(--muted); font-size: 0.86rem; }}
     .market-trends-table th,
     .market-trends-table td {{ padding: 6px 8px; vertical-align: middle; white-space: nowrap; }}
-    .market-trends-table .col-item {{ width: 14%; font-weight: 700; white-space: nowrap; }}
-    .market-trends-table .col-last-trade {{ width: 9%; }}
-    .market-trends-table .col-1d-change,
-    .market-trends-table .col-7d-change,
-    .market-trends-table .col-30d-change {{ width: 8%; }}
-    .market-trends-table .col-30d-path {{ width: 12%; }}
-    .market-trends-table .col-30d-position {{ width: 24%; }}
-    .market-trends-table .col-pattern {{ width: 17%; }}
+    .market-trends-table .col-item {{ font-weight: 700; white-space: nowrap; }}
     .trend-change {{ display: inline-flex; align-items: center; justify-content: flex-end; gap: 4px; min-width: 66px; }}
     .trend-arrow {{ width: 0.9em; text-align: center; font-size: 0.78rem; }}
     .position-cell {{ display: grid; grid-template-columns: 56px 36px minmax(72px, 1fr); align-items: center; column-gap: 8px; width: 100%; }}
@@ -526,7 +507,7 @@ def _html_page(title: str, body: str) -> str:
     .position-dot {{ position: absolute; top: 50%; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); transform: translate(-50%, -50%); }}
     .position-value {{ text-align: right; font-variant-numeric: tabular-nums; }}
     .position-empty {{ color: var(--muted); text-align: center; }}
-    .position-label {{ color: var(--muted); font-size: 0.72rem; }}
+    .position-label {{ color: var(--muted); font-size: 0.82rem; }}
     .trend-path {{ display: block; width: 96px; height: 28px; overflow: visible; color: var(--muted); }}
     .trend-path-line {{ fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }}
     .trend-path-latest {{ fill: var(--accent); stroke: var(--panel); stroke-width: 1; vector-effect: non-scaling-stroke; }}
@@ -544,7 +525,7 @@ def _html_page(title: str, body: str) -> str:
       gap: 8px;
       margin-bottom: 3px;
       color: var(--muted);
-      font-size: 0.7rem;
+      font-size: 0.82rem;
       font-variant-numeric: tabular-nums;
     }}
     .depth-profile-label {{
@@ -586,7 +567,7 @@ def _html_page(title: str, body: str) -> str:
     .depth-profile-spread {{
       margin-top: 3px;
       color: var(--muted);
-      font-size: 0.64rem;
+      font-size: 0.8rem;
       text-align: right;
     }}
     .book-pressure-content {{
@@ -612,7 +593,7 @@ def _html_page(title: str, body: str) -> str:
     .metric-detail {{
       margin-top: 4px;
       color: var(--muted);
-      font-size: 0.78rem;
+      font-size: 0.88rem;
       font-variant-numeric: tabular-nums;
       line-height: 1.35;
     }}
@@ -640,7 +621,7 @@ def _html_page(title: str, body: str) -> str:
       font-weight: 800;
     }}
     .readiness-note strong {{ display: block; margin-bottom: 2px; }}
-    .readiness-note p {{ margin: 0; color: var(--muted); font-size: 0.84rem; }}
+    .readiness-note p {{ margin: 0; color: var(--muted); font-size: 0.95rem; line-height: 1.45; }}
     .chart {{
       width: 100%;
       max-height: 720px;
@@ -666,12 +647,12 @@ def _html_page(title: str, body: str) -> str:
       h1 {{ font-size: 1.65rem; }}
       th, td {{ padding: 8px; }}
       .signal-help {{ grid-template-columns: 1fr; }}
-      .price-guide-table th, .price-guide-table td {{ padding: 6px 3px; font-size: 0.68rem; }}
-      .price-guide-table .chip {{ padding: 2px 4px; font-size: 0.68rem; }}
+      .price-guide-table th, .price-guide-table td {{ padding: 6px 3px; }}
+      .price-guide-table .chip {{ padding: 2px 4px; font-size: 1rem; }}
     }}
     @media (max-width: 520px) {{
-      main {{ width: min(100% - 20px, 1180px); padding-top: 10px; }}
-      .book-summary th, .book-summary td {{ padding-inline: 3px; font-size: 0.64rem; }}
+      main {{ width: min(100% - 8px, 1180px); padding-top: 10px; }}
+      .book-summary th, .book-summary td {{ padding-inline: 3px; }}
       .book-pressure-content {{ gap: 2px; }}
     }}
     @media print {{
@@ -726,7 +707,7 @@ def _compact_table_html(df: pd.DataFrame, *, table_kind: str = "trend") -> str:
         "</table>"
     )
     accessibility = (
-        ' role="region" aria-label="Market trends table" tabindex="0"'
+        ' role="region" aria-label="Market trends table"'
         if table_kind == "market-trends"
         else ""
     )
@@ -786,7 +767,7 @@ def _price_guide_html(df: pd.DataFrame, window_key: str, display_count: int) -> 
     ).head(display_count).drop(columns="_signal_rank")
     return (
         '<section><div class="eyebrow">Fair-value detail</div><h2>Fair Value &amp; Buy / Sell Signals</h2>'
-        '<p class="muted">Ask is the price to buy now; Bid is the price a holder can sell for now. Fair is the transaction-based reference price. BUY means Ask is at or below Max Buy. SELL means Bid is at or above Rich Sell and applies only to items you already hold. Ask Upside shows the percentage move from the current Ask to Fair. WAIT means no buy or sell condition is currently met. Max Buy is stricter in falling or volatile markets.</p>'
+        '<p class="muted">Live bid and ask prices compared with fair value and trading thresholds.</p>'
         + _compact_table_html(view, table_kind="price-guide")
         + '</section>'
     )
@@ -859,7 +840,7 @@ def _activity_html(df: pd.DataFrame, window_key: str, metric_window: str, displa
         )
     return (
         '<section><h2>Completed Market Activity</h2>'
-        f'<p class="muted">Completed trades during {escape(metric_window)}, ranked by total traded value (price × quantity). Total PP : Item is the production effort for one item, including upstream ingredients. PP-equivalent Volume multiplies traded units by Total PP to compare embodied production effort; it is not actual production. Do not total the rows because raw materials and finished goods can overlap. N/A means no factory chain is defined. Open orders are excluded.</p>'
+        f'<p class="muted">Completed {escape(metric_window)} trades ranked by value; PP volume estimates embodied production effort.</p>'
         '<div class="table-wrap compact-table activity-table"><table class="report-table">'
         '<thead><tr><th class="activity-item text">Item</th>'
         '<th class="activity-ratio number" title="Total upstream Production Points required for one item">Total PP : Item</th>'
@@ -971,7 +952,7 @@ def _order_book_html(df: pd.DataFrame, display_count: int) -> str:
         return ""
     return (
         '<section><h2>Current Order Book</h2>'
-        '<p class="muted">Current visible open orders, up to 100 per side—not completed trades. Best Bid is what a seller can receive; Best Ask is what a buyer can pay. Green represents bids and red represents asks; each segment is a price level sized by order value, with the best prices nearest the centre. Outlined segments mark large order walls. Positive pressure is buy-heavy; negative pressure is sell-heavy. Orders may change or be cancelled.</p>'
+        '<p class="muted">Visible bids and asks, depth, walls, spread, and market pressure.</p>'
         '<div class="table-wrap compact-table book-summary"><table class="report-table">'
         '<thead><tr><th class="book-item text">Item</th><th class="book-price number">Best Bid</th>'
         '<th class="book-wall number">Buy Wall</th><th class="book-profile-cell text">Buy orders vs sell orders</th>'
@@ -1522,7 +1503,7 @@ def generate_html_report(
         blocks.append(
             f"""    <section>
       <h2>Market Trends</h2>
-      <p class="muted">Price changes and mini charts use completed trades. 30D Position shows where the latest trade sits between the 30-day low and high. Each mini chart has its own scale, so compare direction and shape—not height. This is historical context, not a buy or sell signal.</p>
+      <p class="muted">Completed-trade price changes, 30-day range position, and trend shape.</p>
       {_compact_table_html(trend_table, table_kind="market-trends")}
     </section>"""
         )

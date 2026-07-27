@@ -17,19 +17,22 @@ from warera_quant.charts import (
 )
 
 
-def test_render_report_table_pngs_uses_styled_sections(monkeypatch, tmp_path: Path):
+def test_render_report_table_pngs_captures_only_tables(monkeypatch, tmp_path: Path):
     report = tmp_path / "market_report.html"
     report.write_text("<html><section><h2>Prices &amp; Signals</h2><table class='report-table'></table></section></html>")
     screenshots = []
 
-    class FakeSection:
-        def locator(self, selector):
-            assert selector == "h2"
-            return SimpleNamespace(first=SimpleNamespace(text_content=lambda: "Prices & Signals"))
-
+    class FakeTable:
         def screenshot(self, **kwargs):
             screenshots.append(kwargs)
             Path(kwargs["path"]).write_bytes(b"png")
+
+    class FakeSection:
+        def locator(self, selector):
+            if selector == "h2":
+                return SimpleNamespace(first=SimpleNamespace(text_content=lambda: "Prices & Signals"))
+            assert selector == "table.report-table"
+            return SimpleNamespace(first=FakeTable())
 
     class FakeSections:
         def count(self):

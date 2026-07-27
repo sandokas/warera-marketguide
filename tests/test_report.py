@@ -155,14 +155,14 @@ def test_report_foregrounds_market_trends_and_writes_compatibility_csv(tmp_path)
     assert "th:nth-last-child(2), td:nth-last-child(2)" not in report
     assert "align-right" not in report
     assert ".compact-table .report-table" in report
-    assert "width: max-content" not in report
-    assert ".table-wrap { overflow: visible; }" in report
+    assert "width: max-content" in report
+    assert ".table-wrap { width: max-content; overflow: visible; }" in report
     assert ".flip-board .report-table" not in report
-    assert "table-layout: fixed" in report
+    assert "table-layout: fixed" not in report
     assert "overflow-x: clip" not in report
     assert ".compact-table td.number" in report
     assert "font-variant-numeric: tabular-nums" in report
-    assert "min-width: 220px" in report
+    assert "min-width: 220px" not in report
     assert "grid-template-columns: minmax(72px, 1fr) 48px" not in report
     assert "min-width: 188px" not in report
     assert 'class="col-30d-position number"' in report
@@ -469,7 +469,7 @@ def test_report_restores_price_guide_and_renders_transparent_market_depth():
     assert 'title="Bid at 36.020: 59 units, 2125 value"' in report
     assert '<span class="book-pressure-content"><span class="book-pressure-label signed-positive">Buy-heavy</span>' in report
     assert '<span class="book-pressure-value signed-positive">+12.2%</span>' in report
-    assert '.book-summary .book-pressure { width: 13%; white-space: nowrap; }' in report
+    assert ".book-summary .book-pressure { white-space: nowrap; }" in report
     assert '<th class="book-wall number">Buy Wall</th>' in report
     assert '<td class="book-wall number">36.020</td>' in report
     assert '<th class="book-wall number">Sell Wall</th>' in report
@@ -558,10 +558,7 @@ def test_report_emits_auditable_position_specific_guidance():
     assert '<tr class="signal-buy">' in report
     assert '<tr class="signal-sell">' in report
     assert '<tr class="signal-wait">' in report
-    assert "BUY means Ask is at or below Max Buy" in report
-    assert "SELL means Bid is at or above Rich Sell" in report
-    assert "WAIT means no buy or sell condition is currently met" in report
-    assert "Ask Upside shows the percentage move from the current Ask to Fair" in report
+    assert "Live bid and ask prices compared with fair value and trading thresholds." in report
     assert "after-fee" not in report
     assert report.index("Buy Item") < report.index("Sell Item") < report.index("Wait Item")
 
@@ -576,9 +573,9 @@ def test_report_is_print_first_without_price_evolution_styles():
     }]))
 
     assert "<details" not in report
-    assert ".table-wrap { overflow: visible; }" in report
+    assert ".table-wrap { width: max-content; overflow: visible; }" in report
     assert ".price-evolution-table" not in report
-    assert "overflow-x: auto" in report
+    assert "overflow-x: auto" not in report
     assert "@media print" in report
     assert "@page { size: landscape; margin: 10mm; }" in report
     assert "thead { display: table-header-group; }" in report
@@ -606,7 +603,7 @@ def test_market_trends_uses_cross_horizon_completed_transaction_fields():
         "trend_path_30d_end_epoch": 1_782_592_000,
     }]))
 
-    assert '<div class="table-wrap compact-table market-trends-table" role="region" aria-label="Market trends table" tabindex="0">' in report
+    assert '<div class="table-wrap compact-table market-trends-table" role="region" aria-label="Market trends table">' in report
     assert '<th class="col-last-trade number">Last Trade</th>' in report
     assert '<th class="col-1d-change number">1D Change</th>' in report
     assert '<th class="col-7d-change number">7D Change</th>' in report
@@ -617,12 +614,11 @@ def test_market_trends_uses_cross_horizon_completed_transaction_fields():
     assert "Pullback" in report
     assert 'aria-label="Pullback — 1D: Down, 7D: Up, 30D: Up"' in report
     assert "Near ceiling" in report
-    assert ".market-trends-table .col-item { width: 14%; font-weight: 700; white-space: nowrap; }" in report
+    assert ".market-trends-table .col-item { font-weight: 700; white-space: nowrap; }" in report
     assert "grid-template-columns: 56px 36px minmax(72px, 1fr)" in report
     assert '<svg class="trend-path"' in report
     assert "3 daily observations spanning 12 of 30 days" in report
-    assert "Price changes and mini charts use completed trades." in report
-    assert "Each mini chart has its own scale" in report
+    assert "Completed-trade price changes, 30-day range position, and trend shape." in report
     trends_section = report[report.index("<h2>Market Trends</h2>"):report.index("<h2>Item Notes</h2>")]
     for forbidden in (">Spread %<", ">Activity<", ">Range<", ">Price State<"):
         assert forbidden not in trends_section
@@ -675,7 +671,7 @@ def test_completed_activity_bar_uses_production_adjusted_work_and_excludes_unkno
         },
     ]))
 
-    assert "ranked by total traded value (price × quantity)" in report
+    assert "Completed 7D trades ranked by value" in report
     assert '>Total PP : Item</th>' in report
     assert 'title="1 total upstream Production Point (PP) per item">1 : 1</td>' in report
     assert 'title="20 total upstream Production Points (PP) per item">20 : 1</td>' in report
