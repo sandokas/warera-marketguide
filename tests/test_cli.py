@@ -20,6 +20,11 @@ def test_table_pngs_is_opt_in():
     assert build_parser().parse_args(["--table-pngs"]).table_pngs is True
 
 
+def test_all_price_action_charts_is_opt_in():
+    assert build_parser().parse_args([]).all_price_action_charts is False
+    assert build_parser().parse_args(["--all-price-action-charts"]).all_price_action_charts is True
+
+
 def test_from_db_preserves_structured_order_book_for_report(monkeypatch, tmp_path):
     class DummyStore:
         def __init__(self, _path):

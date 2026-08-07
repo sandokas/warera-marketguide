@@ -79,6 +79,46 @@ def time_based_sma_7d(candles: pd.DataFrame) -> pd.Series:
     return result.rename("7D SMA")
 
 
+def prepare_price_action_item(
+    row: dict,
+    transactions: Sequence[dict],
+    *,
+    role: str = "price_action",
+    rank_within_role: int = 1,
+) -> HighlightedItem | None:
+    """Prepare one item's chart domain values, or return None when evidence is insufficient."""
+    item_code = str(row.get("item_code") or "").strip().lower()
+    latest = _finite_float_or_none(row.get("last_trade_price"))
+    fair = _finite_float_or_none(row.get("stable_fair_price_7d"))
+    if not item_code or latest is None or latest <= 0 or fair is None or fair <= 0:
+        return None
+    selected_interval = select_price_action_interval(transactions)
+    if selected_interval is None:
+        return None
+    interval, candles = selected_interval
+    first, last = candles.index[0], candles.index[-1]
+    span = f"{max(1, (last.date() - first.date()).days + 1)} calendar days available"
+    return HighlightedItem(
+        item_code=item_code,
+        item_name=str(row.get("item_name") or item_code),
+        role=role,
+        rank_within_role=rank_within_role,
+        latest_completed_price=latest,
+        fair_7d=fair,
+        gap_pct=(latest - fair) / fair * 100,
+        interval=interval,
+        history_span=span,
+        candles=candles,
+        sma_7d=time_based_sma_7d(candles),
+    )
+
+
+def price_action_chart_filename(item_code: str) -> str:
+    """Return a stable item-based filename for non-report chart exports."""
+    slug = re.sub(r"[^a-z0-9]+", "-", str(item_code).strip().lower()).strip("-")
+    return f"{slug or 'item'}-price-action.png"
+
+
 def select_highlighted_items(
     rows: Sequence[dict],
     trades_by_item: dict[str, Sequence[dict]],

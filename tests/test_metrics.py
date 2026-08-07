@@ -19,6 +19,8 @@ from warera_quant.metrics import (
     summarize_forecast_evaluations,
     summarize_order_book,
     build_price_action_candles,
+    prepare_price_action_item,
+    price_action_chart_filename,
     select_highlighted_items,
     select_price_action_interval,
     time_based_sma_7d,
@@ -97,6 +99,18 @@ def test_7d_sma_is_elapsed_time_based_and_evidence_gated():
     assert sma.iloc[:5].isna().all()
     assert sma.iloc[5] == pytest.approx(3.5)
     assert sma.iloc[6] != sma.iloc[6]  # only four closes remain inside the elapsed 7D window
+
+
+def test_all_item_price_action_preparation_supports_neutral_items_and_stable_filename():
+    item = prepare_price_action_item({
+        "item_code": "Heavy Ammo", "item_name": "Heavy Ammo",
+        "last_trade_price": 10, "stable_fair_price_7d": 10,
+    }, _highlight_trades())
+    assert item is not None
+    assert item.role == "price_action"
+    assert item.gap_pct == 0
+    assert item.interval == "4h"
+    assert price_action_chart_filename("Heavy Ammo") == "heavy-ammo-price-action.png"
 
 
 @pytest.mark.parametrize(

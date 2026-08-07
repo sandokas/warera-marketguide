@@ -158,6 +158,17 @@ The database-backed HTML report always combines 1D, 7D, and 30D fair-value persp
 largest price gaps, completed activity, and Item Notes use an explicit 7D basis; `--lookback-days`
 continues to control sync/backfill and existing chart behavior, not those report semantics.
 
+Export every chart-capable item without adding the extra charts to the report:
+
+```bash
+PYTHONPATH=src .venv/bin/python run_report.py --from-db --charts \
+  --all-price-action-charts --output output
+```
+
+The additional item-based PNGs are written sequentially under `output/charts/all/`. Items without
+enough completed-transaction evidence are skipped; the report still embeds only its highlighted
+price-action charts.
+
 Export the report header and every table in the generated report as standalone PNGs:
 
 ```bash

@@ -13,7 +13,14 @@ from .csv_loader import load_market_csv
 from .json_loader import market_json_to_dataframe
 from .market_data import load_highlight_trade_history, load_market_rows, opportunity_fields
 from .market_store import MarketStore
-from .metrics import FlipAssumptions, calculate_flip_opportunity, calculate_metrics, select_highlighted_items
+from .metrics import (
+    FlipAssumptions,
+    calculate_flip_opportunity,
+    calculate_metrics,
+    prepare_price_action_item,
+    price_action_chart_filename,
+    select_highlighted_items,
+)
 from .report import combine_market_rows_with_metrics, write_outputs
 from .sync import sync_market_data
 from .warera_api import WarEraMarketApi
@@ -151,6 +158,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--charts",
         action="store_true",
         help="Render stock-style price charts from DB-backed live market data.",
+    )
+    parser.add_argument(
+        "--all-price-action-charts",
+        action="store_true",
+        help="Export every chart-capable item under OUTPUT/charts/all/ without embedding them.",
     )
     parser.add_argument("--chart-interval", default="1h", help="Chart candle interval, such as 1h or 15min.")
     parser.add_argument(
@@ -382,6 +394,41 @@ def main() -> None:
                     print(f"Wrote highlighted chart to {rendered}")
             if not any(entry["chart_path"] for entry in rendered_highlights):
                 print("Skipped highlighted charts: no item had enough completed-transaction history.")
+    if args.all_price_action_charts:
+        if not (args.live or args.from_db):
+            print("Skipped all-item charts: charts require DB-backed market data.")
+        else:
+            rows_by_code = {
+                str(row.get("item_code")).strip(): row
+                for row in df_out.to_dict("records") if row.get("item_code")
+            }
+            rendered_count = 0
+            with MarketStore(args.market_db) as store:
+                for storage_code, row in rows_by_code.items():
+                    histories = load_highlight_trade_history(store, item_codes=[storage_code])
+                    chart_item = prepare_price_action_item(
+                        row, histories.get(storage_code.lower(), ()),
+                    )
+                    if chart_item is None:
+                        continue
+                    output_path = (
+                        output_dir / "charts" / "all"
+                        / price_action_chart_filename(storage_code)
+                    )
+                    try:
+                        rendered = render_highlight_price_action_chart(
+                            chart_item, output_path, min_range_pct=args.chart_min_range_pct,
+                        )
+                    except Exception as exc:
+                        if not args.quiet:
+                            print(f"Skipped {chart_item.item_name} all-item chart: {exc}")
+                        continue
+                    if rendered is not None:
+                        rendered_count += 1
+                        if not args.quiet:
+                            print(f"Wrote all-item chart to {rendered}")
+            if not args.quiet:
+                print(f"Wrote {rendered_count} all-item price-action chart(s).")
     csv_path, report_path = write_outputs(
         df_out,
         output_dir,
