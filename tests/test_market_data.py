@@ -12,6 +12,7 @@ from warera_quant.market_data import (
     evaluate_item_forecast,
     load_chart_data,
     load_chart_trades,
+    load_highlight_trade_history,
     load_market_rows,
     parse_report_window,
 )
@@ -20,6 +21,18 @@ from warera_quant.warera_api import OrderLevel, TopOrders
 
 
 NOW = datetime(2026, 6, 30, 12, 0, tzinfo=timezone.utc)
+
+
+def test_highlight_history_is_fixed_to_trailing_30_days_and_excludes_future(tmp_path):
+    with _store(tmp_path) as store:
+        store.upsert_transactions("bread", [
+            _transaction("old", (NOW - timedelta(days=30, seconds=1)).isoformat(), money=10, quantity=1),
+            _transaction("boundary", (NOW - timedelta(days=30)).isoformat(), money=11, quantity=1),
+            _transaction("recent", (NOW - timedelta(days=1)).isoformat(), money=12, quantity=1),
+            _transaction("future", (NOW + timedelta(seconds=1)).isoformat(), money=13, quantity=1),
+        ], fetched_at=NOW)
+        result = load_highlight_trade_history(store, item_codes=["Bread"], now=NOW)
+    assert [trade["price"] for trade in result["bread"]] == [11.0, 12.0]
 
 
 def _store(tmp_path: Path) -> MarketStore:

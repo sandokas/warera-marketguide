@@ -18,9 +18,85 @@ from warera_quant.metrics import (
     forecast_evidence_label,
     summarize_forecast_evaluations,
     summarize_order_book,
+    build_price_action_candles,
+    select_highlighted_items,
+    select_price_action_interval,
+    time_based_sma_7d,
     total_upstream_production_points,
 )
 from warera_quant.warera_api import OrderLevel
+
+
+def _highlight_trades(*, price=10.0):
+    return [
+        {"created_at": f"2026-06-{day:02d}T{hour:02d}:00:00Z", "price": price + index / 10,
+         "quantity": index + 1}
+        for index, (day, hour) in enumerate(
+            [(1, 0), (1, 4), (1, 8), (1, 12), (2, 0), (2, 4),
+             (2, 8), (2, 12), (3, 0), (3, 4), (3, 8), (3, 12)]
+        )
+    ]
+
+
+def test_highlight_interval_boundary_and_unmodified_ohlc_units_volume():
+    trades = _highlight_trades()
+    selected = select_price_action_interval(trades)
+    assert selected is not None
+    interval, candles = selected
+    assert interval == "4h"
+    assert len(candles) == 12
+    assert candles.iloc[0].to_dict() == {
+        "Open": 10.0, "High": 10.0, "Low": 10.0, "Close": 10.0, "Volume": 1.0,
+    }
+    assert select_price_action_interval(trades[:-1]) is None
+
+    combined = build_price_action_candles([
+        {"created_at": "2026-06-01T00:01:00Z", "price": 10, "quantity": 2},
+        {"created_at": "2026-06-01T03:59:00Z", "price": 12, "quantity": 3},
+    ], interval="4h")
+    assert combined.iloc[0].to_dict() == {
+        "Open": 10.0, "High": 12.0, "Low": 10.0, "Close": 12.0, "Volume": 5.0,
+    }
+
+
+def test_highlight_selection_ranks_gaps_before_optional_chart_capability():
+    history = _highlight_trades()
+    rows = [
+        {"item_code": "zeta", "item_name": "Zeta", "last_trade_price": 8,
+         "stable_fair_price_7d": 10},
+        {"item_code": "alpha", "item_name": "Alpha", "last_trade_price": 8,
+         "stable_fair_price_7d": 10},
+        {"item_code": "premium", "item_name": "Premium", "last_trade_price": 13,
+         "stable_fair_price_7d": 10},
+        {"item_code": "unsupported", "item_name": "Unsupported", "last_trade_price": 5,
+         "stable_fair_price_7d": 10},
+    ]
+    selected = select_highlighted_items(rows, {
+        "zeta": history, "alpha": history, "premium": history, "unsupported": history[:2],
+    })
+    assert [(item.item_code, item.role) for item in selected] == [
+        ("unsupported", "largest_discount"), ("premium", "largest_premium"),
+    ]
+    assert selected[0].interval is None
+    assert selected[1].interval == "4h"
+
+    same_side = select_highlighted_items(rows[:2], {"zeta": history, "alpha": history})
+    assert [(item.item_code, item.role, item.rank_within_role) for item in same_side] == [
+        ("alpha", "largest_discount", 1), ("zeta", "second_largest_discount", 2),
+    ]
+    assert select_highlighted_items([rows[0]], {"zeta": history})[0].filename == "largest-discount-price-action.png"
+    assert select_highlighted_items([], {}) == []
+
+
+def test_7d_sma_is_elapsed_time_based_and_evidence_gated():
+    candles = build_price_action_candles([
+        {"created_at": f"2026-06-{day:02d}T00:00:00Z", "price": float(day), "quantity": 1}
+        for day in (1, 2, 3, 4, 5, 6, 10)
+    ], interval="1D")
+    sma = time_based_sma_7d(candles)
+    assert sma.iloc[:5].isna().all()
+    assert sma.iloc[5] == pytest.approx(3.5)
+    assert sma.iloc[6] != sma.iloc[6]  # only four closes remain inside the elapsed 7D window
 
 
 @pytest.mark.parametrize(

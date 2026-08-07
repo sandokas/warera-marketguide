@@ -30,6 +30,7 @@ from .metrics import (
 
 SUPPORTED_REPORT_WINDOWS = ("1D", "7D", "30D", "90D", "1Y")
 DEFAULT_REPORT_WINDOWS = ("1D", "7D", "30D")
+HIGHLIGHT_HISTORY_DAYS = 30
 FORECAST_TRAILING_SECONDS = 7 * 24 * 60 * 60
 EXECUTION_BUDGETS = (100.0, 1_000.0, 10_000.0)
 
@@ -509,6 +510,31 @@ def load_chart_data(
         "trades": trades,
         "spread_observations": spread_observations,
     }
+
+
+def load_highlight_trade_history(
+    store: MarketStore,
+    *,
+    item_codes: Iterable[str],
+    now: datetime | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Load at most the trailing 30 calendar days of completed trades for highlights."""
+    now = _as_utc(now or datetime.now(timezone.utc))
+    since_epoch = int((now - timedelta(days=HIGHLIGHT_HISTORY_DAYS)).timestamp())
+    end_epoch = int(now.timestamp())
+    histories: dict[str, list[dict[str, Any]]] = {}
+    for item_code in dict.fromkeys(item_codes):
+        storage_code = str(item_code).strip()
+        if not storage_code:
+            continue
+        rows = store.transactions_for_window(storage_code, since_epoch)
+        if not rows and storage_code != storage_code.lower():
+            rows = store.transactions_for_window(storage_code.lower(), since_epoch)
+        histories[storage_code.lower()] = _chart_trades_from_rows([
+            row for row in rows
+            if int(row.get("created_at_epoch", end_epoch + 1)) <= end_epoch
+        ])
+    return histories
 
 
 def _resolve_windows(

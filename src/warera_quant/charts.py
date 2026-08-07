@@ -17,6 +17,8 @@ logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
 import mplfinance as mpf
 import pandas as pd
 
+from .metrics import HighlightedItem
+
 
 def _chrome_executable(explicit_path: str | Path | None = None) -> str:
     if explicit_path is not None:
@@ -92,6 +94,60 @@ def render_report_table_pngs(
             browser.close()
 
     return outputs
+
+
+def render_report_header_png(
+    report_path: str | Path,
+    output_dir: str | Path,
+    *,
+    browser_executable: str | Path | None = None,
+) -> Path:
+    """Render the hero and rendered highlight cards as one publication asset."""
+    report = Path(report_path).resolve()
+    if not report.is_file():
+        raise FileNotFoundError(f"Report HTML does not exist: {report}")
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as exc:
+        raise RuntimeError(
+            "Header PNG export requires Playwright. Install project dependencies with "
+            "`.venv/bin/python -m pip install -r requirements.txt`."
+        ) from exc
+
+    chrome = _chrome_executable(
+        browser_executable or os.environ.get("WARERA_CHROME_PATH")
+    )
+    destination = Path(output_dir)
+    destination.mkdir(parents=True, exist_ok=True)
+    output = destination / "report-header.png"
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            executable_path=chrome,
+            headless=True,
+            args=["--allow-file-access-from-files"],
+        )
+        try:
+            page = browser.new_page(
+                viewport={"width": 1440, "height": 1080},
+                device_scale_factor=2,
+            )
+            page.goto(report.as_uri(), wait_until="load")
+            page.evaluate("document.fonts.ready")
+            target = page.locator('[data-report-asset="header"]').first
+            if target.count() != 1:
+                raise RuntimeError("Report header capture target is missing or ambiguous.")
+            # Charts remain paired with cards in the responsive report DOM, but are not
+            # part of the independently publishable header asset.
+            target.locator(".highlight-chart").evaluate_all(
+                "elements => elements.forEach(element => element.style.display = 'none')"
+            )
+            target.screenshot(path=str(output), animations="disabled")
+        finally:
+            browser.close()
+
+    return output
 
 
 def render_trend_path_svg(
@@ -396,6 +452,66 @@ def render_featured_chart(
         spread=spread,
         min_range_pct=min_range_pct,
     )
+
+
+def render_highlight_price_action_chart(
+    highlight: HighlightedItem,
+    output_path: str | Path,
+    *,
+    min_range_pct: float = 5.0,
+) -> Path | None:
+    """Render prepared analytical candles without mutating their OHLC values."""
+    analytical = normalize_ohlc(highlight.candles)
+    if analytical.empty:
+        return None
+    visual = analytical.copy()
+    flat = visual["High"] == visual["Low"]
+    if flat.any():
+        padding = visual.loc[flat, "Close"].abs().mul(0.005).clip(lower=0.001)
+        visual.loc[flat, "High"] += padding
+        visual.loc[flat, "Low"] = (visual.loc[flat, "Low"] - padding).clip(lower=0)
+
+    add_plots = []
+    sma = highlight.sma_7d.copy()
+    sma.index = pd.to_datetime(sma.index, utc=True, errors="coerce").tz_convert(None)
+    sma = sma.reindex(visual.index)
+    if sma.notna().any():
+        add_plots.append(mpf.make_addplot(sma, color="#2563eb", width=1.3, label="7D SMA"))
+
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    style = mpf.make_mpf_style(
+        base_mpf_style="yahoo",
+        marketcolors=mpf.make_marketcolors(
+            up="#16a34a", down="#dc2626",
+            volume={"up": "#0891b2", "down": "#f97316"}, inherit=True,
+        ),
+        gridstyle=":", facecolor="#ffffff", figcolor="#ffffff",
+    )
+    role_label = highlight.role.replace("_", " ").title()
+    title = f"{highlight.item_name} — {role_label}"
+    subtitle = f"Trailing 30D · {highlight.interval} candles · {highlight.history_span}"
+    kwargs = {
+        "type": "candle", "volume": True, "style": style,
+        "ylabel": "Price", "ylabel_lower": "Units traded", "datetime_format": "%m-%d",
+        "tight_layout": False,
+        "savefig": dict(fname=str(output), dpi=150, bbox_inches="tight"),
+    }
+    if add_plots:
+        kwargs["addplot"] = add_plots
+    ylim = chart_ylim(analytical, min_range_pct=min_range_pct)
+    if ylim is not None:
+        kwargs["ylim"] = ylim
+    figure, axes = mpf.plot(visual, returnfig=True, **{k: v for k, v in kwargs.items() if k != "savefig"})
+    figure.suptitle(f"{title}\n{subtitle}", fontsize=14, fontweight="bold", y=0.98)
+    figure.subplots_adjust(top=0.84, left=0.10, right=0.91, bottom=0.12)
+    axes[0].axhline(highlight.fair_7d, color="#7c3aed", linestyle="--", linewidth=1.2,
+                    label="Strict 7D fair")
+    axes[0].legend(loc="best")
+    figure.savefig(output, dpi=150, bbox_inches="tight")
+    import matplotlib.pyplot as plt
+    plt.close(figure)
+    return output
 
 
 def featured_item_codes(df: pd.DataFrame) -> list[str]:

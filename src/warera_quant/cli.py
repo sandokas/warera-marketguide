@@ -7,13 +7,13 @@ from pathlib import Path
 import pandas as pd
 
 from .api_client import WarEraApiClient
-from .charts import featured_item_codes, render_featured_chart, render_report_table_pngs
+from .charts import render_highlight_price_action_chart, render_report_header_png, render_report_table_pngs
 from .config import ConfigError, load_config
 from .csv_loader import load_market_csv
 from .json_loader import market_json_to_dataframe
-from .market_data import load_chart_data, load_market_rows, opportunity_fields
+from .market_data import load_highlight_trade_history, load_market_rows, opportunity_fields
 from .market_store import MarketStore
-from .metrics import FlipAssumptions, calculate_flip_opportunity, calculate_metrics
+from .metrics import FlipAssumptions, calculate_flip_opportunity, calculate_metrics, select_highlighted_items
 from .report import combine_market_rows_with_metrics, write_outputs
 from .sync import sync_market_data
 from .warera_api import WarEraMarketApi
@@ -350,48 +350,45 @@ def main() -> None:
     metric_window = f"{args.lookback_days:g}D" if args.live else "7D"
     chart_path = None
     chart_label = None
-    chart_candidates = featured_item_codes(df_out)
+    rendered_highlights = None
     if args.charts:
-        if not args.live:
-            print("Skipped charts: charts require DB-backed --live market data.")
+        if not (args.live or args.from_db):
+            print("Skipped charts: charts require DB-backed market data.")
         else:
-            selected_chart_items = []
-            if args.featured_item_code:
-                selected_chart_items.append(args.featured_item_code)
-            selected_chart_items.extend(
-                item_code for item_code in chart_candidates if item_code not in selected_chart_items
-            )
+            rendered_highlights = []
+            rows_for_selection = df_out.to_dict("records")
+            selected = select_highlighted_items(rows_for_selection, {})
+            codes_by_normalized = {
+                str(row.get("item_code")).strip().lower(): str(row.get("item_code")).strip()
+                for row in rows_for_selection if row.get("item_code")
+            }
+            item_codes = [codes_by_normalized[item.item_code] for item in selected]
             with MarketStore(args.market_db) as store:
-                for item_code in selected_chart_items:
-                    label_rows = df_out[df_out["item_code"] == item_code] if "item_code" in df_out.columns else []
-                    chart_label = (
-                        str(label_rows.iloc[0]["item_name"])
-                        if len(label_rows) and "item_name" in df_out.columns
-                        else item_code
-                    )
-                    chart_data = load_chart_data(store, item_code=item_code, window=metric_window)
-                    chart_path = render_featured_chart(
-                        chart_data,
-                        output_dir / "charts" / "featured-trade.png",
-                        item_name=f"Featured Trade: {chart_label}",
-                        interval=args.chart_interval,
-                        ma_window=args.chart_ma_window,
-                        show_moving_average=args.lookback_days > 1,
-                        min_range_pct=args.chart_min_range_pct,
-                    )
-                    if chart_path is not None:
-                        break
-            if chart_path is None:
-                print("Skipped featured chart: no item had enough transaction candles.")
-                chart_label = None
-            else:
-                print(f"Wrote featured chart to {chart_path}")
+                histories = load_highlight_trade_history(store, item_codes=item_codes)
+            for highlight in select_highlighted_items(rows_for_selection, histories):
+                output_path = output_dir / "charts" / highlight.filename
+                rendered = None
+                try:
+                    if highlight.interval is not None:
+                        rendered = render_highlight_price_action_chart(
+                            highlight, output_path, min_range_pct=args.chart_min_range_pct,
+                        )
+                except Exception as exc:
+                    if not args.quiet:
+                        print(f"Skipped {highlight.item_name} chart: {exc}")
+                    continue
+                rendered_highlights.append({"item": highlight, "chart_path": rendered})
+                if rendered is not None:
+                    print(f"Wrote highlighted chart to {rendered}")
+            if not any(entry["chart_path"] for entry in rendered_highlights):
+                print("Skipped highlighted charts: no item had enough completed-transaction history.")
     csv_path, report_path = write_outputs(
         df_out,
         output_dir,
         top=args.top,
         chart_path=chart_path,
         chart_label=chart_label,
+        highlights=rendered_highlights,
         assumptions=assumptions,
         data_synced_at=data_sync_metadata.synced_at if data_sync_metadata else None,
         data_sync_status=data_sync_metadata.status if data_sync_metadata else None,
@@ -399,6 +396,8 @@ def main() -> None:
     print(f"Wrote {csv_path}")
     print(f"Wrote {report_path}")
     if args.table_pngs:
+        header_path = render_report_header_png(report_path, output_dir / "sections")
+        print(f"Wrote {header_path}")
         for table_path in render_report_table_pngs(report_path, output_dir / "tables"):
             print(f"Wrote {table_path}")
 

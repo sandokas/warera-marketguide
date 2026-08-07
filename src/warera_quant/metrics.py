@@ -5,6 +5,129 @@ import re
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
+import pandas as pd
+
+
+HIGHLIGHT_CANDLE_INTERVALS = (("4h", "4h"), ("8h", "8h"), ("12h", "12h"), ("1D", "1D"))
+HIGHLIGHT_MIN_POPULATED_CANDLES = 12
+HIGHLIGHT_MIN_DISTINCT_UTC_DAYS = 3
+HIGHLIGHT_SMA_MIN_CLOSES = 6
+
+
+@dataclass(frozen=True)
+class HighlightedItem:
+    item_code: str
+    item_name: str
+    role: str
+    rank_within_role: int
+    latest_completed_price: float
+    fair_7d: float
+    gap_pct: float
+    interval: str | None
+    history_span: str | None
+    candles: pd.DataFrame
+    sma_7d: pd.Series
+
+    @property
+    def filename(self) -> str:
+        return f"{self.role.replace('_', '-')}-price-action.png"
+
+
+def build_price_action_candles(transactions: Sequence[dict], *, interval: str) -> pd.DataFrame:
+    """Build unmodified OHLC and positive units volume for populated UTC intervals only."""
+    if not transactions:
+        return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
+    frame = pd.DataFrame({
+        "timestamp": [transaction.get("created_at") for transaction in transactions],
+        "price": [transaction.get("price") for transaction in transactions],
+        "quantity": [transaction.get("quantity") for transaction in transactions],
+        "order": range(len(transactions)),
+    })
+    frame["timestamp"] = pd.to_datetime(frame["timestamp"], utc=True, errors="coerce")
+    frame["price"] = pd.to_numeric(frame["price"], errors="coerce")
+    frame["quantity"] = pd.to_numeric(frame["quantity"], errors="coerce")
+    frame = frame[
+        frame["timestamp"].notna()
+        & frame["price"].between(0, float("inf"), inclusive="neither")
+        & frame["quantity"].between(0, float("inf"), inclusive="neither")
+    ].sort_values(["timestamp", "order"])
+    if frame.empty:
+        return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
+    frame = frame.set_index("timestamp")
+    resample_kwargs = {} if interval == "1D" else {"origin": "epoch"}
+    ohlc = frame["price"].resample(interval, **resample_kwargs).ohlc()
+    volume = frame["quantity"].resample(interval, **resample_kwargs).sum().rename("Volume")
+    candles = pd.concat([ohlc, volume], axis=1).dropna(subset=["open", "high", "low", "close"])
+    return candles.rename(columns={"open": "Open", "high": "High", "low": "Low", "close": "Close"})
+
+
+def select_price_action_interval(transactions: Sequence[dict]) -> tuple[str, pd.DataFrame] | None:
+    """Choose the finest supported interval with 12 candles spanning 3 UTC dates."""
+    for label, frequency in HIGHLIGHT_CANDLE_INTERVALS:
+        candles = build_price_action_candles(transactions, interval=frequency)
+        distinct_days = len({timestamp.date() for timestamp in candles.index})
+        if len(candles) >= HIGHLIGHT_MIN_POPULATED_CANDLES and distinct_days >= HIGHLIGHT_MIN_DISTINCT_UTC_DAYS:
+            return label, candles
+    return None
+
+
+def time_based_sma_7d(candles: pd.DataFrame) -> pd.Series:
+    """Return a 7-calendar-day close SMA, gated by close-count evidence."""
+    if candles.empty:
+        return pd.Series(index=candles.index, dtype="float64", name="7D SMA")
+    result = candles["Close"].rolling("7D", min_periods=HIGHLIGHT_SMA_MIN_CLOSES).mean()
+    return result.rename("7D SMA")
+
+
+def select_highlighted_items(
+    rows: Sequence[dict],
+    trades_by_item: dict[str, Sequence[dict]],
+) -> list[HighlightedItem]:
+    """Select strict-7D gaps first; attach chart data only when it is sufficient."""
+    candidates: list[dict] = []
+    for row in rows:
+        item_code = str(row.get("item_code") or "").strip().lower()
+        latest = _finite_float_or_none(row.get("last_trade_price"))
+        fair = _finite_float_or_none(row.get("stable_fair_price_7d"))
+        if not item_code or latest is None or latest <= 0 or fair is None or fair <= 0:
+            continue
+        gap = (latest - fair) / fair * 100
+        if abs(gap) <= 1e-12:
+            continue
+        candidates.append({"row": row, "code": item_code, "latest": latest, "fair": fair,
+                           "gap": gap})
+
+    discounts = sorted((x for x in candidates if x["gap"] < 0), key=lambda x: (x["gap"], x["code"]))
+    premiums = sorted((x for x in candidates if x["gap"] > 0), key=lambda x: (-x["gap"], x["code"]))
+    chosen: list[tuple[dict, str, int]] = []
+    if discounts and premiums:
+        chosen = [(discounts[0], "largest_discount", 1), (premiums[0], "largest_premium", 1)]
+    elif discounts:
+        chosen = [(item, "largest_discount" if rank == 1 else "second_largest_discount", rank)
+                  for rank, item in enumerate(discounts[:2], 1)]
+    elif premiums:
+        chosen = [(item, "largest_premium" if rank == 1 else "second_largest_premium", rank)
+                  for rank, item in enumerate(premiums[:2], 1)]
+
+    output = []
+    for item, role, rank in chosen:
+        selected_interval = select_price_action_interval(trades_by_item.get(item["code"], ()))
+        if selected_interval is None:
+            interval = None
+            candles = pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
+            span = None
+        else:
+            interval, candles = selected_interval
+            first, last = candles.index[0], candles.index[-1]
+            span = f"{max(1, (last.date() - first.date()).days + 1)} calendar days available"
+        output.append(HighlightedItem(
+            item_code=item["code"], item_name=str(item["row"].get("item_name") or item["code"]),
+            role=role, rank_within_role=rank, latest_completed_price=item["latest"],
+            fair_7d=item["fair"], gap_pct=item["gap"], interval=interval,
+            history_span=span, candles=candles, sma_7d=time_based_sma_7d(candles),
+        ))
+    return output
+
 
 FORECAST_MODEL_VERSION = "direction-v1"
 

@@ -12,9 +12,12 @@ from warera_quant.charts import (
     normalize_ohlc,
     plot_price_chart,
     render_featured_chart,
+    render_highlight_price_action_chart,
+    render_report_header_png,
     render_report_table_pngs,
     render_trend_path_svg,
 )
+from warera_quant.metrics import select_highlighted_items
 
 
 def test_render_report_table_pngs_captures_only_tables(monkeypatch, tmp_path: Path):
@@ -85,6 +88,59 @@ def test_render_report_table_pngs_captures_only_tables(monkeypatch, tmp_path: Pa
     assert outputs == [tmp_path / "tables" / "01-prices-and-signals.png"]
     assert outputs[0].read_bytes() == b"png"
     assert screenshots == [{"path": str(outputs[0]), "animations": "disabled"}]
+
+
+def test_render_report_header_png_uses_explicit_target_and_hides_charts(monkeypatch, tmp_path: Path):
+    report = tmp_path / "market_report.html"
+    report.write_text("<html></html>")
+    calls = []
+
+    class FakeCharts:
+        def evaluate_all(self, expression):
+            calls.append(("hide", expression))
+
+    class FakeTarget:
+        first = None
+        def __init__(self):
+            self.first = self
+        def count(self):
+            return 1
+        def locator(self, selector):
+            assert selector == ".highlight-chart"
+            return FakeCharts()
+        def screenshot(self, **kwargs):
+            calls.append(("screenshot", kwargs))
+            Path(kwargs["path"]).write_bytes(b"png")
+
+    target = FakeTarget()
+    class FakePage:
+        def goto(self, url, **kwargs):
+            assert url == report.resolve().as_uri()
+        def evaluate(self, expression):
+            assert expression == "document.fonts.ready"
+        def locator(self, selector):
+            assert selector == '[data-report-asset="header"]'
+            return target
+    class FakeBrowser:
+        def new_page(self, **kwargs):
+            assert kwargs["viewport"] == {"width": 1440, "height": 1080}
+            return FakePage()
+        def close(self):
+            pass
+    class FakeContext:
+        def __enter__(self):
+            return SimpleNamespace(chromium=SimpleNamespace(launch=lambda **kwargs: FakeBrowser()))
+        def __exit__(self, *_args):
+            pass
+
+    monkeypatch.setattr("playwright.sync_api.sync_playwright", lambda: FakeContext())
+    monkeypatch.setattr("warera_quant.charts._chrome_executable", lambda _path: "/chrome")
+    output = render_report_header_png(report, tmp_path / "sections", browser_executable="/chrome")
+
+    assert output == tmp_path / "sections" / "report-header.png"
+    assert output.read_bytes() == b"png"
+    assert calls[0][0] == "hide"
+    assert calls[1] == ("screenshot", {"path": str(output), "animations": "disabled"})
 
 
 def _trade(created_at: str, price: float, quantity: float = 1) -> dict:
@@ -197,6 +253,23 @@ def test_daily_chart_can_render_without_moving_average(tmp_path: Path):
 
     assert output == tmp_path / "featured-trade.png"
     assert output.exists()
+
+
+def test_highlight_chart_renders_role_based_30d_asset(tmp_path: Path):
+    trades = [
+        _trade(f"2026-06-{day:02d}T{hour:02d}:00:00Z", 10 + index / 10, quantity=index + 1)
+        for index, (day, hour) in enumerate(
+            [(1, 0), (1, 4), (1, 8), (1, 12), (2, 0), (2, 4),
+             (2, 8), (2, 12), (3, 0), (3, 4), (3, 8), (3, 12)]
+        )
+    ]
+    highlight = select_highlighted_items([{
+        "item_code": "bread", "item_name": "Bread", "last_trade_price": 8,
+        "stable_fair_price_7d": 10,
+    }], {"bread": trades})[0]
+    output = render_highlight_price_action_chart(highlight, tmp_path / highlight.filename)
+    assert output == tmp_path / "largest-discount-price-action.png"
+    assert output.exists() and output.stat().st_size > 0
 
 
 def test_chart_can_render_with_spread_line(tmp_path: Path):

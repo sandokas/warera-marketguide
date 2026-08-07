@@ -1,7 +1,72 @@
 import pandas as pd
+from types import SimpleNamespace
 
 from warera_quant.metrics import FlipAssumptions
 from warera_quant.report import generate_html_report, write_outputs
+
+
+def test_chart_linked_highlights_pair_cards_and_images_before_first_table(tmp_path):
+    items = [
+        SimpleNamespace(item_code="bread", item_name="Bread", role="largest_discount",
+                        gap_pct=-20, fair_7d=10),
+        SimpleNamespace(item_code="oil", item_name="Oil", role="largest_premium",
+                        gap_pct=30, fair_7d=10),
+    ]
+    report = generate_html_report(
+        pd.DataFrame([{"item_name": "Bread"}]), output_dir=tmp_path,
+        highlights=[
+            {"item": items[0], "chart_path": tmp_path / "charts/largest-discount-price-action.png"},
+            {"item": items[1], "chart_path": tmp_path / "charts/largest-premium-price-action.png"},
+        ],
+    )
+    section = report[report.index('<section class="highlight-section">'):
+                     report.index("Fair Value &amp; Buy / Sell Signals")]
+    assert section.count('class="highlight-column"') == 2
+    assert section.index('data-item-code="bread"') < section.index("largest-discount-price-action.png")
+    assert section.index('data-item-code="oil"') < section.index("largest-premium-price-action.png")
+    assert '.highlight-chart { display: block; width: 100%; height: auto;' in report
+    assert '.summary-grid { grid-template-columns: 1fr; }' in report
+    assert "Featured Price History" not in report
+
+
+def test_explicit_zero_chart_linked_highlights_omit_empty_area():
+    report = generate_html_report(pd.DataFrame([{"item_name": "Bread"}]), highlights=[])
+    assert "Largest price gaps" not in report
+    assert 'class="highlight-section"' not in report
+    assert 'class="highlight-column"' not in report
+    capture = report[report.index('data-report-asset="header"'):
+                     report.index("Fair Value &amp; Buy / Sell Signals")]
+    assert "Market intelligence, without the noise." in capture
+    assert "Largest price gaps" not in capture
+
+
+def test_highlight_card_remains_when_its_chart_is_unavailable(tmp_path):
+    item = SimpleNamespace(item_code="bread", item_name="Bread", role="largest_discount",
+                           gap_pct=-20, fair_7d=10)
+    report = generate_html_report(
+        pd.DataFrame([{"item_name": "Bread"}]), output_dir=tmp_path,
+        highlights=[{"item": item, "chart_path": None}],
+    )
+    section = report[report.index('<section class="highlight-section">'):
+                     report.index("Fair Value &amp; Buy / Sell Signals")]
+    assert 'data-item-code="bread"' in section
+    assert '<img class="highlight-chart"' not in section
+
+
+def test_header_capture_wraps_hero_and_highlights_before_later_sections(tmp_path):
+    item = SimpleNamespace(item_code="bread", item_name="Bread", role="largest_discount",
+                           gap_pct=-20, fair_7d=10)
+    report = generate_html_report(
+        pd.DataFrame([{"item_name": "Bread"}]), output_dir=tmp_path,
+        highlights=[{"item": item, "chart_path": tmp_path / "charts/discount.png"}],
+    )
+
+    capture_start = report.index('<div class="report-header-capture" data-report-asset="header">')
+    capture_end = report.index("</div>", report.index("</section>", capture_start)) + len("</div>")
+    capture = report[capture_start:capture_end]
+    assert "Market intelligence, without the noise." in capture
+    assert 'data-item-code="bread"' in capture
+    assert "Fair Value &amp; Buy / Sell Signals" not in capture
 
 
 def test_report_omits_redundant_price_evolution_lens():

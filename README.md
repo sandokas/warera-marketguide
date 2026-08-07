@@ -158,13 +158,16 @@ The database-backed HTML report always combines 1D, 7D, and 30D fair-value persp
 largest price gaps, completed activity, and Item Notes use an explicit 7D basis; `--lookback-days`
 continues to control sync/backfill and existing chart behavior, not those report semantics.
 
-Export every table in the generated report as a standalone PNG:
+Export the report header and every table in the generated report as standalone PNGs:
 
 ```bash
 PYTHONPATH=src .venv/bin/python run_report.py --table-pngs --output output
 ```
 
-The images are written to `output/tables/` in the same order as the HTML report. Each PNG captures
+The hero and rendered highlight cards are written to `output/sections/report-header.png`; when no
+highlight qualifies, that image contains the hero alone.
+
+The table images are written to `output/tables/` in the same order as the HTML report. Each PNG captures
 only its browser-rendered table—without the section heading, description, or surrounding whitespace—
 while preserving the dark theme, signal colors, badges, depth graphics, and other HTML styling. The
 exporter uses Google Chrome or Chromium from `PATH`; set `WARERA_CHROME_PATH` if the browser

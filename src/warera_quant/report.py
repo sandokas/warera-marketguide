@@ -270,6 +270,12 @@ def _html_page(title: str, body: str) -> str:
       grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
       gap: 14px;
     }}
+    .highlight-column {{ display: grid; gap: 12px; min-width: 0; }}
+    .highlight-chart {{ display: block; width: 100%; height: auto; border-radius: 10px; }}
+    .sr-only {{
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+    }}
     .summary-card {{
       position: relative;
       min-height: 154px;
@@ -667,6 +673,7 @@ def _html_page(title: str, body: str) -> str:
       .signal-help {{ grid-template-columns: 1fr; }}
       .price-guide-table th, .price-guide-table td {{ padding: 6px 3px; }}
       .price-guide-table .chip {{ padding: 2px 4px; font-size: 1rem; }}
+      .summary-grid {{ grid-template-columns: 1fr; }}
     }}
     @media (max-width: 520px) {{
       main {{ width: min(100% - 8px, 1180px); padding-top: 10px; }}
@@ -1042,6 +1049,47 @@ def _market_pulse_html(df: pd.DataFrame) -> str:
         + valuation_card("Largest discount", discount, tone="down", icon="↓", fallback="No clear discount")
         + valuation_card("Largest premium", premium, tone="up", icon="↑", fallback="No clear premium")
         + '</div></section>'
+    )
+
+
+def _highlight_pairs_html(highlights: list[dict[str, object]], output_dir: Path) -> str:
+    columns = []
+    for entry in highlights:
+        item = entry.get("item")
+        chart_path = entry.get("chart_path")
+        if item is None:
+            continue
+        chart_src = _relative_chart_path(chart_path, output_dir) if chart_path is not None else None
+        role = str(getattr(item, "role"))
+        title = role.replace("_", " ").title()
+        tone = "down" if "discount" in role else "up"
+        icon = "↓" if tone == "down" else "↑"
+        name = str(getattr(item, "item_name"))
+        gap = float(getattr(item, "gap_pct"))
+        fair = float(getattr(item, "fair_7d"))
+        item_code = str(getattr(item, "item_code"))
+        card = (
+            f'<article class="summary-card summary-card-{tone}" data-item-code="{escape(item_code, quote=True)}" '
+            f'data-highlight-role="{escape(role, quote=True)}"><span>{escape(title)}</span>'
+            f'<strong><span class="summary-arrow" aria-hidden="true">{icon}</span>{escape(name)}</strong>'
+            f'<span class="summary-value">{gap:+.2f}% vs 7D fair</span>'
+            f'<span class="summary-detail">7D fair reference {_fmt(fair)}</span></article>'
+        )
+        chart = ""
+        if chart_src:
+            alt = f"{name} {title.lower()} trailing 30D price-action chart"
+            chart = (f'<img class="highlight-chart" src="{escape(chart_src, quote=True)}" '
+                     f'alt="{escape(alt, quote=True)}">')
+        columns.append(
+            f'<div class="highlight-column">{card}{chart}</div>'
+        )
+    if not columns:
+        return ""
+    return (
+        '<section class="highlight-section"><div class="eyebrow">7D fair-value context</div>'
+        '<h2>Largest price gaps</h2><span class="sr-only">Highlights are ranked only among items '
+        'with sufficient completed-transaction history for a price-action chart.</span>'
+        '<div class="summary-grid">' + "".join(columns) + '</div></section>'
     )
 
 
@@ -1426,6 +1474,7 @@ def generate_html_report(
     metric_window: str = "7D",
     chart_path: str | Path | None = None,
     chart_label: str | None = None,
+    highlights: list[dict[str, object]] | None = None,
     output_dir: str | Path = ".",
     assumptions: FlipAssumptions | None = None,
     data_synced_at: str | None = None,
@@ -1447,8 +1496,7 @@ def generate_html_report(
     )
     display_count = len(df) if top <= 0 else top
     blocks: list[str] = []
-    blocks.append(
-        f"""    <header>
+    header_html = f"""    <header>
       <div class="hero-copy">
         <div class="eyebrow">WarEra Market Guide</div>
         <h1>Market intelligence, without the noise.</h1>
@@ -1457,8 +1505,17 @@ def generate_html_report(
       <div class="hero-meta"><strong>Combined 1D / 7D / 30D report</strong><span>{data_freshness}</span><span>Report generated {escape(generated)}</span></div>
 </header>
 """
+    highlight_html = ""
+    if highlights is None:
+        highlight_html = _market_pulse_html(df)
+    else:
+        highlight_html = _highlight_pairs_html(highlights, Path(output_dir))
+    blocks.append(
+        '<div class="report-header-capture" data-report-asset="header">'
+        + header_html
+        + highlight_html
+        + '</div>'
     )
-    blocks.append(_market_pulse_html(df))
     blocks.append(_price_guide_html(df, display_count))
 
     blocks.append(_order_book_html(df, display_count))
@@ -1553,7 +1610,7 @@ def generate_html_report(
     </section>"""
         )
 
-    chart_src = _relative_chart_path(chart_path, Path(output_dir))
+    chart_src = _relative_chart_path(chart_path, Path(output_dir)) if highlights is None else None
     if chart_src:
         chart_heading = f"Featured Price History: {chart_label}" if chart_label else "Featured Price History"
         blocks.append(f'<section><h2>{escape(chart_heading)}</h2><img class="chart" src="{escape(chart_src)}" alt="Featured market history chart"></section>')
@@ -1569,6 +1626,7 @@ def write_outputs(
     metric_window: str = "7D",
     chart_path: str | Path | None = None,
     chart_label: str | None = None,
+    highlights: list[dict[str, object]] | None = None,
     assumptions: FlipAssumptions | None = None,
     data_synced_at: str | None = None,
     data_sync_status: str | None = None,
@@ -1613,6 +1671,7 @@ def write_outputs(
             metric_window=metric_window,
             chart_path=chart_path,
             chart_label=chart_label,
+            highlights=highlights,
             output_dir=out,
             assumptions=assumptions,
             data_synced_at=data_synced_at,
