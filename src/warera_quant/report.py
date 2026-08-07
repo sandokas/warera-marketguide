@@ -41,6 +41,10 @@ _FORECAST_REASON_LABELS = {
     "above_fair": "Above fair value",
 }
 
+REPORT_WINDOWS = ("1D", "7D", "30D")
+PRIMARY_GUIDANCE_WINDOW = "7D"
+ACTIVITY_WINDOW = "7D"
+
 
 def combine_market_rows_with_metrics(source: pd.DataFrame, metrics: Iterable[MarketMetrics]) -> pd.DataFrame:
     df = source.reset_index(drop=True).copy()
@@ -118,7 +122,13 @@ def _first_number(row: pd.Series, *columns: str) -> float | None:
     return None
 
 
-def _fair_price(row: pd.Series, window_key: str) -> float | None:
+def _strict_fair_price(row: pd.Series, window: str) -> float | None:
+    """Return only the transaction-derived fair value for the labelled horizon."""
+    return _first_number(row, f"stable_fair_price_{_window_key(window)}")
+
+
+def _compatibility_fair_price(row: pd.Series, window_key: str = "7d") -> float | None:
+    """Resolve older flat/CSV inputs for legacy 7D-oriented contexts only."""
     return _first_number(
         row,
         "guide_fair_price",
@@ -129,6 +139,14 @@ def _fair_price(row: pd.Series, window_key: str) -> float | None:
         f"average_{window_key}",
         f"rolling_average_{window_key}",
     )
+
+
+def _primary_guidance_fair_price(row: pd.Series) -> float | None:
+    """Use strict 7D data for windowed rows, retaining legacy-only compatibility."""
+    strict_columns = tuple(f"stable_fair_price_{_window_key(window)}" for window in REPORT_WINDOWS)
+    if any(column in row.index for column in strict_columns):
+        return _strict_fair_price(row, PRIMARY_GUIDANCE_WINDOW)
+    return _compatibility_fair_price(row)
 
 
 def _latest_price(row: pd.Series) -> float | None:
@@ -725,10 +743,9 @@ def _trend_label(value: object) -> str:
     return _chip("Flat", "flat", prefix="→")
 
 
-def _price_guide_html(df: pd.DataFrame, window_key: str, display_count: int) -> str:
+def _price_guide_html(df: pd.DataFrame, display_count: int) -> str:
     rows = []
     for _, row in df.iterrows():
-        fair = _fair_price(row, window_key)
         entry_value = row.get("guide_entry_action")
         holder_value = row.get("guide_holder_action")
         entry_action = entry_value if isinstance(entry_value, str) and entry_value in {"BUY", "WAIT"} else "WAIT"
@@ -741,18 +758,17 @@ def _price_guide_html(df: pd.DataFrame, window_key: str, display_count: int) -> 
             "Signal": signal,
             "Ask": ask,
             "Bid": bid,
-            "Fair": fair,
+            "Fair 1D": _strict_fair_price(row, "1D"),
+            "Fair 7D": _strict_fair_price(row, "7D"),
+            "Fair 30D": _strict_fair_price(row, "30D"),
             "Max Buy": _first_number(row, "guide_max_entry_price"),
-            "Rich Sell": _first_number(row, "guide_rich_exit_price", f"price_p90_{window_key}", "price_p90_7d"),
+            "Rich Sell": _first_number(row, "guide_rich_exit_price", "price_p90_7d"),
             "Ask Upside %": _first_number(row, "guide_net_to_fair_pct"),
             "Price State": _present(
                 row.get("tendency_labels_7d"),
                 _present(
                     row.get("tendency_7d"),
-                    _present(
-                        row.get(f"tendency_labels_{window_key}"),
-                        _present(row.get(f"tendency_{window_key}"), "Insufficient history"),
-                    ),
+                    "Insufficient history",
                 ),
             ),
         })
@@ -767,13 +783,14 @@ def _price_guide_html(df: pd.DataFrame, window_key: str, display_count: int) -> 
     ).head(display_count).drop(columns="_signal_rank")
     return (
         '<section><div class="eyebrow">Fair-value detail</div><h2>Fair Value &amp; Buy / Sell Signals</h2>'
-        '<p class="muted">Live bid and ask prices compared with fair value and trading thresholds.</p>'
+        '<p class="muted">Blended fair estimates provide strict 1D, 7D, and 30D completed-transaction context; Signal, Max Buy, Rich Sell, Ask Upside, and Price State use 7D guidance.</p>'
         + _compact_table_html(view, table_kind="price-guide")
         + '</section>'
     )
 
 
-def _activity_html(df: pd.DataFrame, window_key: str, metric_window: str, display_count: int) -> str:
+def _activity_html(df: pd.DataFrame, display_count: int) -> str:
+    window_key = _window_key(ACTIVITY_WINDOW)
     rows: list[dict[str, object]] = []
     for _, row in df.iterrows():
         units = _first_number(row, f"traded_quantity_{window_key}", f"volume_{window_key}")
@@ -840,7 +857,7 @@ def _activity_html(df: pd.DataFrame, window_key: str, metric_window: str, displa
         )
     return (
         '<section><h2>Completed Market Activity</h2>'
-        f'<p class="muted">Completed {escape(metric_window)} trades ranked by value; PP volume estimates embodied production effort.</p>'
+        f'<p class="muted">Completed {ACTIVITY_WINDOW} trades ranked by value; PP volume estimates embodied production effort.</p>'
         '<div class="table-wrap compact-table activity-table"><table class="report-table">'
         '<thead><tr><th class="activity-item text">Item</th>'
         '<th class="activity-ratio number" title="Total upstream Production Points required for one item">Total PP : Item</th>'
@@ -990,11 +1007,11 @@ def _signal_rank(row: pd.Series) -> tuple[int, float, float]:
     return evidence, edge, samples
 
 
-def _market_pulse_html(df: pd.DataFrame, window_key: str) -> str:
+def _market_pulse_html(df: pd.DataFrame) -> str:
     valuation_rows: list[dict[str, object]] = []
     for _, row in df.iterrows():
         latest = _latest_price(row)
-        fair = _fair_price(row, window_key)
+        fair = _primary_guidance_fair_price(row)
         gap = _price_gap_pct(latest, fair)
         if gap is not None:
             valuation_rows.append({"name": row.get("item_name", "Unknown"), "gap": gap, "fair": fair})
@@ -1011,8 +1028,8 @@ def _market_pulse_html(df: pd.DataFrame, window_key: str) -> str:
             name, value, detail = fallback, "No clear outlier", "Current price is close to its fair-price context"
         else:
             name = str(selected["name"])
-            value = f'{float(selected["gap"]):+.2f}% vs fair'
-            detail = f'Fair reference {_fmt(selected["fair"])}'
+            value = f'{float(selected["gap"]):+.2f}% vs 7D fair'
+            detail = f'7D fair reference {_fmt(selected["fair"])}'
         return (
             f'<article class="summary-card summary-card-{tone}"><span>{escape(title)}</span>'
             f'<strong><span class="summary-arrow" aria-hidden="true">{escape(icon)}</span>{escape(name)}</strong>'
@@ -1020,7 +1037,7 @@ def _market_pulse_html(df: pd.DataFrame, window_key: str) -> str:
         )
 
     return (
-        '<section><div class="eyebrow">Fair-value context</div><h2>Largest price gaps</h2>'
+        '<section><div class="eyebrow">7D fair-value context</div><h2>Largest price gaps</h2>'
         '<div class="summary-grid">'
         + valuation_card("Largest discount", discount, tone="down", icon="↓", fallback="No clear discount")
         + valuation_card("Largest premium", premium, tone="up", icon="↑", fallback="No clear premium")
@@ -1207,6 +1224,7 @@ def _is_number_column(column: str) -> bool:
         or label.endswith("traded value")
         or label.endswith("change")
         or label.endswith("position")
+        or label.startswith("fair ")
         or "%" in label
         or "ask" in label
         or "bid" in label
@@ -1428,7 +1446,6 @@ def generate_html_report(
         else "Market data sync time unavailable"
     )
     display_count = len(df) if top <= 0 else top
-    window_key = _window_key(metric_window)
     blocks: list[str] = []
     blocks.append(
         f"""    <header>
@@ -1437,15 +1454,15 @@ def generate_html_report(
         <h1>Market intelligence, without the noise.</h1>
         <p class="muted">Completed trades provide price history; current visible orders provide executable prices and market depth.</p>
       </div>
-      <div class="hero-meta"><strong>{escape(metric_window)} analysis window</strong><span>{data_freshness}</span><span>Report generated {escape(generated)}</span></div>
+      <div class="hero-meta"><strong>Combined 1D / 7D / 30D report</strong><span>{data_freshness}</span><span>Report generated {escape(generated)}</span></div>
 </header>
 """
     )
-    blocks.append(_market_pulse_html(df, window_key))
-    blocks.append(_price_guide_html(df, window_key, display_count))
+    blocks.append(_market_pulse_html(df))
+    blocks.append(_price_guide_html(df, display_count))
 
     blocks.append(_order_book_html(df, display_count))
-    blocks.append(_activity_html(df, window_key, metric_window, display_count))
+    blocks.append(_activity_html(df, display_count))
 
     if not df.empty:
         view = df.head(display_count).copy()
@@ -1512,17 +1529,17 @@ def generate_html_report(
     if not note_rows.empty:
         notes: list[str] = []
         for _, row in note_rows.iterrows():
-            fair = _fair_price(row, window_key)
-            volume = _first_number(row, f"volume_{window_key}", f"traded_quantity_{window_key}")
-            trades = _first_number(row, f"trade_count_{window_key}", "trades_7d")
+            fair = _primary_guidance_fair_price(row)
+            volume = _first_number(row, "volume_7d", "traded_quantity_7d")
+            trades = _first_number(row, "trade_count_7d", "trades_7d")
             detail_items = [
-                f"<li>Historical fair context: <strong>{escape(_fmt(fair))}</strong></li>",
+                f"<li>7D historical fair context: <strong>{escape(_fmt(fair))}</strong></li>",
                 f"<li>Bid / Ask: <strong>{escape(_fmt(row.get('bid')))} / {escape(_fmt(row.get('ask')))}</strong></li>",
-                f"<li>{escape(metric_window)} volume / trades: <strong>{escape(_fmt(volume, 0))} / {escape(_fmt(trades, 0))}</strong></li>",
-                f"<li>{escape(metric_window)} range: <strong>{escape(_fmt(row.get('range_pct'), 2))}%</strong></li>",
+                f"<li>7D volume / trades: <strong>{escape(_fmt(volume, 0))} / {escape(_fmt(trades, 0))}</strong></li>",
+                f"<li>7D stable range: <strong>{escape(_fmt(row.get('stable_range_pct_7d'), 2))}%</strong></li>",
             ]
             if row.get("momentum_7d_pct") is not None and not pd.isna(row.get("momentum_7d_pct")):
-                detail_items.append(f"<li>{escape(metric_window)} momentum: <strong>{escape(_fmt(row['momentum_7d_pct'], 2))}%</strong></li>")
+                detail_items.append(f"<li>7D momentum: <strong>{escape(_fmt(row['momentum_7d_pct'], 2))}%</strong></li>")
             notes.append(
                 f"""<article class="note">
           <h3>{escape(str(row['item_name']))}</h3>

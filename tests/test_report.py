@@ -141,6 +141,7 @@ def test_report_foregrounds_market_trends_and_writes_compatibility_csv(tmp_path)
     assert 'class="col-rank"' not in report
     assert "Rising" in report
     assert "Volatile" in report
+    assert '<th class="col-fair-7d number">Fair 7D</th>' in report
     assert "5.900" in report
     assert "Supported" not in report
     assert '<span class="chip chip-up"><span>↑</span>Up</span>' not in report
@@ -200,7 +201,76 @@ def test_report_uses_stable_fair_price_and_softens_thin_market_actions():
 
     assert "10.000" in report
     assert "Largest discount" in report
-    assert "-20.00% vs fair" in report
+    assert "-20.00% vs 7D fair" in report
+
+
+def test_report_renders_strict_multi_window_fair_values_and_combined_header():
+    report = generate_html_report(pd.DataFrame([{
+        "item_name": "Bread",
+        "last_trade_price": 10,
+        "stable_fair_price_1d": 1.111,
+        "stable_fair_price_7d": 7.777,
+        "stable_fair_price_30d": 30.303,
+    }]), metric_window="2D")
+
+    guide = report[report.index("Fair Value &amp; Buy / Sell Signals"):report.index("Completed Market Activity")]
+    assert "Combined 1D / 7D / 30D report" in report
+    assert "2D analysis window" not in report
+    assert '<th class="col-fair-1d number">Fair 1D</th>' in guide
+    assert '<th class="col-fair-7d number">Fair 7D</th>' in guide
+    assert '<th class="col-fair-30d number">Fair 30D</th>' in guide
+    assert all(value in guide for value in ("1.111", "7.777", "30.303"))
+
+
+def test_strict_fair_cells_do_not_fall_back_to_7d_or_legacy_values():
+    report = generate_html_report(pd.DataFrame([{
+        "item_name": "Legacy Bread",
+        "last_trade_price": 9,
+        "stable_fair_price_7d": 7.777,
+        "vwap_1d": 1.234,
+        "average_30d": 30.123,
+    }]))
+
+    guide = report[report.index("Fair Value &amp; Buy / Sell Signals"):report.index("Completed Market Activity")]
+    assert guide.count(">N/A</td>") >= 2
+    assert guide.count(">7.777</td>") == 1
+    assert "1.234" not in guide and "30.123" not in guide
+
+    legacy_report = generate_html_report(pd.DataFrame([{
+        "item_name": "CSV Item", "latest_price": 8, "vwap_7d": 10,
+    }]))
+    legacy_guide = legacy_report[
+        legacy_report.index("Fair Value &amp; Buy / Sell Signals"):
+        legacy_report.index("Completed Market Activity")
+    ]
+    assert legacy_guide.count(">N/A</td>") >= 3
+    assert "-20.00% vs 7D fair" in legacy_report
+
+
+def test_guidance_gaps_activity_and_notes_are_fixed_to_7d():
+    report = generate_html_report(pd.DataFrame([{
+        "item_name": "Fixed Window",
+        "last_trade_price": 12,
+        "stable_fair_price_1d": 20,
+        "stable_fair_price_7d": 10,
+        "stable_fair_price_30d": 30,
+        "guide_max_entry_price": 9.5,
+        "guide_rich_exit_price": 10.5,
+        "guide_net_to_fair_pct": 5,
+        "tendency_labels_7d": "Stable",
+        "traded_value_1d": 111,
+        "traded_value_7d": 777,
+        "traded_value_30d": 333,
+        "traded_quantity_7d": 70,
+        "trade_count_7d": 7,
+        "stable_range_pct_7d": 2.5,
+    }]), metric_window="30D")
+
+    assert "+20.00% vs 7D fair" in report
+    assert "Completed 7D trades ranked by value" in report
+    assert "777 completed transaction value" in report
+    assert "7D historical fair context" in report
+    assert "7D stable range" in report
 
 
 def test_report_formats_volume_and_trade_counts_without_decimal_suffix():
@@ -453,7 +523,9 @@ def test_report_restores_price_guide_and_renders_transparent_market_depth():
 
     assert report.index("Largest price gaps") < report.index("Fair Value &amp; Buy / Sell Signals")
     assert report.index("Fair Value &amp; Buy / Sell Signals") < report.index("Current Order Book")
-    assert '<th class="col-fair number">Fair</th>' in report
+    assert '<th class="col-fair-1d number">Fair 1D</th>' in report
+    assert '<th class="col-fair-7d number">Fair 7D</th>' in report
+    assert '<th class="col-fair-30d number">Fair 30D</th>' in report
     assert '<th class="col-ask number">Ask</th>' in report
     assert '<th class="col-bid number">Bid</th>' in report
     assert ">Max Buy<" in report and ">Rich Sell<" in report
@@ -558,7 +630,7 @@ def test_report_emits_auditable_position_specific_guidance():
     assert '<tr class="signal-buy">' in report
     assert '<tr class="signal-sell">' in report
     assert '<tr class="signal-wait">' in report
-    assert "Live bid and ask prices compared with fair value and trading thresholds." in report
+    assert "Signal, Max Buy, Rich Sell, Ask Upside, and Price State use 7D guidance." in report
     assert "after-fee" not in report
     assert report.index("Buy Item") < report.index("Sell Item") < report.index("Wait Item")
 

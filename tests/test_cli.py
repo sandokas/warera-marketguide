@@ -53,6 +53,7 @@ def test_from_db_preserves_structured_order_book_for_report(monkeypatch, tmp_pat
     def capture_outputs(df, output_dir, **_kwargs):
         captured["book"] = df.iloc[0]["order_book"]
         captured["data_synced_at"] = _kwargs["data_synced_at"]
+        captured["kwargs"] = _kwargs
         return output_dir / "market_trends.csv", output_dir / "market_report.html"
 
     monkeypatch.setattr(cli_module, "write_outputs", capture_outputs)
@@ -65,6 +66,7 @@ def test_from_db_preserves_structured_order_book_for_report(monkeypatch, tmp_pat
 
     assert captured["book"] == book
     assert captured["data_synced_at"] == "2026-06-30T10:00:00Z"
+    assert "metric_window" not in captured["kwargs"]
 
 
 @pytest.mark.parametrize(

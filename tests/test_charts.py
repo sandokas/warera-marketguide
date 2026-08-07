@@ -75,6 +75,7 @@ def test_render_report_table_pngs_captures_only_tables(monkeypatch, tmp_path: Pa
             pass
 
     monkeypatch.setattr("playwright.sync_api.sync_playwright", lambda: FakeContext())
+    monkeypatch.setattr("warera_quant.charts._chrome_executable", lambda _path: "/usr/bin/google-chrome")
     outputs = render_report_table_pngs(
         report,
         tmp_path / "tables",

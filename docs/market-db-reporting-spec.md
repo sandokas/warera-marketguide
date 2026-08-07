@@ -117,7 +117,7 @@ Incremental sync is the default. Transactions are inserted before the stop condi
 - the configured positive `--history-pages` cap is reached;
 - the API returns no next cursor.
 
-On a new database, `--lookback-days` controls report queries but does not cap the initial incremental import. Use a page cap or explicit backfill when import scope matters.
+On a new database, `--lookback-days` controls sync/backfill scope and existing chart history but does not cap the initial incremental import. Use a page cap or explicit backfill when import scope matters.
 
 ### Backfill sync
 
@@ -127,7 +127,10 @@ Both `--live` and `--sync` accept backfill mode. `--sync` exits after updating t
 
 ## Query and report behavior
 
-`market_data.py` filters stored records by the requested lookback and produces one row per item. Supported internal window labels are `1D`, `7D`, `30D`, `90D`, and `1Y`; the CLI currently requests one window from `--lookback-days`.
+`market_data.py` filters stored records into requested windows and produces one row per item. Supported
+internal window labels are `1D`, `7D`, `30D`, `90D`, and `1Y`; database-backed reports request `1D`,
+`7D`, and `30D` together. The published report uses strict fair values for each labelled horizon,
+7D guidance and activity, and cross-horizon trends.
 
 Report generation writes:
 

@@ -390,7 +390,6 @@ def main() -> None:
         df_out,
         output_dir,
         top=args.top,
-        metric_window=metric_window,
         chart_path=chart_path,
         chart_label=chart_label,
         assumptions=assumptions,

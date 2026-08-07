@@ -93,7 +93,7 @@ PYTHONPATH=src .venv/bin/python run_report.py --housekeeping
 
 The routine prunes expired transactions, price observations, and order-book observations. The
 default configuration in `marketguide.toml` retains 45 days, which leaves headroom for the
-report's 30-day analysis window:
+report's broadest standard completed-transaction window (30 days):
 
 ```toml
 [housekeeping]
@@ -153,6 +153,10 @@ PYTHONPATH=src .venv/bin/python run_report.py \
 ```
 
 The featured chart is written to `output/charts/featured-trade.png` and embedded in the HTML report. Use `--featured-item-code bread` to prefer a particular item and `--chart-min-range-pct 5` to set the minimum visible price range. A moving average is shown only when `--lookback-days` is greater than 1.
+
+The database-backed HTML report always combines 1D, 7D, and 30D fair-value perspectives. Guidance,
+largest price gaps, completed activity, and Item Notes use an explicit 7D basis; `--lookback-days`
+continues to control sync/backfill and existing chart behavior, not those report semantics.
 
 Export every table in the generated report as a standalone PNG:
 
