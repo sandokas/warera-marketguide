@@ -112,6 +112,18 @@ def test_report_omits_redundant_price_evolution_lens():
     assert "Momentum describes history, not a trade recommendation" not in report
 
 
+def test_report_ends_with_third_party_tools_and_project_signoff():
+    report = generate_html_report(pd.DataFrame(), top=0)
+
+    assert report.index("Alternative third-party tools") < report.index("Did you know?")
+    assert 'href="https://workerprofit.theorist.ninja/"' in report
+    assert 'href="https://warera.unikhorne.dev/market"' in report
+    assert 'href="https://github.com/sandokas/warera-marketguide"' in report
+    assert "You can download the code that generated this report at:" in report
+    assert "If you found it useful, don't forget to Like and Subscribe!" in report
+    assert report.index("Did you know?") < report.index("</footer>")
+
+
 def test_generate_html_report_shows_all_items_by_default():
     df = pd.DataFrame([
         {

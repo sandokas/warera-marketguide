@@ -665,6 +665,41 @@ def _html_page(title: str, body: str) -> str:
       border-radius: 8px;
       padding: 14px;
     }}
+    .report-footer {{
+      margin-top: 34px;
+      padding: 22px 24px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: linear-gradient(145deg, rgba(17, 24, 38, 0.98), rgba(15, 23, 42, 0.98));
+      color: var(--muted);
+      font-size: 0.92rem;
+    }}
+    .report-footer h2 {{
+      margin-bottom: 12px;
+      color: var(--text);
+      font-size: 1.08rem;
+    }}
+    .report-footer a {{ color: var(--accent); }}
+    .third-party-tools {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 10px;
+      margin-bottom: 20px;
+    }}
+    .third-party-tool {{
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(11, 17, 32, 0.48);
+    }}
+    .third-party-tool a {{ display: inline-block; margin-bottom: 3px; font-weight: 750; }}
+    .third-party-tool p, .report-signoff p {{ margin-bottom: 0; }}
+    .report-signoff {{
+      padding-top: 18px;
+      border-top: 1px solid var(--line);
+    }}
+    .report-signoff strong {{ color: var(--text); }}
+    .report-signoff p + p {{ margin-top: 8px; }}
     @media (max-width: 720px) {{
       header {{ display: block; padding: 18px; }}
       .hero-meta {{ margin-top: 18px; text-align: left; }}
@@ -1614,6 +1649,29 @@ def generate_html_report(
     if chart_src:
         chart_heading = f"Featured Price History: {chart_label}" if chart_label else "Featured Price History"
         blocks.append(f'<section><h2>{escape(chart_heading)}</h2><img class="chart" src="{escape(chart_src)}" alt="Featured market history chart"></section>')
+
+    blocks.append(
+        """    <footer class="report-footer">
+      <h2>Alternative third-party tools</h2>
+      <div class="third-party-tools">
+        <article class="third-party-tool">
+          <a href="https://workerprofit.theorist.ninja/" target="_blank" rel="noopener noreferrer">Factory Worker Profitability</a>
+          <p>Compare market prices, recipes, wages, and production bonuses to estimate factory and worker profitability.</p>
+        </article>
+        <article class="third-party-tool">
+          <a href="https://warera.unikhorne.dev/market" target="_blank" rel="noopener noreferrer">WarEra Market</a>
+          <p>Explore WarEra market information in an alternative market view.</p>
+        </article>
+      </div>
+      <div class="report-signoff">
+        <p><strong>Did you know?</strong></p>
+        <p>You can download the code that generated this report at:
+          <a href="https://github.com/sandokas/warera-marketguide" target="_blank" rel="noopener noreferrer">github.com/sandokas/warera-marketguide</a>
+        </p>
+        <p>If you found it useful, don't forget to Like and Subscribe!</p>
+      </div>
+    </footer>"""
+    )
 
     return _html_page("WarEra Market Guide", "\n".join(blocks))
 
