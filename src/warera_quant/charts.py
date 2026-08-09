@@ -20,6 +20,54 @@ import pandas as pd
 from .metrics import HighlightedItem
 
 
+_REPORT_CHART_COLORS = {
+    "background": "#0b1120",
+    "panel": "#111826",
+    "text": "#e2e8f0",
+    "muted": "#94a3b8",
+    "grid": "#2e3a55",
+    "accent": "#7dd3fc",
+    "good": "#6ee7b7",
+    "bad": "#f87171",
+    "amber": "#fbbf24",
+}
+_REPORT_CHART_WIDTHS = {"volume_linewidth": 0}
+
+
+def _report_chart_style() -> dict[str, Any]:
+    """Return an mplfinance style matching the dark report palette."""
+    return mpf.make_mpf_style(
+        base_mpf_style="nightclouds",
+        marketcolors=mpf.make_marketcolors(
+            up=_REPORT_CHART_COLORS["good"],
+            down=_REPORT_CHART_COLORS["bad"],
+            edge="inherit",
+            wick="inherit",
+            volume={
+                "up": _REPORT_CHART_COLORS["good"],
+                "down": _REPORT_CHART_COLORS["bad"],
+            },
+        ),
+        gridstyle=":",
+        gridcolor=_REPORT_CHART_COLORS["grid"],
+        facecolor=_REPORT_CHART_COLORS["panel"],
+        figcolor=_REPORT_CHART_COLORS["background"],
+        edgecolor=_REPORT_CHART_COLORS["grid"],
+        rc={
+            "axes.labelcolor": _REPORT_CHART_COLORS["text"],
+            "axes.titlecolor": _REPORT_CHART_COLORS["text"],
+            "figure.facecolor": _REPORT_CHART_COLORS["background"],
+            "legend.edgecolor": _REPORT_CHART_COLORS["grid"],
+            "legend.facecolor": _REPORT_CHART_COLORS["panel"],
+            "legend.labelcolor": _REPORT_CHART_COLORS["text"],
+            "savefig.facecolor": _REPORT_CHART_COLORS["background"],
+            "text.color": _REPORT_CHART_COLORS["text"],
+            "xtick.color": _REPORT_CHART_COLORS["muted"],
+            "ytick.color": _REPORT_CHART_COLORS["muted"],
+        },
+    )
+
+
 def _chrome_executable(explicit_path: str | Path | None = None) -> str:
     if explicit_path is not None:
         executable = Path(explicit_path)
@@ -344,24 +392,51 @@ def plot_price_chart(
     flags = moving_average_breaks(candles, ma_window=ma_window) if show_moving_average else candles.copy()
     add_plots = []
     if show_min_max_band:
-        add_plots.append(mpf.make_addplot(flags["High"], color="#94a3b8", width=0.8, linestyle="--"))
-        add_plots.append(mpf.make_addplot(flags["Low"], color="#94a3b8", width=0.8, linestyle="--"))
+        for boundary in ("High", "Low"):
+            add_plots.append(
+                mpf.make_addplot(
+                    flags[boundary],
+                    color=_REPORT_CHART_COLORS["muted"],
+                    width=0.8,
+                    linestyle="--",
+                )
+            )
     if show_moving_average:
         up_markers = flags["Close"].where(flags["Break Up"])
         down_markers = flags["Close"].where(flags["Break Down"])
         if flags["MA"].notna().any():
-            add_plots.append(mpf.make_addplot(flags["MA"], color="#2563eb", width=1.2))
+            add_plots.append(
+                mpf.make_addplot(
+                    flags["MA"], color=_REPORT_CHART_COLORS["accent"], width=1.2
+                )
+            )
         if up_markers.notna().any():
-            add_plots.append(mpf.make_addplot(up_markers, type="scatter", marker="^", markersize=90, color="#16a34a"))
+            add_plots.append(
+                mpf.make_addplot(
+                    up_markers,
+                    type="scatter",
+                    marker="^",
+                    markersize=90,
+                    color=_REPORT_CHART_COLORS["good"],
+                )
+            )
         if down_markers.notna().any():
-            add_plots.append(mpf.make_addplot(down_markers, type="scatter", marker="v", markersize=90, color="#dc2626"))
+            add_plots.append(
+                mpf.make_addplot(
+                    down_markers,
+                    type="scatter",
+                    marker="v",
+                    markersize=90,
+                    color=_REPORT_CHART_COLORS["bad"],
+                )
+            )
     if spread is not None and not spread.empty and spread.notna().any():
         aligned_spread = spread.reindex(flags.index).ffill()
         add_plots.append(
             mpf.make_addplot(
                 aligned_spread,
                 panel=2,
-                color="#7c3aed",
+                color=_REPORT_CHART_COLORS["amber"],
                 width=1,
                 ylabel="Spread",
             )
@@ -369,18 +444,7 @@ def plot_price_chart(
 
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    style = mpf.make_mpf_style(
-        base_mpf_style="yahoo",
-        marketcolors=mpf.make_marketcolors(
-            up="#16a34a",
-            down="#dc2626",
-            volume={"up": "#0891b2", "down": "#f97316"},
-            inherit=True,
-        ),
-        gridstyle=":",
-        facecolor="#ffffff",
-        figcolor="#ffffff",
-    )
+    style = _report_chart_style()
     title = f"{item_name} - {interval} candles"
     if show_moving_average:
         title += f", MA {ma_window}"
@@ -393,6 +457,7 @@ def plot_price_chart(
         "ylabel_lower": "Qty",
         "datetime_format": "%m-%d %H:%M",
         "tight_layout": True,
+        "update_width_config": _REPORT_CHART_WIDTHS,
         "savefig": dict(fname=str(output), dpi=150, bbox_inches="tight"),
     }
     ylim = chart_ylim(flags, min_range_pct=min_range_pct)
@@ -476,18 +541,18 @@ def render_highlight_price_action_chart(
     sma.index = pd.to_datetime(sma.index, utc=True, errors="coerce").tz_convert(None)
     sma = sma.reindex(visual.index)
     if sma.notna().any():
-        add_plots.append(mpf.make_addplot(sma, color="#2563eb", width=1.3, label="7D SMA"))
+        add_plots.append(
+            mpf.make_addplot(
+                sma,
+                color=_REPORT_CHART_COLORS["accent"],
+                width=1.3,
+                label="7D SMA",
+            )
+        )
 
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    style = mpf.make_mpf_style(
-        base_mpf_style="yahoo",
-        marketcolors=mpf.make_marketcolors(
-            up="#16a34a", down="#dc2626",
-            volume={"up": "#0891b2", "down": "#f97316"}, inherit=True,
-        ),
-        gridstyle=":", facecolor="#ffffff", figcolor="#ffffff",
-    )
+    style = _report_chart_style()
     role_label = highlight.role.replace("_", " ").title()
     title = f"{highlight.item_name} — {role_label}"
     subtitle = f"Trailing 30D · {highlight.interval} candles · {highlight.history_span}"
@@ -495,6 +560,7 @@ def render_highlight_price_action_chart(
         "type": "candle", "volume": True, "style": style,
         "ylabel": "Price", "ylabel_lower": "Units traded", "datetime_format": "%m-%d",
         "tight_layout": False,
+        "update_width_config": _REPORT_CHART_WIDTHS,
         "savefig": dict(fname=str(output), dpi=150, bbox_inches="tight"),
     }
     if add_plots:
@@ -505,8 +571,13 @@ def render_highlight_price_action_chart(
     figure, axes = mpf.plot(visual, returnfig=True, **{k: v for k, v in kwargs.items() if k != "savefig"})
     figure.suptitle(f"{title}\n{subtitle}", fontsize=14, fontweight="bold", y=0.98)
     figure.subplots_adjust(top=0.84, left=0.10, right=0.91, bottom=0.12)
-    axes[0].axhline(highlight.fair_7d, color="#7c3aed", linestyle="--", linewidth=1.2,
-                    label="Strict 7D fair")
+    axes[0].axhline(
+        highlight.fair_7d,
+        color=_REPORT_CHART_COLORS["amber"],
+        linestyle="--",
+        linewidth=1.2,
+        label="Strict 7D fair",
+    )
     axes[0].legend(loc="best")
     figure.savefig(output, dpi=150, bbox_inches="tight")
     import matplotlib.pyplot as plt

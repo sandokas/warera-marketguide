@@ -4,6 +4,8 @@ from types import SimpleNamespace
 import pandas as pd
 
 from warera_quant.charts import (
+    _REPORT_CHART_WIDTHS,
+    _report_chart_style,
     build_ohlc,
     build_spread_series,
     chart_ylim,
@@ -18,6 +20,21 @@ from warera_quant.charts import (
     render_trend_path_svg,
 )
 from warera_quant.metrics import select_highlighted_items
+
+
+def test_price_chart_style_matches_dark_report_palette():
+    style = _report_chart_style()
+
+    assert style["figcolor"] == "#0b1120"
+    assert style["facecolor"] == "#111826"
+    assert style["gridcolor"] == "#2e3a55"
+    assert style["rc"]["text.color"] == "#e2e8f0"
+    assert style["marketcolors"]["candle"] == {
+        "up": "#6ee7b7",
+        "down": "#f87171",
+    }
+    assert style["marketcolors"]["volume"] == style["marketcolors"]["candle"]
+    assert _REPORT_CHART_WIDTHS == {"volume_linewidth": 0}
 
 
 def test_render_report_table_pngs_captures_only_tables(monkeypatch, tmp_path: Path):
