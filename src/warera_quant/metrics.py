@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from functools import cmp_to_key
 from typing import Optional, Sequence
 
 import pandas as pd
@@ -12,17 +13,35 @@ HIGHLIGHT_CANDLE_INTERVALS = (("4h", "4h"), ("8h", "8h"), ("12h", "12h"), ("1D",
 HIGHLIGHT_MIN_POPULATED_CANDLES = 12
 HIGHLIGHT_MIN_DISTINCT_UTC_DAYS = 3
 HIGHLIGHT_SMA_MIN_CLOSES = 6
+NUMERIC_COMPARISON_REL_TOL = 1e-12
+NUMERIC_COMPARISON_ABS_TOL = 1e-12
+
+MEANINGFUL_PREMIUM = "meaningful_premium"
+MEANINGFUL_DISCOUNT = "meaningful_discount"
+WITHIN_NORMAL_RANGE = "within_normal_range"
+INSUFFICIENT_RANGE_EVIDENCE = "insufficient_evidence"
 
 
 @dataclass(frozen=True)
 class HighlightedItem:
     item_code: str
     item_name: str
-    role: str
-    rank_within_role: int
-    latest_completed_price: float
-    fair_7d: float
-    gap_pct: float
+    classification: str
+    role: str | None
+    rank_within_role: int | None
+    latest_completed_price: float | None
+    fair_7d: float | None
+    price_p10_7d: float | None
+    price_p90_7d: float | None
+    min_tick: float | None
+    raw_gap_pct: float | None
+    severity: float | None
+    band_width: float | None
+    band_width_pct: float | None
+    normal_band_start_position: float | None
+    normal_band_end_position: float | None
+    fair_normalized_position: float | None
+    latest_normalized_position: float | None
     interval: str | None
     history_span: str | None
     candles: pd.DataFrame
@@ -30,7 +49,172 @@ class HighlightedItem:
 
     @property
     def filename(self) -> str:
+        if not self.role:
+            raise ValueError("Only selected highlights have a role-based filename.")
         return f"{self.role.replace('_', '-')}-price-action.png"
+
+    @property
+    def gap_pct(self) -> float | None:
+        """Retain the established name for the raw percentage-versus-fair value."""
+        return self.raw_gap_pct
+
+
+def _numerically_equal(left: float, right: float) -> bool:
+    return math.isclose(
+        left,
+        right,
+        rel_tol=NUMERIC_COMPARISON_REL_TOL,
+        abs_tol=NUMERIC_COMPARISON_ABS_TOL,
+    )
+
+
+def _strictly_greater(left: float, right: float) -> bool:
+    return left > right and not _numerically_equal(left, right)
+
+
+def _strictly_less(left: float, right: float) -> bool:
+    return left < right and not _numerically_equal(left, right)
+
+
+def _at_least(left: float, right: float) -> bool:
+    return left > right or _numerically_equal(left, right)
+
+
+def _normalized_price_position(value: float, *, lower: float, upper: float, scale: float) -> float:
+    midpoint = (lower + upper) / 2
+    return min(100.0, max(0.0, 50 + ((value - midpoint) / scale) * 60))
+
+
+def classify_price_dislocation(
+    row: dict,
+    *,
+    min_tick: object | None = None,
+) -> HighlightedItem:
+    """Classify one latest completed trade against its strict 7D normal range.
+
+    Invalid required evidence fails closed.  The returned object also supplies the
+    normalized valuation-rail coordinates used by report rendering.
+    """
+    item_code = str(row.get("item_code") or "").strip().lower()
+    item_name = str(row.get("item_name") or item_code or "Unknown")
+    latest = _finite_float_or_none(row.get("last_trade_price"))
+    fair = _finite_float_or_none(row.get("stable_fair_price_7d"))
+    lower = _finite_float_or_none(row.get("price_p10_7d"))
+    upper = _finite_float_or_none(row.get("price_p90_7d"))
+    tick = _finite_float_or_none(min_tick if min_tick is not None else row.get("min_tick"))
+    empty_candles = pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
+    empty_sma = pd.Series(dtype="float64", name="7D SMA")
+    usable = (
+        latest is not None
+        and fair is not None
+        and lower is not None
+        and upper is not None
+        and tick is not None
+        and latest > 0
+        and fair > 0
+        and tick > 0
+        and lower <= upper
+    )
+    if not usable:
+        raw_gap_pct = (
+            (latest - fair) / fair * 100
+            if latest is not None and latest > 0 and fair is not None and fair > 0
+            else None
+        )
+        return HighlightedItem(
+            item_code=item_code,
+            item_name=item_name,
+            classification=INSUFFICIENT_RANGE_EVIDENCE,
+            role=None,
+            rank_within_role=None,
+            latest_completed_price=latest,
+            fair_7d=fair,
+            price_p10_7d=lower,
+            price_p90_7d=upper,
+            min_tick=tick,
+            raw_gap_pct=raw_gap_pct,
+            severity=None,
+            band_width=None,
+            band_width_pct=None,
+            normal_band_start_position=None,
+            normal_band_end_position=None,
+            fair_normalized_position=None,
+            latest_normalized_position=None,
+            interval=None,
+            history_span=None,
+            candles=empty_candles,
+            sma_7d=empty_sma,
+        )
+
+    assert latest is not None and fair is not None and lower is not None and upper is not None and tick is not None
+    empirical_width = upper - lower
+    scale = max(empirical_width, tick)
+    raw_gap_pct = (latest - fair) / fair * 100
+    classification = WITHIN_NORMAL_RANGE
+    severity = 0.0
+    if _strictly_greater(latest, upper) and _at_least(latest - fair, tick):
+        classification = MEANINGFUL_PREMIUM
+        severity = (latest - upper) / scale
+    elif _strictly_less(latest, lower) and _at_least(fair - latest, tick):
+        classification = MEANINGFUL_DISCOUNT
+        severity = (lower - latest) / scale
+
+    return HighlightedItem(
+        item_code=item_code,
+        item_name=item_name,
+        classification=classification,
+        role=None,
+        rank_within_role=None,
+        latest_completed_price=latest,
+        fair_7d=fair,
+        price_p10_7d=lower,
+        price_p90_7d=upper,
+        min_tick=tick,
+        raw_gap_pct=raw_gap_pct,
+        severity=severity,
+        band_width=scale,
+        band_width_pct=empirical_width / fair * 100,
+        normal_band_start_position=_normalized_price_position(lower, lower=lower, upper=upper, scale=scale),
+        normal_band_end_position=_normalized_price_position(upper, lower=lower, upper=upper, scale=scale),
+        fair_normalized_position=_normalized_price_position(fair, lower=lower, upper=upper, scale=scale),
+        latest_normalized_position=_normalized_price_position(latest, lower=lower, upper=upper, scale=scale),
+        interval=None,
+        history_span=None,
+        candles=empty_candles,
+        sma_7d=empty_sma,
+    )
+
+
+def classify_price_dislocations(
+    rows: Sequence[dict],
+    *,
+    min_tick: object,
+) -> list[HighlightedItem]:
+    return [classify_price_dislocation(row, min_tick=min_tick) for row in rows]
+
+
+def price_dislocation_fields(item: HighlightedItem) -> dict[str, object]:
+    """Return unambiguous compatibility/export fields for one shared result."""
+    return {
+        "dislocation_classification": item.classification,
+        "dislocation_raw_gap_pct": item.raw_gap_pct,
+        "dislocation_severity": item.severity,
+        "dislocation_band_width": item.band_width,
+        "dislocation_band_width_pct": item.band_width_pct,
+        "dislocation_normal_band_start_position": item.normal_band_start_position,
+        "dislocation_normal_band_end_position": item.normal_band_end_position,
+        "dislocation_fair_position": item.fair_normalized_position,
+        "dislocation_latest_position": item.latest_normalized_position,
+        "dislocation_min_tick": item.min_tick,
+    }
+
+
+def meaningful_dislocation_item_codes(items: Sequence[HighlightedItem]) -> list[str]:
+    return [
+        item.item_code
+        for item in items
+        if item.item_code and item.classification in {MEANINGFUL_PREMIUM, MEANINGFUL_DISCOUNT}
+    ]
 
 
 def build_price_action_candles(transactions: Sequence[dict], *, interval: str) -> pd.DataFrame:
@@ -85,12 +269,17 @@ def prepare_price_action_item(
     *,
     role: str = "price_action",
     rank_within_role: int = 1,
+    min_tick: object | None = None,
 ) -> HighlightedItem | None:
     """Prepare one item's chart domain values, or return None when evidence is insufficient."""
-    item_code = str(row.get("item_code") or "").strip().lower()
-    latest = _finite_float_or_none(row.get("last_trade_price"))
-    fair = _finite_float_or_none(row.get("stable_fair_price_7d"))
-    if not item_code or latest is None or latest <= 0 or fair is None or fair <= 0:
+    item = classify_price_dislocation(row, min_tick=min_tick)
+    if (
+        not item.item_code
+        or item.latest_completed_price is None
+        or item.latest_completed_price <= 0
+        or item.fair_7d is None
+        or item.fair_7d <= 0
+    ):
         return None
     selected_interval = select_price_action_interval(transactions)
     if selected_interval is None:
@@ -98,14 +287,10 @@ def prepare_price_action_item(
     interval, candles = selected_interval
     first, last = candles.index[0], candles.index[-1]
     span = f"{max(1, (last.date() - first.date()).days + 1)} calendar days available"
-    return HighlightedItem(
-        item_code=item_code,
-        item_name=str(row.get("item_name") or item_code),
+    return replace(
+        item,
         role=role,
         rank_within_role=rank_within_role,
-        latest_completed_price=latest,
-        fair_7d=fair,
-        gap_pct=(latest - fair) / fair * 100,
         interval=interval,
         history_span=span,
         candles=candles,
@@ -120,26 +305,52 @@ def price_action_chart_filename(item_code: str) -> str:
 
 
 def select_highlighted_items(
-    rows: Sequence[dict],
+    rows: Sequence[dict] | Sequence[HighlightedItem],
     trades_by_item: dict[str, Sequence[dict]],
+    *,
+    min_tick: object = 0.001,
+    require_chart_history: bool = True,
 ) -> list[HighlightedItem]:
-    """Select strict-7D gaps first; attach chart data only when it is sufficient."""
-    candidates: list[dict] = []
-    for row in rows:
-        item_code = str(row.get("item_code") or "").strip().lower()
-        latest = _finite_float_or_none(row.get("last_trade_price"))
-        fair = _finite_float_or_none(row.get("stable_fair_price_7d"))
-        if not item_code or latest is None or latest <= 0 or fair is None or fair <= 0:
-            continue
-        gap = (latest - fair) / fair * 100
-        if abs(gap) <= 1e-12:
-            continue
-        candidates.append({"row": row, "code": item_code, "latest": latest, "fair": fair,
-                           "gap": gap})
+    """Rank meaningful candidates and fall through unsupported chart histories."""
+    items = [
+        item if isinstance(item, HighlightedItem) else classify_price_dislocation(item, min_tick=min_tick)
+        for item in rows
+    ]
 
-    discounts = sorted((x for x in candidates if x["gap"] < 0), key=lambda x: (x["gap"], x["code"]))
-    premiums = sorted((x for x in candidates if x["gap"] > 0), key=lambda x: (-x["gap"], x["code"]))
-    chosen: list[tuple[dict, str, int]] = []
+    def compare(left: HighlightedItem, right: HighlightedItem) -> int:
+        left_severity = left.severity or 0.0
+        right_severity = right.severity or 0.0
+        if not _numerically_equal(left_severity, right_severity):
+            return -1 if left_severity > right_severity else 1
+        return -1 if left.item_code < right.item_code else 1 if left.item_code > right.item_code else 0
+
+    def chart_capable(candidates: list[HighlightedItem]) -> list[HighlightedItem]:
+        supported: list[HighlightedItem] = []
+        for item in sorted(candidates, key=cmp_to_key(compare)):
+            if not require_chart_history:
+                supported.append(item)
+                continue
+            selected_interval = select_price_action_interval(trades_by_item.get(item.item_code, ()))
+            if selected_interval is None:
+                continue
+            interval, candles = selected_interval
+            first, last = candles.index[0], candles.index[-1]
+            supported.append(replace(
+                item,
+                interval=interval,
+                history_span=f"{max(1, (last.date() - first.date()).days + 1)} calendar days available",
+                candles=candles,
+                sma_7d=time_based_sma_7d(candles),
+            ))
+        return supported
+
+    discounts = chart_capable([
+        item for item in items if item.item_code and item.classification == MEANINGFUL_DISCOUNT
+    ])
+    premiums = chart_capable([
+        item for item in items if item.item_code and item.classification == MEANINGFUL_PREMIUM
+    ])
+    chosen: list[tuple[HighlightedItem, str, int]] = []
     if discounts and premiums:
         chosen = [(discounts[0], "largest_discount", 1), (premiums[0], "largest_premium", 1)]
     elif discounts:
@@ -149,23 +360,9 @@ def select_highlighted_items(
         chosen = [(item, "largest_premium" if rank == 1 else "second_largest_premium", rank)
                   for rank, item in enumerate(premiums[:2], 1)]
 
-    output = []
+    output: list[HighlightedItem] = []
     for item, role, rank in chosen:
-        selected_interval = select_price_action_interval(trades_by_item.get(item["code"], ()))
-        if selected_interval is None:
-            interval = None
-            candles = pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
-            span = None
-        else:
-            interval, candles = selected_interval
-            first, last = candles.index[0], candles.index[-1]
-            span = f"{max(1, (last.date() - first.date()).days + 1)} calendar days available"
-        output.append(HighlightedItem(
-            item_code=item["code"], item_name=str(item["row"].get("item_name") or item["code"]),
-            role=role, rank_within_role=rank, latest_completed_price=item["latest"],
-            fair_7d=item["fair"], gap_pct=item["gap"], interval=interval,
-            history_span=span, candles=candles, sma_7d=time_based_sma_7d(candles),
-        ))
+        output.append(replace(item, role=role, rank_within_role=rank))
     return output
 
 

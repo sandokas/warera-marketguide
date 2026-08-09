@@ -1,17 +1,32 @@
 import pandas as pd
 from types import SimpleNamespace
 
-from warera_quant.metrics import FlipAssumptions
+from warera_quant.metrics import (
+    FlipAssumptions,
+    classify_price_dislocation,
+    price_dislocation_fields,
+    select_highlighted_items,
+)
 from warera_quant.report import generate_html_report, write_outputs
 
 
+def _classified(row, *, min_tick=0.001):
+    item = classify_price_dislocation(row, min_tick=min_tick)
+    return {**row, **price_dislocation_fields(item)}, item
+
+
+def _selected(rows):
+    items = [classify_price_dislocation(row, min_tick=0.001) for row in rows]
+    return select_highlighted_items(items, {}, require_chart_history=False)
+
+
 def test_chart_linked_highlights_pair_cards_and_images_before_first_table(tmp_path):
-    items = [
-        SimpleNamespace(item_code="bread", item_name="Bread", role="largest_discount",
-                        gap_pct=-20, fair_7d=10),
-        SimpleNamespace(item_code="oil", item_name="Oil", role="largest_premium",
-                        gap_pct=30, fair_7d=10),
-    ]
+    items = _selected([
+        {"item_code": "bread", "item_name": "Bread", "last_trade_price": 8,
+         "stable_fair_price_7d": 10, "price_p10_7d": 9, "price_p90_7d": 11},
+        {"item_code": "oil", "item_name": "Oil", "last_trade_price": 13,
+         "stable_fair_price_7d": 10, "price_p10_7d": 9, "price_p90_7d": 11},
+    ])
     report = generate_html_report(
         pd.DataFrame([{"item_name": "Bread"}]), output_dir=tmp_path,
         highlights=[
@@ -32,12 +47,13 @@ def test_chart_linked_highlights_pair_cards_and_images_before_first_table(tmp_pa
 def test_explicit_zero_chart_linked_highlights_omit_empty_area():
     report = generate_html_report(pd.DataFrame([{"item_name": "Bread"}]), highlights=[])
     assert "Largest price gaps" not in report
-    assert 'class="highlight-section"' not in report
+    assert 'class="highlight-section"' in report
     assert 'class="highlight-column"' not in report
     capture = report[report.index('data-report-asset="header"'):
                      report.index("Fair Value &amp; Buy / Sell Signals")]
     assert "Market intelligence, without the noise." in capture
-    assert "Largest price gaps" not in capture
+    assert "No meaningful price dislocations" in capture
+    assert "Eligible latest trades are within their normal 7D ranges or less than one tick from fair value." in capture
 
 
 def test_highlight_card_remains_when_its_chart_is_unavailable(tmp_path):
@@ -98,7 +114,8 @@ def test_report_omits_redundant_price_evolution_lens():
     assert "(You Receive)" not in report
     assert "Crossing Cost %" not in report
     assert "Market intelligence, without the noise." in report
-    assert "Largest price gaps" in report
+    assert "Meaningful price dislocations" in report
+    assert "No meaningful price dislocations" in report
     assert "Flip Board" not in report
     assert "Break-even Exit VWAP" not in report
     assert "Fair Value &amp; Buy / Sell Signals" in report
@@ -156,7 +173,7 @@ def test_generate_html_report_shows_all_items_by_default():
 
     assert "Corn" in report
     assert "Rice" in report
-    assert report.count('<article class="summary-card') == 2
+    assert report.count('<article class="summary-card') == 1
     assert "Flip Board" not in report
 
 
@@ -219,7 +236,7 @@ def test_report_foregrounds_market_trends_and_writes_compatibility_csv(tmp_path)
     assert "Rising" in report
     assert "Volatile" in report
     assert '<th class="col-fair-7d number">Fair 7D</th>' in report
-    assert "5.900" in report
+    assert "Insufficient 7D range evidence" in report
     assert "Supported" not in report
     assert '<span class="chip chip-up"><span>↑</span>Up</span>' not in report
     assert "chip-up" in report
@@ -277,8 +294,8 @@ def test_report_uses_stable_fair_price_and_softens_thin_market_actions():
     report = generate_html_report(df, top=0)
 
     assert "10.000" in report
-    assert "Largest discount" in report
-    assert "-20.00% vs 7D fair" in report
+    assert "No meaningful price dislocations" in report
+    assert "Strict 7D fair: <strong>10.000</strong>" in report
 
 
 def test_report_renders_strict_multi_window_fair_values_and_combined_header():
@@ -321,7 +338,7 @@ def test_strict_fair_cells_do_not_fall_back_to_7d_or_legacy_values():
         legacy_report.index("Completed Market Activity")
     ]
     assert legacy_guide.count(">N/A</td>") >= 3
-    assert "-20.00% vs 7D fair" in legacy_report
+    assert "No meaningful price dislocations" in legacy_report
 
 
 def test_guidance_gaps_activity_and_notes_are_fixed_to_7d():
@@ -343,11 +360,11 @@ def test_guidance_gaps_activity_and_notes_are_fixed_to_7d():
         "stable_range_pct_7d": 2.5,
     }]), metric_window="30D")
 
-    assert "+20.00% vs 7D fair" in report
+    assert "No meaningful price dislocations" in report
     assert "Completed 7D trades ranked by value" in report
     assert "777 completed transaction value" in report
-    assert "7D historical fair context" in report
-    assert "7D stable range" in report
+    assert "Strict 7D fair" in report
+    assert "7D normal range" in report
 
 
 def test_report_formats_volume_and_trade_counts_without_decimal_suffix():
@@ -370,7 +387,7 @@ def test_report_formats_volume_and_trade_counts_without_decimal_suffix():
     report = generate_html_report(df, top=0)
 
     assert "12.345" in report
-    assert "31641" in report
+    assert "31.6K units" in report
     assert "31641.000" not in report
     assert ">31.6K units<" in report
     assert "Completed Value / PP-equivalent Volume" in report
@@ -437,7 +454,7 @@ def test_generate_html_report_keeps_compatibility_with_price_precedence_fields()
     report = generate_html_report(df, top=0)
 
     assert "Copper" in report
-    assert "Largest price gaps" in report
+    assert "Meaningful price dislocations" in report
     assert "Market intelligence, without the noise." in report
     assert "Flip Board" not in report
 
@@ -544,29 +561,144 @@ def test_report_does_not_render_internal_flip_fields():
     assert "Fair Value &amp; Buy / Sell Signals" in report
     assert ">Forecast Exit<" not in report
     assert ">Expected Net<" not in report
-    assert "Largest discount" in report
-    assert "Largest premium" in report
+    assert "No meaningful price dislocations" in report
+    assert "Largest premium" not in report
     assert "Strongest upside signal" not in report
     assert "Strongest downside signal" not in report
-    assert report.count('<article class="summary-card') == 2
+    assert report.count('<article class="summary-card') == 1
 
 
 def test_market_pulse_arrow_colors_follow_direction():
-    report = generate_html_report(pd.DataFrame([
+    rows = [
         {
-            "item_name": "Discount", "latest_price": 8, "stable_fair_price_7d": 10,
+            "item_code": "discount", "item_name": "Discount", "last_trade_price": 8,
+            "stable_fair_price_7d": 10, "price_p10_7d": 9, "price_p90_7d": 11,
             "forecast_current_signal": "Down", "forecast_evidence": "Supported",
         },
         {
-            "item_name": "Premium", "latest_price": 12, "stable_fair_price_7d": 10,
+            "item_code": "premium", "item_name": "Premium", "last_trade_price": 12,
+            "stable_fair_price_7d": 10, "price_p10_7d": 9, "price_p90_7d": 11,
             "forecast_current_signal": "Up", "forecast_evidence": "Supported",
         },
-    ]))
+    ]
+    report = generate_html_report(
+        pd.DataFrame(rows),
+        highlights=[{"item": item, "chart_path": None} for item in _selected(rows)],
+    )
 
-    assert 'summary-card summary-card-down"><span>Largest discount</span>' in report
+    assert '<span>Cheap below normal range</span>' in report
     assert 'summary-arrow" aria-hidden="true">↓</span>Discount' in report
-    assert 'summary-card summary-card-up"><span>Largest premium</span>' in report
+    assert '<span>Rich above normal range</span>' in report
     assert 'summary-arrow" aria-hidden="true">↑</span>Premium' in report
+
+
+def test_one_sided_highlights_use_honest_copy_and_shared_item_classification():
+    row, item = _classified({
+        "item_code": "bread", "item_name": "Bread", "last_trade_price": 12,
+        "stable_fair_price_7d": 10, "price_p10_7d": 9, "price_p90_7d": 11,
+        "bid": 11.8, "ask": 12.1,
+    })
+    selected = select_highlighted_items([item], {}, require_chart_history=False)
+    report = generate_html_report(
+        pd.DataFrame([row]),
+        highlights=[{"item": selected[0], "chart_path": None}],
+    )
+
+    assert "Rich above normal range" in report
+    assert "No meaningful discount; other eligible items remain within their normal 7D ranges." in report
+    assert "Cheap below normal range" not in report
+    context = report[report.index("<h2>Item Price Context</h2>"):report.index("Alternative third-party tools")]
+    assert "Classification: <strong class=\"price-context-classification\">Rich above normal range</strong>" in context
+    assert "Current execution context — Bid: <strong>11.800</strong>; Ask: <strong>12.100</strong>" in context
+
+
+def test_item_price_context_rail_uses_supplied_coordinates_and_accessible_exact_values():
+    row, _ = _classified({
+        "item_code": "rail", "item_name": "Rail Item", "last_trade_price": 14,
+        "stable_fair_price_7d": 10, "price_p10_7d": 8, "price_p90_7d": 12,
+        "volume_7d": 500, "trade_count_7d": 40, "momentum_7d_pct": 9,
+    })
+    report = generate_html_report(pd.DataFrame([row]), highlights=[])
+    context = report[report.index("<h2>Item Price Context</h2>"):report.index("Alternative third-party tools")]
+
+    assert 'data-report-asset="item-price-context-card" data-item-code="rail"' in context
+    assert "7D normal range: <strong>8.000-12.000</strong> (40.00%)" in context
+    assert 'style="left:20.000%;width:60.000%"' in context
+    assert 'price-range-marker-fair" style="left:50.000%"' in context
+    assert 'price-range-marker-latest" style="left:100.000%"' in context
+    assert 'aria-label="7D price range for Rail Item. P10 8.000, P90 12.000, strict 7D fair 10.000, latest completed trade 14.000."' in context
+    assert "range-symbol-fair" in context and "range-symbol-latest" in context
+    assert "volume" not in context.lower()
+    assert "trade count" not in context.lower()
+    assert "momentum" not in context.lower()
+    assert "overflow-x" not in context
+    assert '<svg class="trend-path"' not in context
+    assert ".png" not in context
+
+
+def test_item_price_context_missing_evidence_omits_rail():
+    row, _ = _classified({
+        "item_code": "missing", "item_name": "Missing", "last_trade_price": 10,
+        "stable_fair_price_7d": 10, "price_p10_7d": None, "price_p90_7d": 11,
+    })
+    report = generate_html_report(pd.DataFrame([row]), highlights=[])
+    context = report[report.index("<h2>Item Price Context</h2>"):report.index("Alternative third-party tools")]
+
+    assert "Insufficient 7D range evidence" in context
+    assert 'class="price-range-rail"' not in context
+
+
+def test_low_priced_band_edge_is_neutral_in_header_and_item_context():
+    row, item = _classified({
+        "item_code": "scraps", "item_name": "Scraps", "last_trade_price": 0.079,
+        "stable_fair_price_7d": 0.0781503825, "price_p10_7d": 0.077,
+        "price_p90_7d": 0.079,
+    })
+    assert select_highlighted_items([item], {}, require_chart_history=False) == []
+
+    report = generate_html_report(pd.DataFrame([row]), highlights=[])
+
+    assert "No meaningful price dislocations" in report
+    assert "Within normal range" in report
+    assert "Rich above normal range" not in report
+
+
+def test_charted_and_non_charted_cards_render_the_same_shared_classification(tmp_path):
+    row, item = _classified({
+        "item_code": "bread", "item_name": "Bread", "last_trade_price": 8,
+        "stable_fair_price_7d": 10, "price_p10_7d": 9, "price_p90_7d": 11,
+    })
+    selected = select_highlighted_items([item], {}, require_chart_history=False)[0]
+    plain = generate_html_report(
+        pd.DataFrame([row]), highlights=[{"item": selected, "chart_path": None}],
+    )
+    charted = generate_html_report(
+        pd.DataFrame([row]), output_dir=tmp_path,
+        highlights=[{"item": selected, "chart_path": tmp_path / selected.filename}],
+    )
+
+    for report in (plain, charted):
+        assert "Cheap below normal range" in report
+        assert "-20.00% vs 7D fair" in report
+        assert "0.50 normal-range widths below P10" in report
+
+
+def test_same_side_second_role_uses_meaningful_visible_copy():
+    rows = [
+        {"item_code": "alpha", "item_name": "Alpha", "last_trade_price": 12,
+         "stable_fair_price_7d": 10, "price_p10_7d": 9, "price_p90_7d": 11},
+        {"item_code": "beta", "item_name": "Beta", "last_trade_price": 13,
+         "stable_fair_price_7d": 10, "price_p10_7d": 9, "price_p90_7d": 11},
+    ]
+    selected = _selected(rows)
+    report = generate_html_report(
+        pd.DataFrame(rows),
+        highlights=[{"item": item, "chart_path": None} for item in selected],
+    )
+
+    assert "Rich above normal range" in report
+    assert "Second-richest above normal range" in report
+    assert "No meaningful discount" in report
 
 
 def test_report_restores_price_guide_and_renders_transparent_market_depth():
@@ -598,7 +730,7 @@ def test_report_restores_price_guide_and_renders_transparent_market_depth():
         }],
     }]))
 
-    assert report.index("Largest price gaps") < report.index("Fair Value &amp; Buy / Sell Signals")
+    assert report.index("Meaningful price dislocations") < report.index("Fair Value &amp; Buy / Sell Signals")
     assert report.index("Fair Value &amp; Buy / Sell Signals") < report.index("Current Order Book")
     assert '<th class="col-fair-1d number">Fair 1D</th>' in report
     assert '<th class="col-fair-7d number">Fair 7D</th>' in report
@@ -768,7 +900,7 @@ def test_market_trends_uses_cross_horizon_completed_transaction_fields():
     assert '<svg class="trend-path"' in report
     assert "3 daily observations spanning 12 of 30 days" in report
     assert "Completed-trade price changes, 30-day range position, and trend shape." in report
-    trends_section = report[report.index("<h2>Market Trends</h2>"):report.index("<h2>Item Notes</h2>")]
+    trends_section = report[report.index("<h2>Market Trends</h2>"):report.index("<h2>Item Price Context</h2>")]
     for forbidden in (">Spread %<", ">Activity<", ">Range<", ">Price State<"):
         assert forbidden not in trends_section
     assert "Price / 7D Change" not in report
@@ -786,7 +918,7 @@ def test_market_trends_renders_flat_30d_range_without_a_position_graphic():
         "max_30d": 0.17,
     }]))
 
-    trends_section = report[report.index("<h2>Market Trends</h2>"):report.index("<h2>Item Notes</h2>")]
+    trends_section = report[report.index("<h2>Market Trends</h2>"):report.index("<h2>Item Price Context</h2>")]
     assert '<span class="position-label">Flat</span>' in trends_section
     assert "position-track" not in trends_section
 
@@ -797,7 +929,7 @@ def test_market_trends_preserves_last_trade_price_precision():
         "last_trade_price": 0.1722,
     }]))
 
-    trends_section = report[report.index("<h2>Market Trends</h2>"):report.index("<h2>Item Notes</h2>")]
+    trends_section = report[report.index("<h2>Market Trends</h2>"):report.index("<h2>Item Price Context</h2>")]
     assert '<td class="col-last-trade number">0.172</td>' in trends_section
 
 

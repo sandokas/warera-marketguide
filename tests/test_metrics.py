@@ -12,6 +12,8 @@ from warera_quant.metrics import (
     calculate_liquidity_score,
     calculate_notional_book_sweep,
     calculate_metrics,
+    classify_price_dislocation,
+    classify_price_dislocations,
     classify_future_bid_outcome,
     classify_market_trend_pattern,
     classify_tendency,
@@ -65,21 +67,21 @@ def test_highlight_selection_ranks_gaps_before_optional_chart_capability():
     history = _highlight_trades()
     rows = [
         {"item_code": "zeta", "item_name": "Zeta", "last_trade_price": 8,
-         "stable_fair_price_7d": 10},
+         "stable_fair_price_7d": 10, "price_p10_7d": 9, "price_p90_7d": 11},
         {"item_code": "alpha", "item_name": "Alpha", "last_trade_price": 8,
-         "stable_fair_price_7d": 10},
+         "stable_fair_price_7d": 10, "price_p10_7d": 9, "price_p90_7d": 11},
         {"item_code": "premium", "item_name": "Premium", "last_trade_price": 13,
-         "stable_fair_price_7d": 10},
+         "stable_fair_price_7d": 10, "price_p10_7d": 9, "price_p90_7d": 11},
         {"item_code": "unsupported", "item_name": "Unsupported", "last_trade_price": 5,
-         "stable_fair_price_7d": 10},
+         "stable_fair_price_7d": 10, "price_p10_7d": 9, "price_p90_7d": 11},
     ]
     selected = select_highlighted_items(rows, {
         "zeta": history, "alpha": history, "premium": history, "unsupported": history[:2],
     })
     assert [(item.item_code, item.role) for item in selected] == [
-        ("unsupported", "largest_discount"), ("premium", "largest_premium"),
+        ("alpha", "largest_discount"), ("premium", "largest_premium"),
     ]
-    assert selected[0].interval is None
+    assert selected[0].interval == "4h"
     assert selected[1].interval == "4h"
 
     same_side = select_highlighted_items(rows[:2], {"zeta": history, "alpha": history})
@@ -88,6 +90,110 @@ def test_highlight_selection_ranks_gaps_before_optional_chart_capability():
     ]
     assert select_highlighted_items([rows[0]], {"zeta": history})[0].filename == "largest-discount-price-action.png"
     assert select_highlighted_items([], {}) == []
+
+
+@pytest.mark.parametrize(
+    ("latest", "fair", "lower", "upper", "tick", "expected"),
+    [
+        (10.5, 10, 9, 11, 0.1, "within_normal_range"),
+        (9.5, 10, 9, 11, 0.1, "within_normal_range"),
+        (11, 10, 9, 11, 0.1, "within_normal_range"),
+        (9, 10, 9, 11, 0.1, "within_normal_range"),
+        (11.0 + 5e-14, 10, 9, 11, 0.1, "within_normal_range"),
+        (9.0 - 5e-14, 10, 9, 11, 0.1, "within_normal_range"),
+        (10.05, 10, 9, 10.01, 0.1, "within_normal_range"),
+        (9.95, 10, 9.99, 11, 0.1, "within_normal_range"),
+        (11.1, 11.0, 9, 11, 0.1, "meaningful_premium"),
+        (8.9, 9.0, 9, 11, 0.1, "meaningful_discount"),
+        (0.079, 0.0781503825, 0.077, 0.079, 0.001, "within_normal_range"),
+    ],
+)
+def test_meaningful_dislocation_boundaries(latest, fair, lower, upper, tick, expected):
+    item = classify_price_dislocation({
+        "item_code": "boundary",
+        "item_name": "Boundary",
+        "last_trade_price": latest,
+        "stable_fair_price_7d": fair,
+        "price_p10_7d": lower,
+        "price_p90_7d": upper,
+    }, min_tick=tick)
+
+    assert item.classification == expected
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("last_trade_price", None),
+        ("last_trade_price", 0),
+        ("stable_fair_price_7d", float("nan")),
+        ("price_p10_7d", None),
+        ("price_p90_7d", float("inf")),
+        ("min_tick", 0),
+        ("min_tick", -0.001),
+    ],
+)
+def test_meaningful_dislocation_invalid_inputs_fail_closed(field, value):
+    row = {
+        "item_code": "invalid",
+        "last_trade_price": 12,
+        "stable_fair_price_7d": 10,
+        "price_p10_7d": 9,
+        "price_p90_7d": 11,
+        "min_tick": 0.001,
+    }
+    row[field] = value
+
+    item = classify_price_dislocation(row)
+
+    assert item.classification == "insufficient_evidence"
+    assert select_highlighted_items([item], {}, require_chart_history=False) == []
+
+
+def test_flat_band_uses_tick_for_severity_and_rail_scale():
+    item = classify_price_dislocation({
+        "item_code": "flat", "last_trade_price": 10.002,
+        "stable_fair_price_7d": 10, "price_p10_7d": 10, "price_p90_7d": 10,
+    }, min_tick=0.001)
+
+    assert item.classification == "meaningful_premium"
+    assert item.band_width == pytest.approx(0.001)
+    assert item.severity == pytest.approx(2)
+    assert item.normal_band_start_position == item.normal_band_end_position == 50
+    assert item.fair_normalized_position == 50
+    assert item.latest_normalized_position == 100
+
+
+def test_rail_coordinates_are_deterministic_and_clamped():
+    item = classify_price_dislocation({
+        "item_code": "rail", "last_trade_price": 14,
+        "stable_fair_price_7d": 10, "price_p10_7d": 8, "price_p90_7d": 12,
+    }, min_tick=0.001)
+
+    assert item.normal_band_start_position == 20
+    assert item.normal_band_end_position == 80
+    assert item.fair_normalized_position == 50
+    assert item.latest_normalized_position == 100
+
+
+def test_severity_ranking_is_normalized_and_ties_use_item_code():
+    rows = [
+        {"item_code": "wide", "last_trade_price": 13.5, "stable_fair_price_7d": 10,
+         "price_p10_7d": 5, "price_p90_7d": 13},
+        {"item_code": "zeta", "last_trade_price": 11.2, "stable_fair_price_7d": 10,
+         "price_p10_7d": 9, "price_p90_7d": 11},
+        {"item_code": "alpha", "last_trade_price": 11.2, "stable_fair_price_7d": 10,
+         "price_p10_7d": 9, "price_p90_7d": 11},
+    ]
+    items = classify_price_dislocations(rows, min_tick=0.001)
+
+    selected = select_highlighted_items(items, {}, require_chart_history=False)
+
+    assert [(item.item_code, item.role) for item in selected] == [
+        ("alpha", "largest_premium"), ("zeta", "second_largest_premium")
+    ]
+    assert selected[0].severity == pytest.approx(0.1)
+    assert next(item for item in items if item.item_code == "wide").raw_gap_pct > selected[0].raw_gap_pct
 
 
 def test_7d_sma_is_elapsed_time_based_and_evidence_gated():

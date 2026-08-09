@@ -155,7 +155,7 @@ PYTHONPATH=src .venv/bin/python run_report.py \
 The featured chart is written to `output/charts/featured-trade.png` and embedded in the HTML report. Use `--featured-item-code bread` to prefer a particular item and `--chart-min-range-pct 5` to set the minimum visible price range. A moving average is shown only when `--lookback-days` is greater than 1.
 
 The database-backed HTML report always combines 1D, 7D, and 30D fair-value perspectives. Guidance,
-largest price gaps, completed activity, and Item Notes use an explicit 7D basis; `--lookback-days`
+meaningful price dislocations, completed activity, and Item Price Context use an explicit 7D basis; `--lookback-days`
 continues to control sync/backfill and existing chart behavior, not those report semantics.
 
 Export every chart-capable item without adding the extra charts to the report:
@@ -169,14 +169,19 @@ The additional item-based PNGs are written sequentially under `output/charts/all
 enough completed-transaction evidence are skipped; the report still embeds only its highlighted
 price-action charts.
 
-Export the report header and every table in the generated report as standalone PNGs:
+Export the report header, every Item Price Context card, and every table as standalone PNGs:
 
 ```bash
 PYTHONPATH=src .venv/bin/python run_report.py --table-pngs --output output
 ```
 
 The hero and rendered highlight cards are written to `output/sections/report-header.png`; when no
-highlight qualifies, that image contains the hero alone.
+highlight qualifies, that image contains the explicit neutral dislocation state.
+
+Each Item Price Context card is written as its own tightly cropped image under `output/cards/`,
+using a stable item-based filename such as `bread-price-context.png`. The card PNG contains the
+same fair value, latest completed trade, normal range, classification, execution context, and
+price-range rail as the accessible HTML card.
 
 The table images are written to `output/tables/` in the same order as the HTML report. Each PNG captures
 only its browser-rendered table—without the section heading, description, or surrounding whitespace—

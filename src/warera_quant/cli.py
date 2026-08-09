@@ -7,7 +7,12 @@ from pathlib import Path
 import pandas as pd
 
 from .api_client import WarEraApiClient
-from .charts import render_highlight_price_action_chart, render_report_header_png, render_report_table_pngs
+from .charts import (
+    render_highlight_price_action_chart,
+    render_report_header_png,
+    render_report_item_context_pngs,
+    render_report_table_pngs,
+)
 from .config import ConfigError, load_config
 from .csv_loader import load_market_csv
 from .json_loader import market_json_to_dataframe
@@ -17,7 +22,10 @@ from .metrics import (
     FlipAssumptions,
     calculate_flip_opportunity,
     calculate_metrics,
+    classify_price_dislocations,
+    meaningful_dislocation_item_codes,
     prepare_price_action_item,
+    price_dislocation_fields,
     price_action_chart_filename,
     select_highlighted_items,
 )
@@ -99,7 +107,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--min-tick",
         type=float,
         default=0.001,
-        help="Minimum exploitable price increment to subtract from bid/ask spread before scoring.",
+        help="Positive minimum tradable price increment used by scoring and dislocation classification.",
     )
     parser.add_argument(
         "--forecast-horizon-hours",
@@ -152,7 +160,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--table-pngs",
         action="store_true",
-        help="Export each table in the HTML report as a PNG under OUTPUT/tables/.",
+        help="Export the report header, Item Price Context cards, and tables as standalone PNGs.",
     )
     parser.add_argument(
         "--charts",
@@ -207,6 +215,8 @@ def main() -> None:
         raise SystemExit("--chart-ma-window must be at least 1.")
     if args.chart_min_range_pct < 0:
         raise SystemExit("--chart-min-range-pct cannot be negative.")
+    if not math.isfinite(args.min_tick) or args.min_tick <= 0:
+        raise SystemExit("--min-tick must be positive.")
     if not math.isfinite(args.forecast_horizon_hours) or args.forecast_horizon_hours <= 0:
         raise SystemExit("--forecast-horizon-hours must be positive.")
     if not math.isfinite(args.forecast_target_max_lag_hours) or args.forecast_target_max_lag_hours < 0:
@@ -359,25 +369,47 @@ def main() -> None:
     if args.live and not args.quiet:
         print(f"Calculated metrics for {len(metrics)} goods.", flush=True)
     df_out = combine_market_rows_with_metrics(df_in, metrics)
+    dislocations = classify_price_dislocations(
+        df_out.to_dict("records"),
+        min_tick=args.min_tick,
+    )
+    for index, item in zip(df_out.index, dislocations):
+        for column, value in price_dislocation_fields(item).items():
+            df_out.at[index, column] = value
     metric_window = f"{args.lookback_days:g}D" if args.live else "7D"
     chart_path = None
     chart_label = None
-    rendered_highlights = None
+    rendered_highlights: list[dict[str, object]] = []
+    chart_capable_highlights = []
+    if args.live or args.from_db:
+        rows_for_selection = df_out.to_dict("records")
+        codes_by_normalized = {
+            str(row.get("item_code")).strip().lower(): str(row.get("item_code")).strip()
+            for row in rows_for_selection if row.get("item_code")
+        }
+        item_codes = [
+            codes_by_normalized[code]
+            for code in meaningful_dislocation_item_codes(dislocations)
+            if code in codes_by_normalized
+        ]
+        with MarketStore(args.market_db) as store:
+            histories = load_highlight_trade_history(store, item_codes=item_codes)
+        chart_capable_highlights = select_highlighted_items(
+            dislocations,
+            histories,
+            min_tick=args.min_tick,
+            require_chart_history=True,
+        )
+        rendered_highlights = [
+            {"item": item, "chart_path": None}
+            for item in chart_capable_highlights
+        ]
     if args.charts:
         if not (args.live or args.from_db):
             print("Skipped charts: charts require DB-backed market data.")
         else:
             rendered_highlights = []
-            rows_for_selection = df_out.to_dict("records")
-            selected = select_highlighted_items(rows_for_selection, {})
-            codes_by_normalized = {
-                str(row.get("item_code")).strip().lower(): str(row.get("item_code")).strip()
-                for row in rows_for_selection if row.get("item_code")
-            }
-            item_codes = [codes_by_normalized[item.item_code] for item in selected]
-            with MarketStore(args.market_db) as store:
-                histories = load_highlight_trade_history(store, item_codes=item_codes)
-            for highlight in select_highlighted_items(rows_for_selection, histories):
+            for highlight in chart_capable_highlights:
                 output_path = output_dir / "charts" / highlight.filename
                 rendered = None
                 try:
@@ -407,7 +439,9 @@ def main() -> None:
                 for storage_code, row in rows_by_code.items():
                     histories = load_highlight_trade_history(store, item_codes=[storage_code])
                     chart_item = prepare_price_action_item(
-                        row, histories.get(storage_code.lower(), ()),
+                        row,
+                        histories.get(storage_code.lower(), ()),
+                        min_tick=args.min_tick,
                     )
                     if chart_item is None:
                         continue
@@ -445,6 +479,8 @@ def main() -> None:
     if args.table_pngs:
         header_path = render_report_header_png(report_path, output_dir / "sections")
         print(f"Wrote {header_path}")
+        for card_path in render_report_item_context_pngs(report_path, output_dir / "cards"):
+            print(f"Wrote {card_path}")
         for table_path in render_report_table_pngs(report_path, output_dir / "tables"):
             print(f"Wrote {table_path}")
 

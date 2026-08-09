@@ -77,6 +77,8 @@ def test_from_db_preserves_structured_order_book_for_report(monkeypatch, tmp_pat
 @pytest.mark.parametrize(
     "option,value",
     [
+        ("--min-tick", "0"),
+        ("--min-tick", "nan"),
         ("--trade-quantity", "0"),
         ("--trade-fee-pct", "100"),
         ("--min-net-margin-pct", "-1"),
@@ -113,6 +115,41 @@ def test_csv_mode_writes_unavailable_flip_fields_without_assumption_badges(tmp_p
     assert "Fees <strong>2.50% / side</strong>" not in report
     assert "Min margin <strong>3.00%</strong>" not in report
     assert "Freshness <strong>≤ 15m</strong>" not in report
+
+
+def test_table_png_flow_exports_header_cards_and_tables_without_a_new_flag(tmp_path, monkeypatch):
+    csv_path = tmp_path / "market.csv"
+    output = tmp_path / "output"
+    pd.DataFrame([{
+        "item_name": "Bread", "item_code": "bread", "bid": 9, "ask": 10,
+        "trades_7d": 5, "high_7d": 11, "low_7d": 8,
+    }]).to_csv(csv_path, index=False)
+    calls = []
+
+    monkeypatch.setattr(
+        cli_module,
+        "render_report_header_png",
+        lambda report, destination: calls.append(("header", report, destination)) or destination / "report-header.png",
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "render_report_item_context_pngs",
+        lambda report, destination: calls.append(("cards", report, destination)) or [destination / "bread-price-context.png"],
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "render_report_table_pngs",
+        lambda report, destination: calls.append(("tables", report, destination)) or [destination / "01-table.png"],
+    )
+    monkeypatch.setattr(sys, "argv", [
+        "warera-quant", "--csv", str(csv_path), "--output", str(output),
+        "--table-pngs", "--quiet",
+    ])
+
+    main()
+
+    assert [call[0] for call in calls] == ["header", "cards", "tables"]
+    assert calls[1][2] == output / "cards"
 
 
 def test_housekeeping_is_an_independent_command(tmp_path, monkeypatch):

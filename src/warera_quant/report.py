@@ -11,7 +11,11 @@ import pandas as pd
 from .charts import render_trend_path_svg
 from .metrics import (
     FlipAssumptions,
+    INSUFFICIENT_RANGE_EVIDENCE,
+    MEANINGFUL_DISCOUNT,
+    MEANINGFUL_PREMIUM,
     MarketMetrics,
+    WITHIN_NORMAL_RANGE,
     calculate_range_position_pct,
     classify_market_trend_pattern,
 )
@@ -147,16 +151,6 @@ def _primary_guidance_fair_price(row: pd.Series) -> float | None:
     if any(column in row.index for column in strict_columns):
         return _strict_fair_price(row, PRIMARY_GUIDANCE_WINDOW)
     return _compatibility_fair_price(row)
-
-
-def _latest_price(row: pd.Series) -> float | None:
-    return _first_number(row, "last_trade_price", "current_price", "latest_price")
-
-
-def _price_gap_pct(latest: float | None, fair: float | None) -> float | None:
-    if latest is None or fair is None or fair <= 0:
-        return None
-    return (latest - fair) / fair * 100
 
 
 def _window_key(metric_window: str) -> str:
@@ -664,7 +658,69 @@ def _html_page(title: str, body: str) -> str:
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 14px;
+      min-width: 0;
     }}
+    .price-context-list {{ display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }}
+    .price-context-list li {{ margin: 0; }}
+    .price-context-classification {{ font-weight: 750; }}
+    .price-range-wrap {{ margin-top: 13px; }}
+    .price-range-title {{ margin-bottom: 7px; color: var(--muted); font-size: 0.82rem; font-weight: 700; }}
+    .price-range-rail {{ min-width: 0; padding: 10px 4px 4px; }}
+    .price-range-track {{
+      position: relative;
+      width: 100%;
+      height: 8px;
+      border-radius: 999px;
+      background: #334155;
+    }}
+    .price-range-band {{
+      position: absolute;
+      top: 0;
+      height: 100%;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      border: 1px solid var(--accent);
+      transform: translateX(0);
+    }}
+    .price-range-band-collapsed {{ width: 8px !important; transform: translateX(-4px); }}
+    .price-range-marker {{
+      position: absolute;
+      top: 50%;
+      z-index: 2;
+      display: block;
+      transform: translate(-50%, -50%);
+    }}
+    .price-range-marker-fair {{
+      width: 10px;
+      height: 10px;
+      background: var(--amber);
+      border: 1px solid var(--bg);
+      transform: translate(-50%, -50%) rotate(45deg);
+    }}
+    .price-range-marker-latest {{
+      width: 0;
+      height: 0;
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-bottom: 11px solid var(--text);
+      transform: translate(-50%, -105%);
+    }}
+    .price-range-values {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px 12px;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-variant-numeric: tabular-nums;
+    }}
+    .price-range-values strong {{ color: var(--text); }}
+    .range-symbol {{ display: inline-block; width: 0.9em; margin-right: 3px; text-align: center; }}
+    .range-symbol-fair {{ color: var(--amber); transform: rotate(45deg); }}
+    .range-symbol-latest {{ color: var(--text); }}
+    .insufficient-range {{ margin: 10px 0 0; color: var(--muted); font-weight: 700; }}
+    .highlight-neutral {{ min-height: 0; }}
+    .highlight-side-note {{ margin: 10px 0 0; color: var(--muted); font-size: 0.86rem; }}
     .report-footer {{
       margin-top: 34px;
       padding: 22px 24px;
@@ -714,6 +770,8 @@ def _html_page(title: str, body: str) -> str:
       main {{ width: min(100% - 8px, 1180px); padding-top: 10px; }}
       .book-summary th, .book-summary td {{ padding-inline: 3px; }}
       .book-pressure-content {{ gap: 2px; }}
+      .notes {{ grid-template-columns: minmax(0, 1fr); }}
+      .price-range-values {{ gap: 4px 8px; font-size: 0.74rem; }}
     }}
     @media print {{
       @page {{ size: landscape; margin: 10mm; }}
@@ -1049,46 +1107,15 @@ def _signal_rank(row: pd.Series) -> tuple[int, float, float]:
     return evidence, edge, samples
 
 
-def _market_pulse_html(df: pd.DataFrame) -> str:
-    valuation_rows: list[dict[str, object]] = []
-    for _, row in df.iterrows():
-        latest = _latest_price(row)
-        fair = _primary_guidance_fair_price(row)
-        gap = _price_gap_pct(latest, fair)
-        if gap is not None:
-            valuation_rows.append({"name": row.get("item_name", "Unknown"), "gap": gap, "fair": fair})
-
-    discount = min(valuation_rows, key=lambda item: float(item["gap"]), default=None)
-    premium = max(valuation_rows, key=lambda item: float(item["gap"]), default=None)
-    if discount is not None and float(discount["gap"]) >= 0:
-        discount = None
-    if premium is not None and float(premium["gap"]) <= 0:
-        premium = None
-
-    def valuation_card(title: str, selected: dict[str, object] | None, *, tone: str, icon: str, fallback: str) -> str:
-        if selected is None:
-            name, value, detail = fallback, "No clear outlier", "Current price is close to its fair-price context"
-        else:
-            name = str(selected["name"])
-            value = f'{float(selected["gap"]):+.2f}% vs 7D fair'
-            detail = f'7D fair reference {_fmt(selected["fair"])}'
-        return (
-            f'<article class="summary-card summary-card-{tone}"><span>{escape(title)}</span>'
-            f'<strong><span class="summary-arrow" aria-hidden="true">{escape(icon)}</span>{escape(name)}</strong>'
-            f'<span class="summary-value">{escape(value)}</span><span class="summary-detail">{escape(detail)}</span></article>'
-        )
-
-    return (
-        '<section><div class="eyebrow">7D fair-value context</div><h2>Largest price gaps</h2>'
-        '<div class="summary-grid">'
-        + valuation_card("Largest discount", discount, tone="down", icon="↓", fallback="No clear discount")
-        + valuation_card("Largest premium", premium, tone="up", icon="↑", fallback="No clear premium")
-        + '</div></section>'
-    )
-
-
 def _highlight_pairs_html(highlights: list[dict[str, object]], output_dir: Path) -> str:
+    role_labels = {
+        "largest_premium": "Rich above normal range",
+        "largest_discount": "Cheap below normal range",
+        "second_largest_premium": "Second-richest above normal range",
+        "second_largest_discount": "Second-cheapest below normal range",
+    }
     columns = []
+    selected_sides: set[str] = set()
     for entry in highlights:
         item = entry.get("item")
         chart_path = entry.get("chart_path")
@@ -1096,19 +1123,33 @@ def _highlight_pairs_html(highlights: list[dict[str, object]], output_dir: Path)
             continue
         chart_src = _relative_chart_path(chart_path, output_dir) if chart_path is not None else None
         role = str(getattr(item, "role"))
-        title = role.replace("_", " ").title()
+        title = role_labels.get(role, role.replace("_", " ").title())
         tone = "down" if "discount" in role else "up"
+        selected_sides.add("discount" if tone == "down" else "premium")
         icon = "↓" if tone == "down" else "↑"
         name = str(getattr(item, "item_name"))
-        gap = float(getattr(item, "gap_pct"))
-        fair = float(getattr(item, "fair_7d"))
+        gap = _number(getattr(item, "raw_gap_pct", getattr(item, "gap_pct", None)))
+        latest = _number(getattr(item, "latest_completed_price", None))
+        fair = _number(getattr(item, "fair_7d", None))
+        lower = _number(getattr(item, "price_p10_7d", None))
+        upper = _number(getattr(item, "price_p90_7d", None))
+        severity = _number(getattr(item, "severity", None))
         item_code = str(getattr(item, "item_code"))
+        edge = "below P10" if tone == "down" else "above P90"
+        gap_text = f"{gap:+.2f}% vs 7D fair" if gap is not None else "Gap versus 7D fair unavailable"
+        severity_text = (
+            f"{severity:.2f} normal-range widths {edge}"
+            if severity is not None
+            else "Normalized excess unavailable"
+        )
         card = (
             f'<article class="summary-card summary-card-{tone}" data-item-code="{escape(item_code, quote=True)}" '
             f'data-highlight-role="{escape(role, quote=True)}"><span>{escape(title)}</span>'
             f'<strong><span class="summary-arrow" aria-hidden="true">{icon}</span>{escape(name)}</strong>'
-            f'<span class="summary-value">{gap:+.2f}% vs 7D fair</span>'
-            f'<span class="summary-detail">7D fair reference {_fmt(fair)}</span></article>'
+            f'<span class="summary-value">{escape(gap_text)}</span>'
+            f'<span class="summary-detail">Last {_fmt(latest)} | Fair {_fmt(fair)} | '
+            f'Normal {_fmt(lower)}-{_fmt(upper)}</span>'
+            f'<span class="summary-detail">{escape(severity_text)}</span></article>'
         )
         chart = ""
         if chart_src:
@@ -1119,12 +1160,70 @@ def _highlight_pairs_html(highlights: list[dict[str, object]], output_dir: Path)
             f'<div class="highlight-column">{card}{chart}</div>'
         )
     if not columns:
-        return ""
+        return (
+            '<section class="highlight-section"><div class="eyebrow">Strict 7D completed-trade context</div>'
+            '<h2>Meaningful price dislocations</h2><span class="sr-only">Chart-linked ranking is limited to items '
+            'with sufficient completed-transaction history for a price-action chart.</span>'
+            '<article class="summary-card summary-card-neutral highlight-neutral">'
+            '<strong>No meaningful price dislocations</strong>'
+            '<span class="summary-detail">Eligible latest trades are within their normal 7D ranges or less than one tick from fair value.</span>'
+            '</article></section>'
+        )
+    side_note = ""
+    if "premium" not in selected_sides:
+        side_note = '<p class="highlight-side-note">No meaningful premium; other eligible items remain within their normal 7D ranges.</p>'
+    elif "discount" not in selected_sides:
+        side_note = '<p class="highlight-side-note">No meaningful discount; other eligible items remain within their normal 7D ranges.</p>'
     return (
-        '<section class="highlight-section"><div class="eyebrow">7D fair-value context</div>'
-        '<h2>Largest price gaps</h2><span class="sr-only">Highlights are ranked only among items '
+        '<section class="highlight-section"><div class="eyebrow">Strict 7D completed-trade context</div>'
+        '<h2>Meaningful price dislocations</h2><span class="sr-only">Chart-linked ranking is limited to items '
         'with sufficient completed-transaction history for a price-action chart.</span>'
-        '<div class="summary-grid">' + "".join(columns) + '</div></section>'
+        '<div class="summary-grid">' + "".join(columns) + '</div>' + side_note + '</section>'
+    )
+
+
+def _classification_label(value: object) -> str:
+    return {
+        MEANINGFUL_PREMIUM: "Rich above normal range",
+        MEANINGFUL_DISCOUNT: "Cheap below normal range",
+        WITHIN_NORMAL_RANGE: "Within normal range",
+        INSUFFICIENT_RANGE_EVIDENCE: "Insufficient 7D range evidence",
+    }.get(str(value), "Insufficient 7D range evidence")
+
+
+def _price_range_rail_html(row: pd.Series) -> str:
+    classification = str(row.get("dislocation_classification") or INSUFFICIENT_RANGE_EVIDENCE)
+    lower = _number(row.get("price_p10_7d"))
+    upper = _number(row.get("price_p90_7d"))
+    fair = _number(row.get("stable_fair_price_7d"))
+    latest = _number(row.get("last_trade_price"))
+    start = _number(row.get("dislocation_normal_band_start_position"))
+    end = _number(row.get("dislocation_normal_band_end_position"))
+    fair_position = _number(row.get("dislocation_fair_position"))
+    latest_position = _number(row.get("dislocation_latest_position"))
+    values = (lower, upper, fair, latest, start, end, fair_position, latest_position)
+    if classification == INSUFFICIENT_RANGE_EVIDENCE or any(value is None for value in values):
+        return '<p class="insufficient-range">Insufficient 7D range evidence</p>'
+    assert lower is not None and upper is not None and fair is not None and latest is not None
+    assert start is not None and end is not None and fair_position is not None and latest_position is not None
+    name = str(row.get("item_name") or "item")
+    aria = (
+        f"7D price range for {name}. P10 {_fmt(lower)}, P90 {_fmt(upper)}, "
+        f"strict 7D fair {_fmt(fair)}, latest completed trade {_fmt(latest)}."
+    )
+    collapsed_class = " price-range-band-collapsed" if start == end else ""
+    return (
+        '<div class="price-range-wrap"><div class="price-range-title">7D price range</div>'
+        f'<div class="price-range-rail" role="img" aria-label="{escape(aria, quote=True)}">'
+        '<div class="price-range-track">'
+        f'<span class="price-range-band{collapsed_class}" style="left:{start:.3f}%;width:{end - start:.3f}%" aria-hidden="true"></span>'
+        f'<span class="price-range-marker price-range-marker-fair" style="left:{fair_position:.3f}%" aria-hidden="true"></span>'
+        f'<span class="price-range-marker price-range-marker-latest" style="left:{latest_position:.3f}%" aria-hidden="true"></span>'
+        '</div><div class="price-range-values">'
+        f'<span><span class="range-symbol range-symbol-fair" aria-hidden="true">◆</span>Fair <strong>{_fmt(fair)}</strong></span>'
+        f'<span><span class="range-symbol range-symbol-latest" aria-hidden="true">▲</span>Latest <strong>{_fmt(latest)}</strong></span>'
+        f'<span>Normal <strong>{_fmt(lower)}-{_fmt(upper)}</strong></span>'
+        '</div></div></div>'
     )
 
 
@@ -1540,11 +1639,7 @@ def generate_html_report(
       <div class="hero-meta"><strong>Combined 1D / 7D / 30D report</strong><span>{data_freshness}</span><span>Report generated {escape(generated)}</span></div>
 </header>
 """
-    highlight_html = ""
-    if highlights is None:
-        highlight_html = _market_pulse_html(df)
-    else:
-        highlight_html = _highlight_pairs_html(highlights, Path(output_dir))
+    highlight_html = _highlight_pairs_html(highlights or [], Path(output_dir))
     blocks.append(
         '<div class="report-header-capture" data-report-asset="header">'
         + header_html
@@ -1621,26 +1716,31 @@ def generate_html_report(
     if not note_rows.empty:
         notes: list[str] = []
         for _, row in note_rows.iterrows():
-            fair = _primary_guidance_fair_price(row)
-            volume = _first_number(row, "volume_7d", "traded_quantity_7d")
-            trades = _first_number(row, "trade_count_7d", "trades_7d")
+            item_code = str(row.get("item_code") or row.get("item_name") or "item")
+            fair = _strict_fair_price(row, "7D")
+            latest = _first_number(row, "last_trade_price")
+            lower = _first_number(row, "price_p10_7d")
+            upper = _first_number(row, "price_p90_7d")
+            width_pct = _first_number(row, "dislocation_band_width_pct")
+            classification = _classification_label(row.get("dislocation_classification"))
             detail_items = [
-                f"<li>7D historical fair context: <strong>{escape(_fmt(fair))}</strong></li>",
-                f"<li>Bid / Ask: <strong>{escape(_fmt(row.get('bid')))} / {escape(_fmt(row.get('ask')))}</strong></li>",
-                f"<li>7D volume / trades: <strong>{escape(_fmt(volume, 0))} / {escape(_fmt(trades, 0))}</strong></li>",
-                f"<li>7D stable range: <strong>{escape(_fmt(row.get('stable_range_pct_7d'), 2))}%</strong></li>",
+                f"<li>Strict 7D fair: <strong>{escape(_fmt(fair))}</strong></li>",
+                f"<li>Latest completed trade: <strong>{escape(_fmt(latest))}</strong></li>",
+                f"<li>7D normal range: <strong>{escape(_fmt(lower))}-{escape(_fmt(upper))}</strong> ({escape(_fmt(width_pct, 2))}%)</li>",
+                f'<li>Classification: <strong class="price-context-classification">{escape(classification)}</strong></li>',
+                f"<li>Current execution context — Bid: <strong>{escape(_fmt(row.get('bid')))}</strong>; Ask: <strong>{escape(_fmt(row.get('ask')))}</strong></li>",
             ]
-            if row.get("momentum_7d_pct") is not None and not pd.isna(row.get("momentum_7d_pct")):
-                detail_items.append(f"<li>7D momentum: <strong>{escape(_fmt(row['momentum_7d_pct'], 2))}%</strong></li>")
             notes.append(
-                f"""<article class="note">
+                f"""<article class="note" data-report-asset="item-price-context-card" data-item-code="{escape(item_code, quote=True)}">
           <h3>{escape(str(row['item_name']))}</h3>
-          <ul>{"".join(detail_items)}</ul>
+          <ul class="price-context-list">{"".join(detail_items)}</ul>
+          {_price_range_rail_html(row)}
         </article>"""
             )
         blocks.append(
             """    <section>
-      <h2>Item Notes</h2>
+      <h2>Item Price Context</h2>
+      <p class="muted">Strict 7D completed-trade valuation position, with current bid and ask shown separately as execution context.</p>
       <div class="notes">""" + "\n".join(notes) + """</div>
     </section>"""
         )

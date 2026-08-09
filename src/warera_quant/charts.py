@@ -209,6 +209,66 @@ def render_report_header_png(
     return output
 
 
+def render_report_item_context_pngs(
+    report_path: str | Path,
+    output_dir: str | Path,
+    *,
+    browser_executable: str | Path | None = None,
+) -> list[Path]:
+    """Render each Item Price Context card as one tightly cropped PNG."""
+    report = Path(report_path).resolve()
+    if not report.is_file():
+        raise FileNotFoundError(f"Report HTML does not exist: {report}")
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as exc:
+        raise RuntimeError(
+            "Item card PNG export requires Playwright. Install project dependencies with "
+            "`.venv/bin/python -m pip install -r requirements.txt`."
+        ) from exc
+
+    chrome = _chrome_executable(
+        browser_executable or os.environ.get("WARERA_CHROME_PATH")
+    )
+    destination = Path(output_dir)
+    destination.mkdir(parents=True, exist_ok=True)
+    outputs: list[Path] = []
+    filename_counts: dict[str, int] = {}
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            executable_path=chrome,
+            headless=True,
+            args=["--allow-file-access-from-files"],
+        )
+        try:
+            page = browser.new_page(
+                viewport={"width": 1440, "height": 1080},
+                device_scale_factor=2,
+            )
+            page.goto(report.as_uri(), wait_until="load")
+            page.evaluate("document.fonts.ready")
+            cards = page.locator('[data-report-asset="item-price-context-card"]')
+            for index in range(cards.count()):
+                card = cards.nth(index)
+                item_code = card.get_attribute("data-item-code") or f"item-{index + 1}"
+                slug = _table_image_slug(item_code)
+                filename_counts[slug] = filename_counts.get(slug, 0) + 1
+                suffix = (
+                    f"-{filename_counts[slug]}"
+                    if filename_counts[slug] > 1
+                    else ""
+                )
+                output = destination / f"{slug}{suffix}-price-context.png"
+                card.screenshot(path=str(output), animations="disabled")
+                outputs.append(output)
+        finally:
+            browser.close()
+
+    return outputs
+
+
 def render_trend_path_svg(
     points: Iterable[Mapping[str, Any]],
     *,
@@ -636,7 +696,12 @@ def render_highlight_price_action_chart(
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     style = _report_chart_style()
-    role_label = highlight.role.replace("_", " ").title()
+    role_label = {
+        "largest_premium": "Rich above normal range",
+        "largest_discount": "Cheap below normal range",
+        "second_largest_premium": "Second-richest above normal range",
+        "second_largest_discount": "Second-cheapest below normal range",
+    }.get(str(highlight.role), str(highlight.role).replace("_", " ").title())
     title = f"{highlight.item_name} — {role_label}"
     subtitle = f"Trailing 30D · {highlight.interval} candles · {highlight.history_span}"
     kwargs = {
