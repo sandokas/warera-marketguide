@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 import logging
 import os
 from pathlib import Path
@@ -32,6 +33,16 @@ _REPORT_CHART_COLORS = {
     "amber": "#fbbf24",
 }
 _REPORT_CHART_WIDTHS = {"volume_linewidth": 0}
+_OUTLIER_WICK_RANGE_MULTIPLIER = 2.0
+
+
+@dataclass(frozen=True)
+class ChartViewport:
+    ylim: tuple[float, float]
+    low_positions: tuple[int, ...]
+    high_positions: tuple[int, ...]
+    observed_low: float
+    observed_high: float
 
 
 def _report_chart_style() -> dict[str, Any]:
@@ -353,25 +364,86 @@ def moving_average_breaks(candles: pd.DataFrame, *, ma_window: int = 4) -> pd.Da
     return flags
 
 
-def chart_ylim(candles: pd.DataFrame, *, min_range_pct: float = 5.0) -> tuple[float, float] | None:
+def chart_viewport(
+    candles: pd.DataFrame,
+    *,
+    min_range_pct: float = 5.0,
+    wick_range_multiplier: float = _OUTLIER_WICK_RANGE_MULTIPLIER,
+) -> ChartViewport | None:
+    """Keep sustained candle bodies visible without letting extreme wicks flatten a chart."""
     if candles.empty:
         return None
 
-    low = float(candles["Low"].min())
-    high = float(candles["High"].max())
-    center = (low + high) / 2
+    body_low = float(candles[["Open", "Close"]].min().min())
+    body_high = float(candles[["Open", "Close"]].max().max())
+    observed_low = float(candles["Low"].min())
+    observed_high = float(candles["High"].max())
+    center = (body_low + body_high) / 2
     if center <= 0:
         return None
 
-    actual_range = high - low
     minimum_range = center * (min_range_pct / 100)
-    target_range = max(actual_range, minimum_range)
-    padding = max((target_range - actual_range) / 2, target_range * 0.05)
-    lower = max(0, low - padding)
-    upper = high + padding
+    body_range = max(body_high - body_low, minimum_range)
+    lower_wick_limit = max(0, body_low - wick_range_multiplier * body_range)
+    upper_wick_limit = body_high + wick_range_multiplier * body_range
+
+    low_mask = candles["Low"] < lower_wick_limit
+    high_mask = candles["High"] > upper_wick_limit
+    visible_lows = candles.loc[~low_mask, "Low"]
+    visible_highs = candles.loc[~high_mask, "High"]
+    visible_low = min(body_low, float(visible_lows.min())) if not visible_lows.empty else body_low
+    visible_high = max(body_high, float(visible_highs.max())) if not visible_highs.empty else body_high
+
+    visible_range = visible_high - visible_low
+    target_range = max(visible_range, minimum_range)
+    padding = max((target_range - visible_range) / 2, target_range * 0.05)
+    lower = max(0, visible_low - padding)
+    upper = visible_high + padding
     if upper <= lower:
         return None
-    return lower, upper
+    return ChartViewport(
+        ylim=(lower, upper),
+        low_positions=tuple(index for index, clipped in enumerate(low_mask) if clipped),
+        high_positions=tuple(index for index, clipped in enumerate(high_mask) if clipped),
+        observed_low=observed_low,
+        observed_high=observed_high,
+    )
+
+
+def chart_ylim(candles: pd.DataFrame, *, min_range_pct: float = 5.0) -> tuple[float, float] | None:
+    viewport = chart_viewport(candles, min_range_pct=min_range_pct)
+    return viewport.ylim if viewport is not None else None
+
+
+def _mark_off_scale_wicks(axis: Any, viewport: ChartViewport) -> None:
+    lower, upper = viewport.ylim
+    inset = (upper - lower) * 0.025
+    if viewport.low_positions:
+        axis.scatter(
+            viewport.low_positions,
+            [lower + inset] * len(viewport.low_positions),
+            marker="v",
+            s=44,
+            color=_REPORT_CHART_COLORS["amber"],
+            zorder=6,
+            label=(
+                f"Off-scale low: {len(viewport.low_positions)} candle(s), "
+                f"min {viewport.observed_low:g}"
+            ),
+        )
+    if viewport.high_positions:
+        axis.scatter(
+            viewport.high_positions,
+            [upper - inset] * len(viewport.high_positions),
+            marker="^",
+            s=44,
+            color=_REPORT_CHART_COLORS["amber"],
+            zorder=6,
+            label=(
+                f"Off-scale high: {len(viewport.high_positions)} candle(s), "
+                f"max {viewport.observed_high:g}"
+            ),
+        )
 
 
 def plot_price_chart(
@@ -460,12 +532,23 @@ def plot_price_chart(
         "update_width_config": _REPORT_CHART_WIDTHS,
         "savefig": dict(fname=str(output), dpi=150, bbox_inches="tight"),
     }
-    ylim = chart_ylim(flags, min_range_pct=min_range_pct)
-    if ylim is not None:
-        plot_kwargs["ylim"] = ylim
+    viewport = chart_viewport(flags, min_range_pct=min_range_pct)
+    if viewport is not None:
+        plot_kwargs["ylim"] = viewport.ylim
     if add_plots:
         plot_kwargs["addplot"] = add_plots
-    mpf.plot(flags, **plot_kwargs)
+    figure, axes = mpf.plot(
+        flags,
+        returnfig=True,
+        **{key: value for key, value in plot_kwargs.items() if key != "savefig"},
+    )
+    if viewport is not None:
+        _mark_off_scale_wicks(axes[0], viewport)
+        if viewport.low_positions or viewport.high_positions:
+            axes[0].legend(loc="best")
+    figure.savefig(output, dpi=150, bbox_inches="tight")
+    import matplotlib.pyplot as plt
+    plt.close(figure)
     return output
 
 
@@ -565,9 +648,9 @@ def render_highlight_price_action_chart(
     }
     if add_plots:
         kwargs["addplot"] = add_plots
-    ylim = chart_ylim(analytical, min_range_pct=min_range_pct)
-    if ylim is not None:
-        kwargs["ylim"] = ylim
+    viewport = chart_viewport(analytical, min_range_pct=min_range_pct)
+    if viewport is not None:
+        kwargs["ylim"] = viewport.ylim
     figure, axes = mpf.plot(visual, returnfig=True, **{k: v for k, v in kwargs.items() if k != "savefig"})
     figure.suptitle(f"{title}\n{subtitle}", fontsize=14, fontweight="bold", y=0.98)
     figure.subplots_adjust(top=0.84, left=0.10, right=0.91, bottom=0.12)
@@ -578,6 +661,8 @@ def render_highlight_price_action_chart(
         linewidth=1.2,
         label="Strict 7D fair",
     )
+    if viewport is not None:
+        _mark_off_scale_wicks(axes[0], viewport)
     axes[0].legend(loc="best")
     figure.savefig(output, dpi=150, bbox_inches="tight")
     import matplotlib.pyplot as plt

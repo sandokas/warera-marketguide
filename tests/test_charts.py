@@ -9,6 +9,7 @@ from warera_quant.charts import (
     build_ohlc,
     build_spread_series,
     chart_ylim,
+    chart_viewport,
     featured_item_codes,
     moving_average_breaks,
     normalize_ohlc,
@@ -386,6 +387,38 @@ def test_chart_ylim_uses_minimum_visible_range():
     assert upper - lower > 1.8
     assert lower < 36.0
     assert upper > 36.7
+
+
+def test_chart_viewport_clips_isolated_extreme_wick_but_keeps_candle_bodies():
+    candles = pd.DataFrame([
+        {"Open": 100, "High": 102, "Low": 99, "Close": 101, "Volume": 10},
+        {"Open": 101, "High": 103, "Low": 10, "Close": 102, "Volume": 20},
+        {"Open": 102, "High": 103, "Low": 100, "Close": 101, "Volume": 10},
+    ])
+
+    viewport = chart_viewport(candles, min_range_pct=5)
+
+    assert viewport is not None
+    assert viewport.low_positions == (1,)
+    assert viewport.high_positions == ()
+    assert viewport.observed_low == 10
+    assert viewport.ylim[0] > 90
+    assert viewport.ylim[1] > 103
+
+
+def test_chart_viewport_includes_sustained_drop_recorded_in_candle_body():
+    candles = pd.DataFrame([
+        {"Open": 100, "High": 102, "Low": 99, "Close": 101, "Volume": 10},
+        {"Open": 101, "High": 102, "Low": 49, "Close": 50, "Volume": 20},
+        {"Open": 50, "High": 52, "Low": 48, "Close": 51, "Volume": 10},
+    ])
+
+    viewport = chart_viewport(candles, min_range_pct=5)
+
+    assert viewport is not None
+    assert viewport.low_positions == ()
+    assert viewport.ylim[0] < 48
+    assert viewport.ylim[1] > 102
 
 
 def test_charts_do_not_import_api_or_db_modules():
