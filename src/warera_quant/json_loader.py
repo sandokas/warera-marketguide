@@ -12,7 +12,7 @@ FIELD_ALIASES = {
     "item_name": ("item_name", "item", "name", "item_title", "title"),
     "bid": ("bid", "bid_price", "best_bid", "highest_bid", "buy", "buy_price", "highest_buy"),
     "ask": ("ask", "ask_price", "best_ask", "lowest_ask", "sell", "sell_price", "lowest_sell"),
-    "current_price": ("current_price", "price", "last_price", "last_trade_price", "latest_price"),
+    "last_trade_price": ("last_trade_price",),
     "trades_7d": ("trades_7d", "seven_day_trades", "trades_week", "weekly_trades", "volume_7d"),
     "trades_24h": ("trades_24h", "daily_trades", "volume_24h"),
     "high_7d": ("high_7d", "seven_day_high", "week_high", "high"),

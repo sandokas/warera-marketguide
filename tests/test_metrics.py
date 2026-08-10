@@ -10,7 +10,6 @@ from warera_quant.metrics import (
     calculate_fair_value_guidance,
     calculate_direction_signal,
     calculate_liquidity_score,
-    calculate_notional_book_sweep,
     calculate_metrics,
     classify_price_dislocation,
     classify_price_dislocations,
@@ -376,30 +375,6 @@ def test_order_book_summary_uses_monetary_depth_and_marks_largest_quantity_wall(
     assert summary.bids[1].is_wall is True
     assert summary.asks[1].is_wall is True
     assert summary.asks[1].cumulative_quantity == 1_000_003
-
-
-def test_notional_sweep_reports_slippage_and_insufficient_visible_depth():
-    buy = calculate_notional_book_sweep(
-        [{"price": 10, "quantity": 5}, {"price": 11, "quantity": 10}],
-        side="buy",
-        value=100,
-    )
-    sell = calculate_notional_book_sweep(
-        [{"price": 10, "quantity": 5}, {"price": 9, "quantity": 10}],
-        side="sell",
-        value=100,
-    )
-    too_large = calculate_notional_book_sweep(
-        [{"price": 10, "quantity": 1}], side="buy", value=100,
-    )
-
-    assert buy.fully_filled is True
-    assert buy.average_price == pytest.approx(100 / (5 + 50 / 11))
-    assert buy.slippage_pct == pytest.approx((buy.average_price - 10) / 10 * 100)
-    assert sell.fully_filled is True
-    assert sell.average_price == pytest.approx(100 / (5 + 50 / 9))
-    assert sell.slippage_pct == pytest.approx((10 - sell.average_price) / 10 * 100)
-    assert too_large.fully_filled is False
 
 
 def _flip_input(**changes):

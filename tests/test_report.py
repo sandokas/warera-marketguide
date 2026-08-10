@@ -723,11 +723,6 @@ def test_report_restores_price_guide_and_renders_transparent_market_depth():
             "asks": [{"price": 36.2, "quantity": 46, "order_value": 1665.2,
                       "cumulative_quantity": 46, "cumulative_value": 1665.2, "is_wall": True}],
         },
-        "order_book_executions": [{
-            "budget": 100,
-            "buy": {"fully_filled": True, "average_price": 36.2, "slippage_pct": 0},
-            "sell": {"fully_filled": False},
-        }],
     }]))
 
     assert report.index("Meaningful price dislocations") < report.index("Fair Value &amp; Buy / Sell Signals")
@@ -758,8 +753,6 @@ def test_report_restores_price_guide_and_renders_transparent_market_depth():
     assert '.book-pressure-content {' in report
     assert "<details" not in report
     assert ".flip-board" not in report
-    assert "Executable fixed-budget depth" not in report
-    assert "Insufficient visible depth" not in report
     assert ">Ask Upside %<" in report
     assert "Completed Market Activity" in report
     assert "Liquidity depth score" not in report
@@ -785,11 +778,6 @@ def test_report_aligns_text_left_and_numbers_right_with_semantic_classes():
             "asks": [{"price": 0.081, "quantity": 200, "order_value": 16.2,
                       "cumulative_quantity": 200, "cumulative_value": 16.2}],
         },
-        "order_book_executions": [{
-            "budget": 100,
-            "buy": {"fully_filled": True, "average_price": 0.081, "slippage_pct": 0},
-            "sell": {"fully_filled": False},
-        }],
     }]))
 
     assert 'class="col-item text"' in report

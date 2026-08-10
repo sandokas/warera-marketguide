@@ -17,7 +17,6 @@ from .metrics import (
     FlipAssumptions,
     calculate_book_sweep,
     calculate_fair_value_guidance,
-    calculate_notional_book_sweep,
     calculate_direction_signal,
     calculate_flip_opportunity,
     calculate_liquidity_score,
@@ -32,7 +31,6 @@ SUPPORTED_REPORT_WINDOWS = ("1D", "7D", "30D", "90D", "1Y")
 DEFAULT_REPORT_WINDOWS = ("1D", "7D", "30D")
 HIGHLIGHT_HISTORY_DAYS = 30
 FORECAST_TRAILING_SECONDS = 7 * 24 * 60 * 60
-EXECUTION_BUDGETS = (100.0, 1_000.0, 10_000.0)
 
 
 def evaluate_item_forecast(
@@ -302,7 +300,7 @@ def load_market_rows(
         last_trade_price = _latest_trade_price(trades)
         quote_price = _latest_quote_price(price_observations, latest_price)
         mid_price = _mid_price(latest_book)
-        current_price = _select_current_price(last_trade_price, quote_price, mid_price)
+        current_price = last_trade_price
         quote_gap_pct = _quote_gap_pct(last_trade_price, quote_price)
         depth_imbalance_pct = _depth_imbalance_pct(latest_book)
 
@@ -393,7 +391,6 @@ def load_market_rows(
         best_bid = None
         best_ask = None
         row["order_book"] = None
-        row["order_book_executions"] = []
         if snapshot is not None:
             best_bid = snapshot.get("best_bid")
             best_ask = snapshot.get("best_ask")
@@ -406,14 +403,6 @@ def load_market_rows(
                 exit_sweep = calculate_book_sweep(bids, side="sell", quantity=assumptions.quantity)
                 book_summary = summarize_order_book(bids=bids, asks=asks)
                 row["order_book"] = asdict(book_summary)
-                row["order_book_executions"] = [
-                    {
-                        "budget": budget,
-                        "buy": asdict(calculate_notional_book_sweep(asks, side="buy", value=budget)),
-                        "sell": asdict(calculate_notional_book_sweep(bids, side="sell", value=budget)),
-                    }
-                    for budget in EXECUTION_BUDGETS
-                ]
         opportunity = calculate_flip_opportunity({
             "item_code": item_code,
             "item_name": row["item_name"],
@@ -627,7 +616,7 @@ def _window_stats(
     )
     spread_pct = _number_or_none(latest_book.get("spread_pct"))
     average_price = (sum(trade_prices) / len(trade_prices)) if trade_prices else None
-    current_price = _select_current_price(last_trade_price, quote_price, mid_price)
+    current_price = last_trade_price
     rolling_average = _rolling_average(trade_prices, fallback=average_price)
     median_price = _median(trade_prices)
     price_p10 = _percentile(trade_prices, 10)
@@ -799,14 +788,6 @@ def _mid_price(latest_book: dict[str, Any]) -> float | None:
     if bid is None or ask is None:
         return None
     return (bid + ask) / 2
-
-
-def _select_current_price(last_trade_price: float | None, quote_price: float | None, mid_price: float | None) -> float | None:
-    if last_trade_price is not None:
-        return last_trade_price
-    if quote_price is not None:
-        return quote_price
-    return mid_price
 
 
 def _quote_gap_pct(last_trade_price: float | None, quote_price: float | None) -> float | None:

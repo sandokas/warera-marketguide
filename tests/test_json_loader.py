@@ -12,6 +12,7 @@ def test_market_json_to_dataframe_extracts_nested_records_and_aliases():
                     "volume_7d": 500,
                     "week_high": 1.599,
                     "week_low": 1.584,
+                    "last_trade_price": 1.587,
                 }
             ]
         }
@@ -25,3 +26,4 @@ def test_market_json_to_dataframe_extracts_nested_records_and_aliases():
     assert df.loc[0, "trades_7d"] == 500
     assert df.loc[0, "high_7d"] == 1.599
     assert df.loc[0, "low_7d"] == 1.584
+    assert df.loc[0, "last_trade_price"] == 1.587

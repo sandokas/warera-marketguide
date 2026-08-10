@@ -224,9 +224,6 @@ def test_load_market_rows_computes_window_statistics(tmp_path):
     assert row["order_book"]["bid_value"] == 60.0
     assert row["order_book"]["ask_value"] == 140.0
     assert row["order_book"]["pressure_pct"] == pytest.approx(-40.0)
-    assert [entry["budget"] for entry in row["order_book_executions"]] == [100, 1_000, 10_000]
-    assert row["order_book_executions"][0]["buy"]["fully_filled"] is True
-    assert row["order_book_executions"][0]["sell"]["fully_filled"] is False
     assert row["flip_quantity"] == 1.0
     assert row["flip_quote_age_minutes"] == 15.0
     assert row["flip_entry_fully_filled"] is True
@@ -355,7 +352,7 @@ def test_load_market_rows_prefers_trade_history_for_current_price(tmp_path):
     assert row["quote_gap_pct"] == pytest.approx(7.526881720430108)
 
 
-def test_load_market_rows_falls_back_to_quote_price_when_no_trade_exists(tmp_path):
+def test_load_market_rows_keeps_trade_price_missing_when_no_trade_exists(tmp_path):
     with _store(tmp_path) as store:
         store.insert_price_observations({"gold": 97.5}, NOW)
         store.insert_order_book_observations(
@@ -373,8 +370,8 @@ def test_load_market_rows_falls_back_to_quote_price_when_no_trade_exists(tmp_pat
     assert row["last_trade_price"] is None
     assert row["quote_price"] == pytest.approx(97.5)
     assert row["mid_price"] == pytest.approx(97.5)
-    assert row["current_price"] == pytest.approx(97.5)
-    assert row["latest_price"] == pytest.approx(97.5)
+    assert row["current_price"] is None
+    assert row["latest_price"] is None
     assert row["quote_gap_pct"] is None
     assert row["stable_fair_price_1d"] is None
     assert row["guide_fair_price"] is None

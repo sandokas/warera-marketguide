@@ -51,7 +51,6 @@ def test_from_db_preserves_structured_order_book_for_report(monkeypatch, tmp_pat
         lambda _store, **_kwargs: [{
             "item_name": "Bread",
             "order_book": book,
-            "order_book_executions": [],
         }],
     )
 

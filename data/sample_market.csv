@@ -1,4 +1,4 @@
-item_name,bid,ask,trades_7d,high_7d,low_7d,current_price,open_7d,close_7d
+item_name,bid,ask,trades_7d,high_7d,low_7d,last_trade_price,open_7d,close_7d
 Cooked Fish,7.05,7.35,120,7.45,6.90,7.207,7.085,7.207
 Steel,1.584,1.590,500,1.599,1.584,1.587,1.591,1.587
 Concrete,1.575,1.600,95,1.610,1.560,1.583,1.591,1.583

@@ -892,19 +892,6 @@ class OrderBookSummary:
     asks: tuple[BookLevelDepth, ...]
 
 
-@dataclass(frozen=True)
-class NotionalSweepResult:
-    side: str
-    requested_value: float
-    filled_quantity: float
-    gross_value: float
-    fully_filled: bool
-    average_price: float | None
-    best_price: float | None
-    worst_price: float | None
-    slippage_pct: float | None
-
-
 def summarize_order_book(*, bids: object, asks: object) -> OrderBookSummary:
     """Summarize normalized levels without hiding depth behind a composite score."""
     bid_levels = _normalized_levels(bids, reverse=True)
@@ -950,57 +937,6 @@ def summarize_order_book(*, bids: object, asks: object) -> OrderBookSummary:
         spread_pct=spread / midpoint * 100 if spread is not None and midpoint and midpoint > 0 else None,
         bids=bid_rows,
         asks=ask_rows,
-    )
-
-
-def calculate_notional_book_sweep(
-    levels: object, *, side: str, value: float
-) -> NotionalSweepResult:
-    """Estimate execution for a fixed monetary size using only visible levels.
-
-    A buy spends ``value`` and a sell raises ``value``. The final visible level
-    may therefore be partially consumed.
-    """
-    if side not in {"buy", "sell"}:
-        raise ValueError("side must be 'buy' or 'sell'.")
-    requested_value = _finite_float_or_none(value)
-    if requested_value is None or requested_value <= 0:
-        raise ValueError("value must be a finite positive number.")
-    normalized = _normalized_levels(levels, reverse=side == "sell")
-    best_price = normalized[0][0] if normalized else None
-    if best_price is None or best_price <= 0:
-        return NotionalSweepResult(side, requested_value, 0.0, 0.0, False, None, best_price, None, None)
-
-    remaining_value = requested_value
-    gross_value = 0.0
-    filled_quantity = 0.0
-    worst_price = None
-    for price, available in normalized:
-        fill = min(remaining_value / price, available)
-        fill_value = fill * price
-        gross_value += fill_value
-        filled_quantity += fill
-        remaining_value -= fill_value
-        if fill > 0:
-            worst_price = price
-        if remaining_value <= 1e-9:
-            remaining_value = 0.0
-            break
-    average_price = gross_value / filled_quantity if filled_quantity > 0 else None
-    slippage_pct = None
-    if average_price is not None:
-        slippage = average_price - best_price if side == "buy" else best_price - average_price
-        slippage_pct = slippage / best_price * 100
-    return NotionalSweepResult(
-        side=side,
-        requested_value=requested_value,
-        filled_quantity=filled_quantity,
-        gross_value=gross_value,
-        fully_filled=remaining_value == 0,
-        average_price=average_price,
-        best_price=best_price,
-        worst_price=worst_price,
-        slippage_pct=slippage_pct,
     )
 
 
@@ -1322,13 +1258,7 @@ def calculate_metrics(row: dict) -> MarketMetrics:
     total_production_points = total_upstream_production_points(item_code=item_code, item_name=item_name)
     bid = _float_or_none(row.get("bid"))
     ask = _float_or_none(row.get("ask"))
-    current_price = _float_or_none(
-        row.get("current_price")
-        or row.get("last_trade_price")
-        or row.get("price")
-        or row.get("quote_price")
-        or row.get("latest_price")
-    )
+    current_price = _float_or_none(row.get("last_trade_price"))
     trades_7d = _float_or_none(row.get("trades_7d"))
     trades_24h = _float_or_none(row.get("trades_24h"))
     if trades_7d is None and trades_24h is not None:
