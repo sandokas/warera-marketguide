@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 import logging
+import math
 import os
 from pathlib import Path
 import shutil
@@ -17,6 +18,7 @@ logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
 
 import mplfinance as mpf
 import pandas as pd
+from matplotlib.ticker import FuncFormatter, MaxNLocator, MultipleLocator
 
 from .metrics import HighlightedItem
 
@@ -34,6 +36,12 @@ _REPORT_CHART_COLORS = {
 }
 _REPORT_CHART_WIDTHS = {"volume_linewidth": 0}
 _OUTLIER_WICK_RANGE_MULTIPLIER = 2.0
+_MIN_MONEY_UNIT = 0.001
+_COMPACT_AXIS_UNITS = (
+    (1_000_000_000, "B"),
+    (1_000_000, "M"),
+    (1_000, "K"),
+)
 
 
 @dataclass(frozen=True)
@@ -43,6 +51,58 @@ class ChartViewport:
     high_positions: tuple[int, ...]
     observed_low: float
     observed_high: float
+
+
+def _format_axis_number(value: float, *, decimals: int) -> str:
+    """Format an axis value compactly without exceeding the requested precision."""
+    absolute = abs(value)
+    for divisor, suffix in _COMPACT_AXIS_UNITS:
+        if absolute >= divisor:
+            scaled = value / divisor
+            text = f"{scaled:.{decimals}f}".rstrip("0").rstrip(".")
+            return f"{text}{suffix}"
+
+    rounded = round(value, decimals)
+    if rounded == 0:
+        rounded = 0.0
+    return f"{rounded:.{decimals}f}".rstrip("0").rstrip(".")
+
+
+def _format_monetary_axis_value(value: float, _position: float | None = None) -> str:
+    """Show monetary values to at most the game's three-decimal precision."""
+    return _format_axis_number(value, decimals=3)
+
+
+def _format_quantity_axis_value(value: float, _position: float | None = None) -> str:
+    """Show unit counts as integers, allowing compact K/M/B axis notation."""
+    if abs(value) < 1_000:
+        return f"{round(value):.0f}"
+    return _format_axis_number(value, decimals=3)
+
+
+def _monetary_tick_step(lower: float, upper: float, *, target_ticks: int = 8) -> float:
+    """Choose a readable tick step that is never smaller than one game money unit."""
+    raw_step = max(abs(upper - lower) / target_ticks, _MIN_MONEY_UNIT)
+    magnitude = 10 ** math.floor(math.log10(raw_step))
+    normalized = raw_step / magnitude
+    multiplier = next(step for step in (1, 2, 5, 10) if normalized <= step)
+    return max(multiplier * magnitude, _MIN_MONEY_UNIT)
+
+
+def _format_monetary_axis(axis: Any) -> None:
+    lower, upper = axis.get_ylim()
+    axis.yaxis.set_major_locator(MultipleLocator(_monetary_tick_step(lower, upper)))
+    axis.yaxis.set_major_formatter(FuncFormatter(_format_monetary_axis_value))
+
+
+def _apply_market_axis_formatters(axes: list[Any], *, has_spread: bool) -> None:
+    """Apply game precision rules to mplfinance price, volume, and spread panels."""
+    _format_monetary_axis(axes[0])
+    if len(axes) > 2:
+        axes[2].yaxis.set_major_locator(MaxNLocator(integer=True))
+        axes[2].yaxis.set_major_formatter(FuncFormatter(_format_quantity_axis_value))
+    if has_spread and len(axes) > 4:
+        _format_monetary_axis(axes[4])
 
 
 def _report_chart_style() -> dict[str, Any]:
@@ -602,6 +662,10 @@ def plot_price_chart(
         returnfig=True,
         **{key: value for key, value in plot_kwargs.items() if key != "savefig"},
     )
+    _apply_market_axis_formatters(
+        axes,
+        has_spread=spread is not None and not spread.empty and spread.notna().any(),
+    )
     if viewport is not None:
         _mark_off_scale_wicks(axes[0], viewport)
         if viewport.low_positions or viewport.high_positions:
@@ -717,6 +781,7 @@ def render_highlight_price_action_chart(
     if viewport is not None:
         kwargs["ylim"] = viewport.ylim
     figure, axes = mpf.plot(visual, returnfig=True, **{k: v for k, v in kwargs.items() if k != "savefig"})
+    _apply_market_axis_formatters(axes, has_spread=False)
     figure.suptitle(f"{title}\n{subtitle}", fontsize=14, fontweight="bold", y=0.98)
     figure.subplots_adjust(top=0.84, left=0.10, right=0.91, bottom=0.12)
     axes[0].axhline(

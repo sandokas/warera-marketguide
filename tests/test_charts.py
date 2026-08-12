@@ -1,10 +1,15 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import matplotlib.pyplot as plt
 import pandas as pd
 
 from warera_quant.charts import (
     _REPORT_CHART_WIDTHS,
+    _apply_market_axis_formatters,
+    _format_monetary_axis_value,
+    _format_quantity_axis_value,
+    _monetary_tick_step,
     _report_chart_style,
     build_ohlc,
     build_spread_series,
@@ -37,6 +42,45 @@ def test_price_chart_style_matches_dark_report_palette():
     }
     assert style["marketcolors"]["volume"] == style["marketcolors"]["candle"]
     assert _REPORT_CHART_WIDTHS == {"volume_linewidth": 0}
+
+
+def test_monetary_axis_labels_never_exceed_three_decimal_places():
+    assert _format_monetary_axis_value(0.001) == "0.001"
+    assert _format_monetary_axis_value(12.34567) == "12.346"
+    assert _format_monetary_axis_value(35_004_000) == "35.004M"
+    assert _format_monetary_axis_value(2_500_000) == "2.5M"
+
+
+def test_monetary_axis_ticks_respect_the_smallest_game_money_unit():
+    assert _monetary_tick_step(0.076, 0.080) == 0.001
+    assert _monetary_tick_step(10, 18) == 1
+
+
+def test_market_axis_formatters_change_the_actual_rendered_tick_labels():
+    figure, (price_axis, quantity_axis) = plt.subplots(2)
+    price_axis.set_ylim(0.076, 0.080)
+    quantity_axis.set_ylim(0, 60_000)
+    axes = [price_axis, price_axis.twinx(), quantity_axis, quantity_axis.twinx()]
+
+    _apply_market_axis_formatters(axes, has_spread=False)
+    figure.canvas.draw()
+
+    price_labels = [
+        label.get_text()
+        for tick, label in zip(price_axis.get_yticks(), price_axis.get_yticklabels())
+        if 0.076 <= tick <= 0.080
+    ]
+    quantity_labels = [label.get_text() for label in quantity_axis.get_yticklabels()]
+    assert price_labels == ["0.076", "0.077", "0.078", "0.079", "0.08"]
+    assert all("." not in label for label in quantity_labels)
+    assert all(float(tick).is_integer() for tick in quantity_axis.get_yticks())
+    plt.close(figure)
+
+
+def test_quantity_axis_labels_are_whole_units_or_compact_counts():
+    assert _format_quantity_axis_value(7) == "7"
+    assert _format_quantity_axis_value(7.4) == "7"
+    assert _format_quantity_axis_value(35_004_000) == "35.004M"
 
 
 def test_render_report_table_pngs_captures_only_tables(monkeypatch, tmp_path: Path):
