@@ -12,7 +12,9 @@ Create a virtual environment and install the dependencies:
 
 ```bash
 python -m venv .venv
-.venv\Scripts\pip install -e .
+.venv\Scripts\pip install -e .   # Windows
+# or
+.venv/bin/pip install -e .      # Linux/macOS
 ```
 
 Generate a report from the included sample data:
@@ -260,7 +262,9 @@ More detail is available in:
 Run the test suite with the existing virtual environment:
 
 ```bash
-.venv\Scripts\pytest
+.venv\Scripts\pytest      # Windows
+# or
+.venv/bin/pytest          # Linux/macOS
 ```
 
 Only `market_store.py` accesses SQLite, only `api_client.py` performs HTTP requests, and only `warera_api.py` knows WarEra market endpoint names and payload shapes. Keep new work within those boundaries.

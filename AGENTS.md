@@ -7,13 +7,17 @@ Use the existing project virtual environment at `.venv` when it is present. Do n
 Preferred test command:
 
 ```bash
-.venv\Scripts\pytest
+.venv\Scripts\pytest      # Windows
+# or
+.venv/bin/pytest          # Linux/macOS
 ```
 
 For a focused test file:
 
 ```bash
-.venv\Scripts\pytest tests/test_market_store.py
+.venv\Scripts\pytest tests/test_market_store.py      # Windows
+# or
+.venv/bin/pytest tests/test_market_store.py          # Linux/macOS
 ```
 
 If `.venv` is missing, follow the setup instructions in `README.md`.
