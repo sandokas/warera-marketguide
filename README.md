@@ -11,14 +11,14 @@ Live data is normalized at the API boundary and stored in SQLite. Reports and ch
 Create a virtual environment and install the dependencies:
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
+python -m venv .venv
+.venv\Scripts\pip install -e .
 ```
 
 Generate a report from the included sample data:
 
 ```bash
-PYTHONPATH=src .venv/bin/python run_report.py --csv ./data/sample_market.csv --output output
+warera-marketguide --csv ./data/sample_market.csv --output output
 ```
 
 Generated files:
@@ -48,13 +48,13 @@ still be collected for compatibility or diagnostics, but it is lagging data and 
 market analysis or trading signals:
 
 ```bash
-PYTHONPATH=src .venv/bin/python run_report.py --live --output output
+warera-marketguide --live --output output
 ```
 
 The default database is `data/warera_market.sqlite3`, the report lookback is 7 days, and sync requests the API maximum of 100 order-book entries per side. Requests are spaced at least 1 second apart. Override those values when needed:
 
 ```bash
-PYTHONPATH=src .venv/bin/python run_report.py \
+warera-marketguide \
   --live \
   --market-db data/warera_market.sqlite3 \
   --lookback-days 30 \
@@ -68,7 +68,7 @@ On incremental runs, transaction pagination stops at stored transactions or the 
 Use an explicit backfill to ignore high-water marks and stop at the lookback boundary:
 
 ```bash
-PYTHONPATH=src .venv/bin/python run_report.py \
+warera-marketguide \
   --sync \
   --transaction-backfill \
   --lookback-days 30
@@ -88,7 +88,7 @@ Housekeeping is an independent operation: it never runs as part of a live sync. 
 whenever desired, or schedule this command separately:
 
 ```bash
-PYTHONPATH=src .venv/bin/python run_report.py --housekeeping
+warera-marketguide --housekeeping
 ```
 
 The routine prunes expired transactions, price observations, and order-book observations. The
@@ -116,7 +116,7 @@ cannot be recovered unless the database was backed up separately.
 Generate a report without making API calls:
 
 ```bash
-PYTHONPATH=src .venv/bin/python run_report.py \
+warera-marketguide \
   --from-db \
   --market-db data/warera_market.sqlite3 \
   --lookback-days 7 \
@@ -144,7 +144,7 @@ for PP fields.
 Charts are currently available during a live report run:
 
 ```bash
-PYTHONPATH=src .venv/bin/python run_report.py \
+warera-marketguide \
   --live \
   --charts \
   --chart-interval 15min \
@@ -161,7 +161,7 @@ continues to control sync/backfill and existing chart behavior, not those report
 Export every chart-capable item without adding the extra charts to the report:
 
 ```bash
-PYTHONPATH=src .venv/bin/python run_report.py --from-db --charts \
+warera-marketguide --from-db --charts \
   --all-price-action-charts --output output
 ```
 
@@ -172,7 +172,7 @@ price-action charts.
 Export the report header, every Item Price Context card, and every table as standalone PNGs:
 
 ```bash
-PYTHONPATH=src .venv/bin/python run_report.py --table-pngs --output output
+warera-marketguide --table-pngs --output output
 ```
 
 The hero and rendered highlight cards are written to `output/sections/report-header.png`; when no
@@ -206,7 +206,7 @@ item_name,bid,ask,trades_7d,high_7d,low_7d
 `--api-endpoint` supports non-market JSON records through the generic API client:
 
 ```bash
-PYTHONPATH=src .venv/bin/python run_report.py \
+warera-marketguide \
   --api-endpoint /your/custom/endpoint \
   --api-records-path result.data.items \
   --api-param limit=100 \
@@ -215,7 +215,7 @@ PYTHONPATH=src .venv/bin/python run_report.py \
 
 `--api-param` may be repeated. This compatibility path does not sync data into the market database.
 
-Run `PYTHONPATH=src .venv/bin/python run_report.py --help` for the complete option list.
+Run `warera-marketguide --help` for the complete option list.
 
 ## Product and market semantics
 
@@ -260,7 +260,7 @@ More detail is available in:
 Run the test suite with the existing virtual environment:
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m pytest
+.venv\Scripts\pytest
 ```
 
 Only `market_store.py` accesses SQLite, only `api_client.py` performs HTTP requests, and only `warera_api.py` knows WarEra market endpoint names and payload shapes. Keep new work within those boundaries.

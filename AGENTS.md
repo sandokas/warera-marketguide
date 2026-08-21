@@ -7,13 +7,13 @@ Use the existing project virtual environment at `.venv` when it is present. Do n
 Preferred test command:
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m pytest
+.venv\Scripts\pytest
 ```
 
 For a focused test file:
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m pytest tests/test_market_store.py
+.venv\Scripts\pytest tests/test_market_store.py
 ```
 
 If `.venv` is missing, follow the setup instructions in `README.md`.

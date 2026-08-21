@@ -5,3 +5,6 @@ __pycache__/
 data/*.sqlite3
 output/*
 !output/.gitkeep
+*.egg-info/
+dist/
+build/
