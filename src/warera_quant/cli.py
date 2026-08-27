@@ -5,6 +5,7 @@ import math
 from pathlib import Path
 
 import pandas as pd
+from dotenv import load_dotenv
 
 from .api_client import WarEraApiClient
 from .charts import (
@@ -196,6 +197,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    load_dotenv()
     args = build_parser().parse_args()
     output_dir = Path(args.output)
     data_sync_metadata = None

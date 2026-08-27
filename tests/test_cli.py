@@ -10,6 +10,11 @@ from warera_quant.cli import build_parser, main
 from warera_quant.market_store import MarketStore
 
 
+@pytest.fixture(autouse=True)
+def prevent_tests_from_loading_local_dotenv(monkeypatch):
+    monkeypatch.setattr(cli_module, "load_dotenv", lambda: False)
+
+
 def test_order_book_sync_defaults_to_api_maximum():
     args = build_parser().parse_args([])
     assert args.order_limit == 100

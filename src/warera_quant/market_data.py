@@ -859,6 +859,8 @@ def _weighted_average(values: list[tuple[float, float]], *, fallback: float | No
 def _number_or_none(value: object) -> float | None:
     if value is None:
         return None
+    if not isinstance(value, (str, int, float)):
+        return None
     try:
         return float(value)
     except (TypeError, ValueError):

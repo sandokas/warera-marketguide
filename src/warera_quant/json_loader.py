@@ -61,7 +61,7 @@ def _find_records(data: Any) -> list[Mapping[str, Any]]:
 def market_json_to_dataframe(data: Any, *, records_path: str | None = None) -> pd.DataFrame:
     source = _dig(data, records_path) if records_path else data
     records = _find_records(source)
-    df = pd.json_normalize(records, sep="_")
+    df = pd.json_normalize([dict(record) for record in records], sep="_")
     df.columns = [_normalize_column(column) for column in df.columns]
 
     for canonical, aliases in FIELD_ALIASES.items():

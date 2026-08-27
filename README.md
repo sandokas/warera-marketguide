@@ -188,8 +188,9 @@ price-range rail as the accessible HTML card.
 The table images are written to `output/tables/` in the same order as the HTML report. Each PNG captures
 only its browser-rendered table—without the section heading, description, or surrounding whitespace—
 while preserving the dark theme, signal colors, badges, depth graphics, and other HTML styling. The
-exporter uses Google Chrome or Chromium from `PATH`; set `WARERA_CHROME_PATH` if the browser
-executable is installed elsewhere.
+exporter uses Google Chrome or Chromium from `PATH`. If the browser executable is installed
+elsewhere, uncomment `WARERA_CHROME_PATH` in `.env` and set it to the full executable path. A
+ready-to-uncomment Windows example is included in `.env.example`.
 
 ## Other input modes
 
