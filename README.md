@@ -141,6 +141,55 @@ Item rows must not be summed because ingredient and processed-item trades can ov
 Items without a defined factory chain still rank by Completed Value and show `N/A` only
 for PP fields.
 
+## Historical inflation tracker
+
+DB-backed reports calculate fixed-vintage price indices from completed transactions. The tracker
+publishes broad-market, industrial-expansion, standard and premium combat, governance,
+infrastructure-operation, crafted-equipment-input, and Base PP views. The finished-equipment index
+remains disabled until authoritative market item mappings exist.
+
+The Base PP index uses **total upstream pre-bonus PP**: direct production effort plus the effort
+embodied in consumed materials. It does not infer player or other production bonuses. Because raw
+materials and processed goods may both trade, its weights describe market exposure to embodied PP;
+they are not a total of economy-wide PP production.
+
+The initial stable vintage is configured in `marketguide.toml`:
+
+```toml
+[inflation]
+enabled = true
+base_period_start = 2026-08-01
+version = "2026-08-01-v1"
+price_window_days = 7
+min_base_trade_count = 1
+min_base_traded_quantity = 0.000000000001
+```
+
+Changing the base date or weighting policy should create a new version rather than silently
+rewriting the meaning of an existing index. Inflation does not use `--lookback-days`. If
+housekeeping removes the configured base transactions, the fixed vintage becomes unavailable;
+increasing retention later cannot recreate deleted history.
+
+Each DB-backed report writes the detailed audit data to `market_inflation.csv` and one combined
+`output/charts/inflation/inflation-overview.png`. The chart shows accumulated Broad Market inflation
+over the displayed month, with its final point matching the 30D headline. This report asset does not require `--charts`,
+which continues to control item price-action charts. The HTML presents one current broad-market
+inflation/deflation signal, its inverse effect on BTC purchasing power, and an evidence-history label.
+Detailed weights, coverage, exclusions, and
+period comparisons remain in CSV instead of becoming report tables. Missing history is reported as
+unavailable rather than filled from quotes or order books.
+
+The report run also exports exact current action benchmarks in `market_action_costs.csv`:
+moving one company and hourly operation of MU HQ levels 1-4. They reuse the inflation tracker's
+trailing representative completed-trade prices and
+do not replace the market-weighted broad indices. Their quantities and provenance are shown in the
+output.
+
+Structural events may be configured with repeated `[[inflation.events]]` entries. Only sourced,
+dated events marked `live` in `production` can annotate charts. Oil-backed player movement is
+currently recorded as planned development behavior and therefore creates no production annotation
+or new index vintage.
+
 ## Charts
 
 Charts are currently available during a live report run:
@@ -188,7 +237,8 @@ price-range rail as the accessible HTML card.
 The table images are written to `output/tables/` in the same order as the HTML report. Each PNG captures
 only its browser-rendered table—without the section heading, description, or surrounding whitespace—
 while preserving the dark theme, signal colors, badges, depth graphics, and other HTML styling. The
-exporter uses Google Chrome or Chromium from `PATH`. If the browser executable is installed
+exporter uses Google Chrome, Chromium, or Microsoft Edge from `PATH` or standard Windows install
+locations. If the browser executable is installed
 elsewhere, uncomment `WARERA_CHROME_PATH` in `.env` and set it to the full executable path. A
 ready-to-uncomment Windows example is included in `.env.example`.
 

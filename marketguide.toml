@@ -7,3 +7,32 @@ retention_days = 45
 # Rebuild the database at most this often when housekeeping finds deleted pages.
 # SQLite reuses deleted pages between rebuilds. Set to 0 to disable compaction.
 vacuum_interval_days = 30
+
+# Inflation settings define a stable historical index vintage. Changing the
+# base date or weights should use a new version instead of rewriting history.
+[inflation]
+enabled = true
+base_period_start = 2026-08-01
+version = "2026-08-01-v1"
+price_window_days = 7
+min_base_trade_count = 1
+min_base_traded_quantity = 0.000000000001
+
+# Development-server observation only. This is intentionally planned/dev and
+# has no effective_at: it must not annotate or rebase production history.
+# The linked WarEra-hosted article summarizes and links the v0.26 dev newsletter;
+# development-server behavior may still change before a production release.
+[[inflation.events]]
+event_id = "oil-player-movement-dev"
+label = "Oil may become a player-movement input"
+status = "planned"
+environment = "dev"
+affected_index_keys = ["infrastructure_operation", "broad_market"]
+source_url = "https://warera.io/en/articles/warera-v0-26-by-the-numbers-deep-dive-into-the-world-gets-real-7fd28d"
+source_published_at = 2026-08-10T00:00:00Z
+details = "Development-version movement behavior; no production effective date or final oil formula is known."
+
+# Base PP indices use total upstream, pre-bonus PP so material production costs
+# are included. Player and other production bonuses remain intentionally unknown.
+# Historical availability depends on retained completed trades; housekeeping
+# cannot reconstruct inflation periods after their source data has been pruned.

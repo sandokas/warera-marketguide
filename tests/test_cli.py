@@ -47,6 +47,12 @@ def test_from_db_preserves_structured_order_book_for_report(monkeypatch, tmp_pat
                 status="complete",
             )
 
+        def item_codes(self):
+            return []
+
+        def transactions_for_period(self, _item_codes, _start_epoch, _end_epoch):
+            return []
+
     captured = {}
     book = {"best_bid": 9, "best_ask": 10, "bids": [], "asks": []}
     monkeypatch.setattr(cli_module, "MarketStore", DummyStore)

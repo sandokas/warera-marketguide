@@ -95,7 +95,7 @@ def test_render_report_table_pngs_captures_only_tables(monkeypatch, tmp_path: Pa
 
     class FakeSection:
         def locator(self, selector):
-            if selector == "h2":
+            if selector == "h2, h3":
                 return SimpleNamespace(first=SimpleNamespace(text_content=lambda: "Prices & Signals"))
             assert selector == "table.report-table"
             return SimpleNamespace(first=FakeTable())
@@ -151,6 +151,20 @@ def test_render_report_table_pngs_captures_only_tables(monkeypatch, tmp_path: Pa
     assert outputs == [tmp_path / "tables" / "01-prices-and-signals.png"]
     assert outputs[0].read_bytes() == b"png"
     assert screenshots == [{"path": str(outputs[0]), "animations": "disabled"}]
+
+
+def test_browser_discovery_accepts_windows_edge_installation(monkeypatch, tmp_path: Path):
+    from warera_quant.charts import _chrome_executable
+
+    edge = tmp_path / "Microsoft" / "Edge" / "Application" / "msedge.exe"
+    edge.parent.mkdir(parents=True)
+    edge.write_bytes(b"browser")
+    monkeypatch.setattr("warera_quant.charts.shutil.which", lambda _name: None)
+    monkeypatch.setenv("PROGRAMFILES(X86)", str(tmp_path))
+    monkeypatch.delenv("PROGRAMFILES", raising=False)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+
+    assert _chrome_executable() == str(edge)
 
 
 def test_render_report_header_png_uses_explicit_target_and_hides_charts(monkeypatch, tmp_path: Path):

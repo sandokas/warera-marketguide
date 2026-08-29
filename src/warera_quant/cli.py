@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import math
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -9,15 +10,22 @@ from dotenv import load_dotenv
 
 from .api_client import WarEraApiClient
 from .charts import (
+    render_inflation_overview_chart,
     render_highlight_price_action_chart,
     render_report_header_png,
     render_report_item_context_pngs,
     render_report_table_pngs,
 )
-from .config import ConfigError, load_config
+from .config import ConfigError, load_config, production_inflation_chart_events
 from .csv_loader import load_market_csv
 from .json_loader import market_json_to_dataframe
-from .market_data import load_highlight_trade_history, load_market_rows, opportunity_fields
+from .market_data import (
+    build_inflation_index_results,
+    build_action_cost_results,
+    load_highlight_trade_history,
+    load_market_rows,
+    opportunity_fields,
+)
 from .market_store import MarketStore
 from .metrics import (
     FlipAssumptions,
@@ -43,6 +51,37 @@ def _parse_param(value: str) -> tuple[str, str]:
     if not key:
         raise argparse.ArgumentTypeError("API param key cannot be empty.")
     return key, param_value
+
+
+def _current_complete_utc_midnight(now: datetime | None = None) -> datetime:
+    """Return the end boundary of the latest complete UTC calendar day."""
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        raise ValueError("now must be timezone-aware.")
+    return current.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _build_configured_inflation_results(store, inflation_config, *, quiet: bool):
+    if not inflation_config.enabled:
+        return None
+    base_start = inflation_config.base_period_start
+    base_end = base_start + timedelta(days=inflation_config.price_window_days)
+    last_as_of = _current_complete_utc_midnight()
+    if last_as_of < base_end:
+        if not quiet:
+            print("Skipped inflation: the configured base period is not complete yet.", flush=True)
+        return None
+    return build_inflation_index_results(
+        store,
+        base_period_start=base_start,
+        base_period_end=base_end,
+        first_as_of=last_as_of - timedelta(days=30),
+        last_as_of=last_as_of,
+        version=inflation_config.version,
+        price_window_days=inflation_config.price_window_days,
+        min_base_trade_count=inflation_config.min_base_trade_count,
+        min_base_traded_quantity=inflation_config.min_base_traded_quantity,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -201,6 +240,8 @@ def main() -> None:
     args = build_parser().parse_args()
     output_dir = Path(args.output)
     data_sync_metadata = None
+    inflation_results = None
+    action_cost_results = None
     try:
         config = load_config(args.config)
     except ConfigError as exc:
@@ -294,6 +335,10 @@ def main() -> None:
                 flip_assumptions=assumptions,
             )
             data_sync_metadata = store.market_sync_metadata()
+            if args.live and not args.sync:
+                inflation_results = _build_configured_inflation_results(
+                    store, config.inflation, quiet=args.quiet,
+                )
         if not args.quiet:
             print(
                 f"Synced {sync_result.prices_observed} price(s), "
@@ -322,6 +367,9 @@ def main() -> None:
                 flip_assumptions=assumptions,
             )
             data_sync_metadata = store.market_sync_metadata()
+            inflation_results = _build_configured_inflation_results(
+                store, config.inflation, quiet=args.quiet,
+            )
         df_in = pd.DataFrame(rows)
     elif args.api_endpoint:
         client = WarEraApiClient(min_interval_seconds=args.min_interval)
@@ -465,6 +513,32 @@ def main() -> None:
                             print(f"Wrote all-item chart to {rendered}")
             if not args.quiet:
                 print(f"Wrote {rendered_count} all-item price-action chart(s).")
+    inflation_chart_paths: dict[str, Path] = {}
+    if inflation_results:
+        action_cost_results = build_action_cost_results(inflation_results)
+        headline_results = tuple(
+            result for result in inflation_results
+            if result.definition.enabled and result.definition.key == "broad_market"
+            and any(observation.level is not None for observation in result.observations)
+        )
+        if headline_results:
+            output_path = output_dir / "charts" / "inflation" / "inflation-overview.png"
+            try:
+                events = []
+                events.extend(production_inflation_chart_events(
+                    config.inflation.events, index_key="broad_market",
+                ))
+                events = list({(event["at"], event["label"]): event for event in events}.values())
+                rendered = render_inflation_overview_chart(
+                    headline_results, output_path, events=events,
+                )
+            except Exception as exc:
+                if not args.quiet:
+                    print(f"Skipped inflation overview chart: {exc}", flush=True)
+            else:
+                inflation_chart_paths["overview"] = rendered
+                if not args.quiet:
+                    print(f"Wrote inflation chart to {rendered}", flush=True)
     csv_path, report_path = write_outputs(
         df_out,
         output_dir,
@@ -475,8 +549,15 @@ def main() -> None:
         assumptions=assumptions,
         data_synced_at=data_sync_metadata.synced_at if data_sync_metadata else None,
         data_sync_status=data_sync_metadata.status if data_sync_metadata else None,
+        inflation_results=inflation_results,
+        inflation_chart_paths=inflation_chart_paths,
+        action_cost_results=action_cost_results,
     )
     print(f"Wrote {csv_path}")
+    if inflation_results is not None:
+        print(f"Wrote {output_dir / 'market_inflation.csv'}")
+    if action_cost_results:
+        print(f"Wrote {output_dir / 'market_action_costs.csv'}")
     print(f"Wrote {report_path}")
     if args.table_pngs:
         header_path = render_report_header_png(report_path, output_dir / "sections")

@@ -441,6 +441,36 @@ class MarketStore:
         ).fetchall()
         return [_dict_from_row(row) for row in rows]
 
+    def transactions_for_period(
+        self,
+        item_codes: list[str] | tuple[str, ...],
+        start_epoch: int,
+        end_epoch: int,
+    ) -> list[dict[str, Any]]:
+        """Return chronological transaction facts in ``[start_epoch, end_epoch)``.
+
+        This bounded, multi-item read supports historical calculations without
+        embedding database access or one-query-per-item loops in the read-model
+        layer.
+        """
+        codes = tuple(dict.fromkeys(str(code).strip() for code in item_codes if str(code).strip()))
+        if not codes or end_epoch <= start_epoch:
+            return []
+        placeholders = ", ".join("?" for _ in codes)
+        rows = self._connect().execute(
+            f"""
+            select id, item_code, transaction_type, created_at, created_at_epoch,
+                   money, quantity, unit_price, fetched_at
+            from transactions
+            where item_code in ({placeholders})
+              and created_at_epoch >= ?
+              and created_at_epoch < ?
+            order by item_code asc, created_at_epoch asc, id asc
+            """,
+            (*codes, start_epoch, end_epoch),
+        ).fetchall()
+        return [_dict_from_row(row) for row in rows]
+
     def price_observations_for_window(self, item_code: str, since_epoch: int) -> list[dict[str, Any]]:
         rows = self._connect().execute(
             """

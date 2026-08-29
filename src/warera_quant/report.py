@@ -4,9 +4,12 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping, Sequence, TYPE_CHECKING
 
 import pandas as pd
+
+if TYPE_CHECKING:
+    from .market_data import ActionCostResult, InflationIndexResult
 
 from .charts import render_trend_path_svg
 from .metrics import (
@@ -48,7 +51,6 @@ _FORECAST_REASON_LABELS = {
 REPORT_WINDOWS = ("1D", "7D", "30D")
 PRIMARY_GUIDANCE_WINDOW = "7D"
 ACTIVITY_WINDOW = "7D"
-
 
 def combine_market_rows_with_metrics(source: pd.DataFrame, metrics: Iterable[MarketMetrics]) -> pd.DataFrame:
     df = source.reset_index(drop=True).copy()
@@ -648,6 +650,27 @@ def _html_page(title: str, body: str) -> str:
       border: 1px solid var(--line);
       border-radius: 8px;
     }}
+    figure.inflation-chart {{
+      width: 100%;
+      min-width: 0;
+      margin: 16px 0 0;
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }}
+    figure.inflation-chart img {{
+      display: block;
+      width: 100%;
+      max-width: 100%;
+      height: auto;
+      object-fit: contain;
+      border-radius: 6px;
+    }}
+    figure.inflation-chart figcaption {{
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 0.82rem;
+      line-height: 1.4;
+    }}
     .notes {{
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -787,6 +810,7 @@ def _html_page(title: str, body: str) -> str:
       tr, .note, .summary-card {{ break-inside: avoid; page-break-inside: avoid; }}
       .report-table {{ font-size: 8.5pt; }}
       .chart {{ max-height: 165mm; }}
+      figure.inflation-chart img {{ max-height: 150mm; object-fit: contain; }}
     }}
   </style>
 </head>
@@ -1601,6 +1625,206 @@ def _relative_chart_path(chart_path: str | Path | None, output_dir: Path) -> str
         return path.as_posix()
 
 
+def inflation_summary_html(
+    results: Sequence["InflationIndexResult"],
+    *,
+    chart_paths: Mapping[str, str | Path] | None = None,
+    output_dir: str | Path = ".",
+) -> str:
+    """Render one decision-oriented BTC purchasing-power summary and chart."""
+    enabled = [result for result in results if result.definition.enabled]
+    if not enabled:
+        return ""
+    charts = chart_paths or {}
+    broad = next(
+        (result for result in enabled if result.definition.key == "broad_market"), enabled[0]
+    )
+    primary = next(
+        (change for change in broad.changes if change.period_label.upper() == "30D"), None
+    )
+    change = primary.change_pct if primary is not None else None
+    purchasing_power = primary.purchasing_power_change_pct if primary is not None else None
+    horizon = primary.period_label if primary is not None else "current"
+    classification = primary.classification.lower() if primary is not None else "insufficient data"
+    if change is None:
+        tone, arrow = "info", "?"
+        regime = "Insufficient history"
+        message = "BTC purchasing-power direction is not available yet"
+    elif classification == "inflation":
+        tone, arrow = "down", "&#9650;"
+        regime = "Inflationary"
+        message = "BTC is losing purchasing power"
+    elif classification == "deflation":
+        tone, arrow = "up", "&#9660;"
+        regime = "Deflationary"
+        message = "BTC is gaining purchasing power"
+    else:
+        tone, arrow = "neutral", "&#9679;"
+        regime = "Broadly stable"
+        message = "BTC purchasing power is broadly stable"
+    dated = [observation.as_of for observation in broad.observations if observation.level is not None]
+    span_days = (max(dated) - min(dated)).days if len(dated) >= 2 else 0
+    if span_days >= 90:
+        evidence = "Strong historical context"
+    elif span_days >= 60:
+        evidence = "Established history"
+    elif span_days >= 30:
+        evidence = "Moderate history"
+    else:
+        evidence = "Early signal"
+    annualized = primary.annualized_change_pct if primary is not None else None
+    annualized_line = (
+        f'<span class="summary-detail">Annualized pace {_format_signed_pct(annualized)} '
+        '(if the latest monthly pace continued)</span>'
+        if annualized is not None else ""
+    )
+    card = (
+        f'<article class="summary-card summary-card-{tone}">'
+        f'<span>{escape(horizon)} market-price signal &middot; {escape(evidence)} ({span_days} days)</span>'
+        f'<strong><span class="summary-arrow" aria-hidden="true">{arrow}</span>{escape(message)}</strong>'
+        f'<span class="summary-value">{escape(regime)} &middot; prices {_format_signed_pct(change)}</span>'
+        f'<span class="summary-detail">BTC purchasing power {_format_signed_pct(purchasing_power)}</span>'
+        f'{annualized_line}</article>'
+    )
+    chart_path = _relative_chart_path(charts.get("overview"), Path(output_dir))
+    chart = (
+        '<figure class="panel inflation-chart">'
+        f'<img src="{escape(chart_path, quote=True)}" '
+        'alt="Accumulated Broad Market inflation over the last 30 days">'
+        '<figcaption>Signed percentage change over the latest 30 days; positive means BTC buys less.</figcaption>'
+        '</figure>'
+        if chart_path else ""
+    )
+    return (
+        '<div class="inflation-section"><h2>Historical Inflation</h2>'
+        '<p class="muted">The headline shows whether market prices are rising or falling in BTC. '
+        'It is decision context, not a deterministic buy or sell signal.</p>'
+        f'<div class="summary-grid inflation-summary-grid">{card}</div>{chart}</div>'
+    )
+
+
+def _format_signed_pct(value: float | None) -> str:
+    return "N/A" if value is None else f"{value:+.2f}%"
+
+
+def inflation_export_frame(results: Sequence["InflationIndexResult"]) -> pd.DataFrame:
+    """Return normalized index-observation/comparison rows without JSON fields."""
+    rows: list[dict[str, object]] = []
+    for result in results:
+        if not result.definition.enabled:
+            continue
+        changes_by_end: dict[datetime, list[object]] = {}
+        for change in result.changes:
+            changes_by_end.setdefault(change.end_at, []).append(change)
+        if not result.observations:
+            for label in ("7D", "30D", "90D"):
+                rows.append(_inflation_export_row(result, None, None, label=label))
+            continue
+        for observation in result.observations:
+            changes = changes_by_end.get(observation.as_of) or [None]
+            for change in changes:
+                rows.append(_inflation_export_row(result, observation, change))
+    return pd.DataFrame(rows, columns=[
+        "index_key", "index_name", "index_version", "base_period_start", "base_period_end",
+        "as_of", "is_provisional", "level", "coverage_pct", "eligible_component_count",
+        "priced_component_count", "period_label", "comparison_start_at", "change_pct",
+        "classification", "matched_coverage_pct", "purchasing_power_change_pct", "availability_status",
+    ])
+
+
+def _inflation_export_row(result: "InflationIndexResult", observation: object | None,
+                          change: object | None, *, label: str | None = None) -> dict[str, object]:
+    level = getattr(observation, "level", None)
+    change_pct = getattr(change, "change_pct", None)
+    if observation is None:
+        status = "definition_unavailable"
+    elif level is None:
+        status = "level_unavailable"
+    elif change is None or change_pct is None:
+        status = "comparison_unavailable"
+    else:
+        status = "available"
+    return {
+        "index_key": result.definition.key,
+        "index_name": result.definition.name,
+        "index_version": result.definition.version,
+        "base_period_start": result.definition.base_period_start.isoformat(),
+        "base_period_end": result.definition.base_period_end.isoformat(),
+        "as_of": getattr(observation, "as_of", None).isoformat() if observation else None,
+        "is_provisional": getattr(observation, "is_provisional", None),
+        "level": level,
+        "coverage_pct": getattr(observation, "coverage_pct", None),
+        "eligible_component_count": getattr(observation, "eligible_component_count", None),
+        "priced_component_count": getattr(observation, "priced_component_count", None),
+        "period_label": getattr(change, "period_label", None) or label,
+        "comparison_start_at": getattr(change, "start_at", None).isoformat() if change else None,
+        "change_pct": change_pct,
+        "classification": getattr(change, "classification", None) or "Insufficient data",
+        "matched_coverage_pct": getattr(change, "matched_coverage_pct", None),
+        "purchasing_power_change_pct": getattr(change, "purchasing_power_change_pct", None),
+        "availability_status": status,
+    }
+
+
+def write_inflation_csv(
+    results: Sequence["InflationIndexResult"], output_dir: str | Path
+) -> Path:
+    """Write the dedicated normalized inflation export."""
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / "market_inflation.csv"
+    inflation_export_frame(results).to_csv(path, index=False)
+    return path
+
+
+def action_cost_export_frame(results: Sequence["ActionCostResult"]) -> pd.DataFrame:
+    """Return one normalized CSV row per required action-cost component."""
+    rows: list[dict[str, object]] = []
+    for result in results:
+        definition = result.definition
+        components = {component.item_code: component for component in result.components}
+        missing = set(result.missing_item_codes)
+        for item_code, quantity in definition.quantities:
+            component = components.get(item_code)
+            rows.append({
+                "action_key": definition.key,
+                "action_name": definition.name,
+                "category": definition.category,
+                "action_description": definition.action_description,
+                "unit_description": definition.unit_description,
+                "total_cost": result.total_cost,
+                "coverage_pct": result.coverage_pct,
+                "required_component_count": result.required_component_count,
+                "priced_component_count": result.priced_component_count,
+                "availability_status": "available" if result.total_cost is not None else "unavailable",
+                "item_code": item_code,
+                "quantity": quantity,
+                "representative_price": getattr(component, "representative_price", None),
+                "component_cost": getattr(component, "cost", None),
+                "component_status": "missing" if item_code in missing or component is None else "available",
+                "source_url": definition.source_url,
+                "source_published_at": definition.source_published_at,
+                "provenance": definition.provenance,
+            })
+    return pd.DataFrame(rows, columns=[
+        "action_key", "action_name", "category", "action_description", "unit_description",
+        "total_cost", "coverage_pct", "required_component_count", "priced_component_count",
+        "availability_status", "item_code", "quantity", "representative_price",
+        "component_cost", "component_status", "source_url", "source_published_at", "provenance",
+    ])
+
+
+def write_action_costs_csv(
+    results: Sequence["ActionCostResult"], output_dir: str | Path
+) -> Path:
+    """Write the normalized current action-cost export."""
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / "market_action_costs.csv"
+    action_cost_export_frame(results).to_csv(path, index=False, float_format="%.15g")
+    return path
+
+
 def generate_html_report(
     df: pd.DataFrame,
     *,
@@ -1613,6 +1837,8 @@ def generate_html_report(
     assumptions: FlipAssumptions | None = None,
     data_synced_at: str | None = None,
     data_sync_status: str | None = None,
+    inflation_results: Sequence["InflationIndexResult"] | None = None,
+    inflation_chart_paths: Mapping[str, str | Path] | None = None,
 ) -> str:
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     sync_timestamp = _display_report_timestamp(data_synced_at)
@@ -1712,6 +1938,13 @@ def generate_html_report(
     </section>"""
         )
 
+    if inflation_results:
+        blocks.append(inflation_summary_html(
+            inflation_results,
+            chart_paths=inflation_chart_paths,
+            output_dir=output_dir,
+        ))
+
     note_rows = df.head(display_count).copy()
     if not note_rows.empty:
         notes: list[str] = []
@@ -1788,6 +2021,9 @@ def write_outputs(
     assumptions: FlipAssumptions | None = None,
     data_synced_at: str | None = None,
     data_sync_status: str | None = None,
+    inflation_results: Sequence["InflationIndexResult"] | None = None,
+    inflation_chart_paths: Mapping[str, str | Path] | None = None,
+    action_cost_results: Sequence["ActionCostResult"] | None = None,
 ) -> tuple[Path, Path]:
     assumptions = assumptions or FlipAssumptions()
     export_df = df.copy()
@@ -1822,6 +2058,10 @@ def write_outputs(
     html_path = out / "market_report.html"
     export_df.to_csv(trends_csv_path, index=False)
     export_df.to_csv(scores_csv_path, index=False)
+    if inflation_results is not None:
+        write_inflation_csv(inflation_results, out)
+    if action_cost_results:
+        write_action_costs_csv(action_cost_results, out)
     html_path.write_text(
         generate_html_report(
             export_df,
@@ -1834,6 +2074,8 @@ def write_outputs(
             assumptions=assumptions,
             data_synced_at=data_synced_at,
             data_sync_status=data_sync_status,
+            inflation_results=inflation_results,
+            inflation_chart_paths=inflation_chart_paths,
         ),
         encoding="utf-8",
     )

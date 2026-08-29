@@ -4,7 +4,7 @@ import math
 import re
 from dataclasses import dataclass, replace
 from functools import cmp_to_key
-from typing import Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 import pandas as pd
 
@@ -20,6 +20,313 @@ MEANINGFUL_PREMIUM = "meaningful_premium"
 MEANINGFUL_DISCOUNT = "meaningful_discount"
 WITHIN_NORMAL_RANGE = "within_normal_range"
 INSUFFICIENT_RANGE_EVIDENCE = "insufficient_evidence"
+
+DEFAULT_INFLATION_MINIMUM_COVERAGE_PCT = 80.0
+DEFAULT_INFLATION_NEUTRAL_BAND_PCT = 0.10
+
+
+@dataclass(frozen=True)
+class ActionCostComponent:
+    """Cost contribution from one priced component of a fixed gameplay action."""
+
+    item_code: str
+    quantity: float
+    representative_price: float
+    cost: float
+
+
+@dataclass(frozen=True)
+class FixedActionCost:
+    """Immutable result for pricing a fixed-quantity action basket."""
+
+    total_cost: float | None
+    coverage_pct: float
+    required_component_count: int
+    priced_component_count: int
+    missing_item_codes: tuple[str, ...]
+    components: tuple[ActionCostComponent, ...]
+
+
+def calculate_fixed_action_cost(
+    quantities: Mapping[str, object],
+    representative_prices: Mapping[str, object],
+) -> FixedActionCost:
+    """Price a fixed action using representative completed-transaction prices.
+
+    All declared quantities must be finite and positive. A missing, non-finite,
+    or non-positive representative price is reported as unavailable; it is never
+    replaced or treated as zero. The total is available only with full coverage.
+    """
+    normalized_quantities: list[tuple[str, float]] = []
+    for raw_code, raw_quantity in quantities.items():
+        code = str(raw_code).strip()
+        if not code:
+            raise ValueError("Action item codes must be non-empty.")
+        try:
+            quantity = float(raw_quantity)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Quantity for {code!r} must be finite and positive.") from exc
+        if not math.isfinite(quantity) or quantity <= 0:
+            raise ValueError(f"Quantity for {code!r} must be finite and positive.")
+        normalized_quantities.append((code, quantity))
+    if not normalized_quantities:
+        raise ValueError("At least one action quantity is required.")
+
+    components: list[ActionCostComponent] = []
+    missing: list[str] = []
+    for code, quantity in normalized_quantities:
+        price = _finite_float_or_none(representative_prices.get(code))
+        if price is None or price <= 0:
+            missing.append(code)
+            continue
+        components.append(ActionCostComponent(
+            item_code=code,
+            quantity=quantity,
+            representative_price=price,
+            cost=quantity * price,
+        ))
+    required_count = len(normalized_quantities)
+    coverage_pct = len(components) / required_count * 100
+    return FixedActionCost(
+        total_cost=sum(component.cost for component in components) if not missing else None,
+        coverage_pct=coverage_pct,
+        required_component_count=required_count,
+        priced_component_count=len(components),
+        missing_item_codes=tuple(missing),
+        components=tuple(components),
+    )
+
+
+@dataclass(frozen=True)
+class InflationIndexLevel:
+    """A fixed-weight price-index result with missing-price diagnostics."""
+
+    level: float | None
+    coverage_pct: float
+    eligible_component_count: int
+    priced_component_count: int
+    missing_item_codes: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class InflationContribution:
+    """One component's additive contribution to an index change."""
+
+    item_code: str
+    contribution_pct_points: float
+    price_change_pct: float
+    matched_weight: float
+
+
+@dataclass(frozen=True)
+class MatchedInflationChange:
+    """A change calculated only from components priced at both endpoints."""
+
+    change_pct: float | None
+    classification: str
+    matched_coverage_pct: float
+    purchasing_power_change_pct: float | None
+    matched_item_codes: tuple[str, ...]
+    missing_item_codes: tuple[str, ...]
+    contributors: tuple[InflationContribution, ...]
+
+
+def _positive_finite(value: object) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) and number > 0 else None
+
+
+def _trade_value(trade: object, field: str) -> object:
+    if isinstance(trade, Mapping):
+        return trade.get(field)
+    return getattr(trade, field, None)
+
+
+def quantity_weighted_median(trades: Sequence[object]) -> float | None:
+    """Return the first price whose cumulative valid quantity reaches 50%.
+
+    Each input may be a mapping or an object exposing ``unit_price`` and
+    ``quantity``. Invalid, non-positive, and non-finite values are ignored.
+    The input sequence and its records are never mutated.
+    """
+    quantities_by_price: dict[float, float] = {}
+    for trade in trades:
+        price = _positive_finite(_trade_value(trade, "unit_price"))
+        quantity = _positive_finite(_trade_value(trade, "quantity"))
+        if price is not None and quantity is not None:
+            quantities_by_price[price] = quantities_by_price.get(price, 0.0) + quantity
+    if not quantities_by_price:
+        return None
+
+    threshold = math.fsum(quantities_by_price.values()) / 2
+    cumulative = 0.0
+    for price in sorted(quantities_by_price):
+        cumulative += quantities_by_price[price]
+        if cumulative >= threshold:
+            return price
+    return None  # Defensive fallback for floating-point edge cases.
+
+
+def normalize_weights(raw_weights: Mapping[str, object]) -> dict[str, float]:
+    """Normalize positive finite component values; exclude invalid entries."""
+    valid = {
+        str(item_code): value
+        for item_code, raw_value in raw_weights.items()
+        if (value := _positive_finite(raw_value)) is not None
+    }
+    total = math.fsum(valid.values())
+    if total <= 0:
+        return {}
+    return {item_code: value / total for item_code, value in valid.items()}
+
+
+def traded_value_weights(base_traded_values: Mapping[str, object]) -> dict[str, float]:
+    """Construct fixed weights from eligible base-period traded values."""
+    return normalize_weights(base_traded_values)
+
+
+def base_pp_weights(
+    traded_quantities: Mapping[str, object],
+    total_upstream_pp: Mapping[str, object],
+) -> dict[str, float]:
+    """Construct weights from traded embodied pre-bonus PP.
+
+    ``total_upstream_pp`` includes the item's direct production requirement and
+    the pre-bonus production points embodied in its material inputs. Unknown
+    production bonuses are deliberately not inferred.
+    """
+    traded_pp: dict[str, float] = {}
+    for item_code, raw_quantity in traded_quantities.items():
+        quantity = _positive_finite(raw_quantity)
+        pp = _positive_finite(total_upstream_pp.get(item_code))
+        if quantity is not None and pp is not None:
+            traded_pp[str(item_code)] = quantity * pp
+    return normalize_weights(traded_pp)
+
+
+def _validated_weights(weights: Mapping[str, object]) -> dict[str, float]:
+    """Return normalized weights so all calculation paths enforce invariants."""
+    return normalize_weights(weights)
+
+
+def calculate_fixed_weight_index(
+    weights: Mapping[str, object],
+    base_prices: Mapping[str, object],
+    period_prices: Mapping[str, object],
+    *,
+    minimum_coverage_pct: float = DEFAULT_INFLATION_MINIMUM_COVERAGE_PCT,
+) -> InflationIndexLevel:
+    """Calculate a base-100 level, renormalizing available fixed weights."""
+    normalized = _validated_weights(weights)
+    threshold = float(minimum_coverage_pct)
+    if not math.isfinite(threshold) or not 0 <= threshold <= 100:
+        raise ValueError("minimum_coverage_pct must be finite and between 0 and 100.")
+
+    available: dict[str, tuple[float, float, float]] = {}
+    for item_code, weight in normalized.items():
+        base = _positive_finite(base_prices.get(item_code))
+        period = _positive_finite(period_prices.get(item_code))
+        if base is not None and period is not None:
+            available[item_code] = (weight, base, period)
+    available_weight = math.fsum(value[0] for value in available.values())
+    coverage_pct = available_weight * 100
+    missing = tuple(sorted(set(normalized) - set(available)))
+    level = None
+    if available_weight > 0 and coverage_pct + NUMERIC_COMPARISON_ABS_TOL >= threshold:
+        level = 100 * math.fsum(
+            weight * (period / base) for weight, base, period in available.values()
+        ) / available_weight
+    return InflationIndexLevel(
+        level=level,
+        coverage_pct=coverage_pct,
+        eligible_component_count=len(normalized),
+        priced_component_count=len(available),
+        missing_item_codes=missing,
+    )
+
+
+def classify_inflation(
+    change_pct: object,
+    *,
+    neutral_band_pct: float = DEFAULT_INFLATION_NEUTRAL_BAND_PCT,
+) -> str:
+    """Classify a percent change using an inclusive neutral band."""
+    change = _finite_float_or_none(change_pct)
+    band = float(neutral_band_pct)
+    if not math.isfinite(band) or band < 0:
+        raise ValueError("neutral_band_pct must be a finite non-negative number.")
+    if change is None:
+        return "Insufficient data"
+    if change > band:
+        return "Inflation"
+    if change < -band:
+        return "Deflation"
+    return "Stable"
+
+
+def purchasing_power_change(change_pct: object) -> float | None:
+    """Return the reciprocal purchasing-power change for a price change percent."""
+    change = _finite_float_or_none(change_pct)
+    if change is None:
+        return None
+    ratio = 1 + change / 100
+    return (1 / ratio - 1) * 100 if ratio > 0 else None
+
+
+def calculate_matched_index_change(
+    weights: Mapping[str, object],
+    start_prices: Mapping[str, object],
+    end_prices: Mapping[str, object],
+    *,
+    minimum_coverage_pct: float = DEFAULT_INFLATION_MINIMUM_COVERAGE_PCT,
+    neutral_band_pct: float = DEFAULT_INFLATION_NEUTRAL_BAND_PCT,
+) -> MatchedInflationChange:
+    """Calculate endpoint inflation using only components priced at both ends."""
+    normalized = _validated_weights(weights)
+    threshold = float(minimum_coverage_pct)
+    if not math.isfinite(threshold) or not 0 <= threshold <= 100:
+        raise ValueError("minimum_coverage_pct must be finite and between 0 and 100.")
+
+    matched: dict[str, tuple[float, float, float]] = {}
+    for item_code, weight in normalized.items():
+        start = _positive_finite(start_prices.get(item_code))
+        end = _positive_finite(end_prices.get(item_code))
+        if start is not None and end is not None:
+            matched[item_code] = (weight, start, end)
+    matched_weight_total = math.fsum(value[0] for value in matched.values())
+    coverage_pct = matched_weight_total * 100
+    matched_codes = tuple(sorted(matched))
+    missing_codes = tuple(sorted(set(normalized) - set(matched)))
+
+    change_pct = None
+    contributors: tuple[InflationContribution, ...] = ()
+    if matched_weight_total > 0 and coverage_pct + NUMERIC_COMPARISON_ABS_TOL >= threshold:
+        contribution_rows = []
+        for item_code in matched_codes:
+            weight, start, end = matched[item_code]
+            matched_weight = weight / matched_weight_total
+            price_change = (end / start - 1) * 100
+            contribution_rows.append(InflationContribution(
+                item_code=item_code,
+                contribution_pct_points=matched_weight * price_change,
+                price_change_pct=price_change,
+                matched_weight=matched_weight,
+            ))
+        contributors = tuple(contribution_rows)
+        change_pct = math.fsum(row.contribution_pct_points for row in contributors)
+
+    return MatchedInflationChange(
+        change_pct=change_pct,
+        classification=classify_inflation(change_pct, neutral_band_pct=neutral_band_pct),
+        matched_coverage_pct=coverage_pct,
+        purchasing_power_change_pct=purchasing_power_change(change_pct),
+        matched_item_codes=matched_codes,
+        missing_item_codes=missing_codes,
+        contributors=contributors,
+    )
 
 
 @dataclass(frozen=True)

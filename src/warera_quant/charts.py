@@ -18,6 +18,7 @@ logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
 
 import mplfinance as mpf
 import pandas as pd
+from matplotlib import pyplot as plt
 from matplotlib.ticker import FuncFormatter, MaxNLocator, MultipleLocator
 
 from .metrics import HighlightedItem
@@ -51,6 +52,93 @@ class ChartViewport:
     high_positions: tuple[int, ...]
     observed_low: float
     observed_high: float
+
+
+@dataclass(frozen=True)
+class InflationChartEvent:
+    """A caller-supplied structural event to annotate on an inflation chart."""
+
+    at: Any
+    label: str
+
+
+def render_inflation_overview_chart(
+    results: Iterable[Any],
+    output_path: str | Path,
+    *,
+    events: Iterable[InflationChartEvent | Mapping[str, Any]] = (),
+) -> Path:
+    """Render 30 days of cumulative Broad Market inflation."""
+    broad = next((
+        result for result in results
+        if result.definition.enabled and result.definition.key == "broad_market"
+    ), None)
+    if broad is None or not broad.monthly_evolution:
+        raise ValueError("An inflation overview chart requires Broad Market monthly evolution.")
+
+    style = _REPORT_CHART_COLORS
+    figure, axis = plt.subplots(figsize=(10.8, 5.4), constrained_layout=True)
+    figure.patch.set_facecolor(style["background"])
+    axis.set_facecolor(style["panel"])
+    rows = []
+    for point in broad.monthly_evolution:
+        timestamp = pd.Timestamp(point.as_of)
+        if timestamp.tzinfo is None:
+            plt.close(figure)
+            raise ValueError("Inflation evolution timestamps must be timezone-aware UTC values.")
+        rows.append((
+            timestamp.tz_convert("UTC").to_pydatetime(),
+            float("nan") if point.change_pct is None else float(point.change_pct),
+        ))
+    rows.sort(key=lambda row: row[0])
+    dates = [row[0] for row in rows]
+    changes = [row[1] for row in rows]
+    axis.plot(dates, changes, color=style["accent"], linewidth=2, label="Market prices")
+    finite = [(date, value) for date, value in rows if math.isfinite(value)]
+    if not finite:
+        plt.close(figure)
+        raise ValueError("Inflation overview has no publishable index levels.")
+    last_date, last_change = finite[-1]
+    axis.annotate(
+        f"{last_change:+.2f}%", xy=(last_date, last_change), xytext=(6, 0),
+        textcoords="offset points", color=style["accent"], fontsize=9, va="center",
+    )
+
+    axis.axhline(0.0, color=style["muted"], linestyle="--", linewidth=1, label="Start = 0%")
+    for event in events:
+        at = event.at if isinstance(event, InflationChartEvent) else event["at"]
+        label = event.label if isinstance(event, InflationChartEvent) else str(event["label"])
+        timestamp = pd.Timestamp(at)
+        if timestamp.tzinfo is None:
+            plt.close(figure)
+            raise ValueError("Inflation event timestamps must be timezone-aware UTC values.")
+        timestamp = timestamp.tz_convert("UTC").to_pydatetime()
+        axis.axvline(timestamp, color=style["muted"], linestyle=":", linewidth=1)
+        axis.annotate(
+            label, xy=(timestamp, 1), xycoords=("data", "axes fraction"), xytext=(4, -6),
+            textcoords="offset points", color=style["muted"], fontsize=8, rotation=90,
+            va="top", ha="left",
+        )
+
+    axis.set_title("Accumulated Inflation — Last 30 Days", color=style["text"], loc="left")
+    axis.set_xlabel("UTC date", color=style["text"])
+    axis.set_ylabel("Price change (%)", color=style["text"])
+    axis.grid(color=style["grid"], linestyle=":", alpha=0.8)
+    axis.tick_params(colors=style["muted"])
+    for spine in axis.spines.values():
+        spine.set_color(style["grid"])
+    legend = axis.legend(loc="best")
+    legend.get_frame().set_facecolor(style["panel"])
+    legend.get_frame().set_edgecolor(style["grid"])
+    for text_value in legend.get_texts():
+        text_value.set_color(style["text"])
+    figure.autofmt_xdate()
+
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(output, dpi=150, bbox_inches="tight", facecolor=style["background"])
+    plt.close(figure)
+    return output
 
 
 def _format_axis_number(value: float, *, decimals: int) -> str:
@@ -146,12 +234,23 @@ def _chrome_executable(explicit_path: str | Path | None = None) -> str:
             return str(executable)
         raise RuntimeError(f"Chrome executable does not exist: {executable}")
 
-    for name in ("google-chrome", "chromium", "chromium-browser"):
+    for name in ("google-chrome", "chromium", "chromium-browser", "msedge", "microsoft-edge"):
         executable = shutil.which(name)
         if executable:
             return executable
+    for root_name in ("PROGRAMFILES(X86)", "PROGRAMFILES", "LOCALAPPDATA"):
+        root = os.environ.get(root_name)
+        if not root:
+            continue
+        for relative in (
+            Path("Microsoft") / "Edge" / "Application" / "msedge.exe",
+            Path("Google") / "Chrome" / "Application" / "chrome.exe",
+        ):
+            executable = Path(root) / relative
+            if executable.is_file():
+                return str(executable)
     raise RuntimeError(
-        "Table PNG export requires Google Chrome or Chromium. "
+        "Table PNG export requires Google Chrome, Chromium, or Microsoft Edge. "
         "Set WARERA_CHROME_PATH if the browser is installed outside PATH."
     )
 
@@ -204,7 +303,7 @@ def render_report_table_pngs(
             sections = page.locator("section:has(table.report-table)")
             for index in range(sections.count()):
                 section = sections.nth(index)
-                heading = section.locator("h2").first.text_content() or "Report Table"
+                heading = section.locator("h2, h3").first.text_content() or "Report Table"
                 table = section.locator("table.report-table").first
                 output = destination / f"{index + 1:02d}-{_table_image_slug(heading)}.png"
                 table.screenshot(path=str(output), animations="disabled")

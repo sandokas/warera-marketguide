@@ -10,11 +10,14 @@ from typing import Any
 
 from .market_store import MarketStore
 from .metrics import (
+    DEFAULT_INFLATION_MINIMUM_COVERAGE_PCT,
     FORECAST_MODEL_VERSION,
     ForecastEvaluationRow,
     ForecastValidationResult,
     FairValueGuidance,
     FlipAssumptions,
+    InflationContribution,
+    ActionCostComponent,
     calculate_book_sweep,
     calculate_fair_value_guidance,
     calculate_direction_signal,
@@ -24,6 +27,13 @@ from .metrics import (
     classify_tendency,
     summarize_forecast_evaluations,
     summarize_order_book,
+    quantity_weighted_median,
+    base_pp_weights,
+    calculate_fixed_weight_index,
+    calculate_matched_index_change,
+    traded_value_weights,
+    total_upstream_production_points,
+    calculate_fixed_action_cost,
 )
 
 
@@ -31,6 +41,603 @@ SUPPORTED_REPORT_WINDOWS = ("1D", "7D", "30D", "90D", "1Y")
 DEFAULT_REPORT_WINDOWS = ("1D", "7D", "30D")
 HIGHLIGHT_HISTORY_DAYS = 30
 FORECAST_TRAILING_SECONDS = 7 * 24 * 60 * 60
+DEFAULT_INFLATION_MIN_BASE_TRADE_COUNT = 1
+DEFAULT_INFLATION_MIN_BASE_TRADED_QUANTITY = 1e-12
+
+
+@dataclass(frozen=True)
+class PeriodItemPrice:
+    """Completed-transaction price facts for one item and half-open UTC period."""
+
+    item_code: str
+    period_start: datetime
+    period_end: datetime
+    representative_price: float
+    trade_count: int
+    traded_quantity: float
+    traded_value: float
+    first_trade_at: datetime
+    last_trade_at: datetime
+    excluded_transaction_count: int = 0
+
+
+@dataclass(frozen=True)
+class HistoricalPeriodPrices:
+    """Coverage-ready prices at one historical UTC boundary."""
+
+    as_of: datetime
+    period_start: datetime
+    period_end: datetime
+    prices: tuple[PeriodItemPrice, ...]
+    requested_item_codes: tuple[str, ...]
+
+    @property
+    def priced_item_codes(self) -> tuple[str, ...]:
+        return tuple(price.item_code for price in self.prices)
+
+    @property
+    def missing_item_codes(self) -> tuple[str, ...]:
+        priced = set(self.priced_item_codes)
+        return tuple(code for code in self.requested_item_codes if code not in priced)
+
+
+@dataclass(frozen=True)
+class IndexDefinition:
+    key: str
+    name: str
+    description: str
+    version: str
+    effective_from: datetime
+    method: str
+    components: tuple[str, ...]
+    weight_source: str
+    base_period_start: datetime
+    base_period_end: datetime
+    minimum_coverage_pct: float = DEFAULT_INFLATION_MINIMUM_COVERAGE_PCT
+    price_window_days: int = 7
+    min_base_trade_count: int = DEFAULT_INFLATION_MIN_BASE_TRADE_COUNT
+    min_base_traded_quantity: float = DEFAULT_INFLATION_MIN_BASE_TRADED_QUANTITY
+    enabled: bool = True
+    disabled_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class IndexObservation:
+    index_key: str
+    index_version: str
+    as_of: datetime
+    is_provisional: bool
+    level: float | None
+    coverage_pct: float
+    eligible_component_count: int
+    priced_component_count: int
+    missing_item_codes: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class IndexChange:
+    index_key: str
+    index_version: str
+    period_label: str
+    start_at: datetime
+    end_at: datetime
+    change_pct: float | None
+    classification: str
+    matched_coverage_pct: float
+    purchasing_power_change_pct: float | None
+    contributors: tuple[InflationContribution, ...]
+    missing_item_codes: tuple[str, ...]
+    annualized_change_pct: float | None = None
+
+
+@dataclass(frozen=True)
+class InflationEvolutionPoint:
+    """Cumulative matched-basket price change from the displayed month's start."""
+
+    as_of: datetime
+    change_pct: float | None
+    matched_coverage_pct: float
+
+
+@dataclass(frozen=True)
+class InflationIndexResult:
+    definition: IndexDefinition
+    weights: tuple[tuple[str, float], ...]
+    base_prices: tuple[tuple[str, float], ...]
+    observations: tuple[IndexObservation, ...]
+    changes: tuple[IndexChange, ...]
+    exclusions: tuple["IndexComponentExclusion", ...] = ()
+    current_prices: tuple[tuple[str, float], ...] = ()
+    monthly_evolution: tuple[InflationEvolutionPoint, ...] = ()
+
+
+@dataclass(frozen=True)
+class IndexComponentExclusion:
+    item_code: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class ActionCostDefinition:
+    """Sourced fixed quantities for one concrete gameplay action."""
+
+    key: str
+    name: str
+    category: str
+    action_description: str
+    unit_description: str
+    quantities: tuple[tuple[str, float], ...]
+    source_url: str
+    source_published_at: str
+    provenance: str
+
+
+@dataclass(frozen=True)
+class ActionCostResult:
+    """Current completed-market cost of one fixed gameplay action."""
+
+    definition: ActionCostDefinition
+    total_cost: float | None
+    coverage_pct: float
+    required_component_count: int
+    priced_component_count: int
+    missing_item_codes: tuple[str, ...]
+    components: tuple[ActionCostComponent, ...]
+
+
+_ACTION_COST_SOURCE_URL = "https://warera.io/en/articles/warera-complete-game-guide-so-far-6c68c4"
+_ACTION_COST_SOURCE_PUBLISHED_AT = "2026-06-18"
+_ACTION_COST_PROVENANCE = "WarEra-hosted community guide, checked 2026-08-28"
+
+
+def default_action_cost_definitions() -> tuple[ActionCostDefinition, ...]:
+    """Return only fixed action quantities stated exactly by the cited source."""
+    source = dict(
+        source_url=_ACTION_COST_SOURCE_URL,
+        source_published_at=_ACTION_COST_SOURCE_PUBLISHED_AT,
+        provenance=_ACTION_COST_PROVENANCE,
+    )
+    definitions = [ActionCostDefinition(
+        key="company_move",
+        name="Move a company",
+        category="Industrial expansion",
+        action_description="Move one company to another location.",
+        unit_description="one company move",
+        quantities=(("concrete", 5.0),),
+        **source,
+    )]
+    definitions.extend(ActionCostDefinition(
+        key=f"mu_hq_level_{level}_hourly_upkeep",
+        name=f"MU HQ level {level} hourly upkeep",
+        category="Infrastructure operation",
+        action_description=f"Keep one level {level} military-unit headquarters operating for one hour.",
+        unit_description="one hour of MU HQ operation",
+        quantities=(("oil", float(oil)),),
+        **source,
+    ) for level, oil in enumerate((1, 2, 5, 10), start=1))
+    return tuple(definitions)
+
+
+def build_action_cost_results(
+    inflation_results: Iterable[InflationIndexResult],
+    *,
+    definitions: Iterable[ActionCostDefinition] | None = None,
+) -> tuple[ActionCostResult, ...]:
+    """Price benchmarks from representative prices already loaded for inflation."""
+    current_prices: dict[str, float] = {}
+    for inflation_result in inflation_results:
+        for item_code, price in inflation_result.current_prices:
+            existing = current_prices.get(item_code)
+            if existing is not None and not math.isclose(existing, price, rel_tol=1e-12, abs_tol=1e-12):
+                raise ValueError(f"Conflicting current representative prices for {item_code}.")
+            current_prices[item_code] = price
+
+    benchmark_definitions = (
+        default_action_cost_definitions() if definitions is None else tuple(definitions)
+    )
+    results: list[ActionCostResult] = []
+    for definition in benchmark_definitions:
+        calculated = calculate_fixed_action_cost(dict(definition.quantities), current_prices)
+        results.append(ActionCostResult(
+            definition=definition,
+            total_cost=calculated.total_cost,
+            coverage_pct=calculated.coverage_pct,
+            required_component_count=calculated.required_component_count,
+            priced_component_count=calculated.priced_component_count,
+            missing_item_codes=calculated.missing_item_codes,
+            components=calculated.components,
+        ))
+    return tuple(results)
+
+
+_PURPOSE_INDEXES = (
+    ("industrial_expansion", "Industrial Expansion Index", "Industrial building, moving, and upgrade price pressure.", ("steel", "concrete")),
+    ("standard_combat", "Standard Combat Index", "Routine war-consumption price pressure.", ("steak", "lightAmmo")),
+    ("premium_combat", "Premium Combat Index", "Wealthier war-consumption price pressure.", ("cookedFish", "ammo", "heavyAmmo")),
+    ("governance", "Governance and Battle Administration Index", "Pact, law, and battle-order price pressure.", ("paper",)),
+    ("infrastructure_operation", "Infrastructure Operation Index", "Bonus-building operating price pressure.", ("oil",)),
+    ("equipment_inputs", "Crafted Equipment Input Index", "Steel and scrap material-price pressure on crafting.", ("steel", "scraps")),
+)
+
+
+def default_inflation_index_definitions(
+    *, base_period_start: datetime, base_period_end: datetime, version: str = "1",
+    price_window_days: int = 7,
+    min_base_trade_count: int = DEFAULT_INFLATION_MIN_BASE_TRADE_COUNT,
+    min_base_traded_quantity: float = DEFAULT_INFLATION_MIN_BASE_TRADED_QUANTITY,
+) -> tuple[IndexDefinition, ...]:
+    start = _require_utc_day_boundary(base_period_start, "base_period_start")
+    end = _require_utc_day_boundary(base_period_end, "base_period_end")
+    if price_window_days < 1:
+        raise ValueError("price_window_days must be at least 1.")
+    if end - start != timedelta(days=price_window_days):
+        raise ValueError("Base period duration must equal price_window_days.")
+    if min_base_trade_count < 1:
+        raise ValueError("min_base_trade_count must be at least 1.")
+    if not math.isfinite(min_base_traded_quantity) or min_base_traded_quantity <= 0:
+        raise ValueError("min_base_traded_quantity must be finite and positive.")
+    liquidity = dict(
+        min_base_trade_count=min_base_trade_count,
+        min_base_traded_quantity=float(min_base_traded_quantity),
+        price_window_days=price_window_days,
+    )
+    definitions = [IndexDefinition(
+        key="broad_market", name="Broad Market Price Index",
+        description="General movement in eligible completed-trade prices.", version=version,
+        effective_from=end,
+        method="broad_value", components=(), weight_source="base_period_trade_value",
+        base_period_start=start, base_period_end=end,
+        **liquidity,
+    )]
+    definitions.extend(IndexDefinition(
+        key=key, name=name, description=description, version=version,
+        effective_from=end,
+        method="broad_value", components=components,
+        weight_source="base_period_trade_value", base_period_start=start, base_period_end=end,
+        **liquidity,
+    ) for key, name, description, components in _PURPOSE_INDEXES)
+    definitions.append(IndexDefinition(
+        key="base_pp", name="Total Upstream PP Inflation Index",
+        description="Market value of total upstream embodied production effort before bonuses.", version=version,
+        effective_from=end,
+        method="base_pp_value", components=(), weight_source="base_period_traded_total_upstream_pp",
+        base_period_start=start, base_period_end=end,
+        **liquidity,
+    ))
+    definitions.append(IndexDefinition(
+        key="market_equipment", name="Market Equipment Index",
+        description="Completed-market movement for eligible finished equipment.", version=version,
+        effective_from=end,
+        method="broad_value", components=(), weight_source="base_period_trade_value",
+        base_period_start=start, base_period_end=end, enabled=False,
+        disabled_reason="Validated finished-equipment item mappings are not yet available.",
+        **liquidity,
+    ))
+    return tuple(definitions)
+
+
+def build_inflation_index_results(
+    store: MarketStore,
+    *,
+    base_period_start: datetime,
+    base_period_end: datetime,
+    first_as_of: datetime,
+    last_as_of: datetime,
+    version: str = "1",
+    price_window_days: int = 7,
+    min_base_trade_count: int = DEFAULT_INFLATION_MIN_BASE_TRADE_COUNT,
+    min_base_traded_quantity: float = DEFAULT_INFLATION_MIN_BASE_TRADED_QUANTITY,
+) -> tuple[InflationIndexResult, ...]:
+    """Build reproducible Phase 1 histories and latest 7/30/90-day changes."""
+    definitions = default_inflation_index_definitions(
+        base_period_start=base_period_start, base_period_end=base_period_end, version=version,
+        price_window_days=price_window_days,
+        min_base_trade_count=min_base_trade_count,
+        min_base_traded_quantity=min_base_traded_quantity,
+    )
+    first = _require_utc_day_boundary(first_as_of, "first_as_of")
+    last = _require_utc_day_boundary(last_as_of, "last_as_of")
+    if last < first:
+        raise ValueError("last_as_of cannot be before first_as_of.")
+    all_codes = tuple(store.item_codes())
+    earliest = min(
+        definitions[0].base_period_start,
+        first - timedelta(days=definitions[0].price_window_days),
+    )
+    rows = store.transactions_for_period(all_codes, int(earliest.timestamp()), int(last.timestamp()))
+    row_index = _index_transaction_rows(rows)
+    all_base_inputs = _period_item_prices_from_index(
+        row_index, codes=all_codes, period_start=definitions[0].base_period_start,
+        period_end=definitions[0].base_period_end,
+    )
+    all_base_by_code = {price.item_code: price for price in all_base_inputs}
+    shared_series = _trailing_period_price_series_from_index(
+        row_index, codes=all_codes, first_as_of=first, last_as_of=last,
+        price_window_days=definitions[0].price_window_days,
+    ) if all_codes else ()
+    results: list[InflationIndexResult] = []
+    for definition in definitions:
+        if not definition.enabled:
+            results.append(InflationIndexResult(definition, (), (), (), (), (), ()))
+            continue
+        candidate_codes = definition.components or all_codes
+        base_inputs = tuple(
+            all_base_by_code[code] for code in candidate_codes if code in all_base_by_code
+        )
+        base_by_code = {price.item_code: price for price in base_inputs}
+        exclusions: list[IndexComponentExclusion] = []
+        liquid_inputs: list[PeriodItemPrice] = []
+        for code in candidate_codes:
+            price = base_by_code.get(code)
+            if price is None or price.trade_count < definition.min_base_trade_count:
+                exclusions.append(IndexComponentExclusion(code, "insufficient_base_trade_count"))
+            elif price.traded_quantity < definition.min_base_traded_quantity:
+                exclusions.append(IndexComponentExclusion(code, "insufficient_base_traded_quantity"))
+            else:
+                liquid_inputs.append(price)
+        if definition.key == "base_pp":
+            embodied_pp = {
+                price.item_code: total_upstream_production_points(item_code=price.item_code)
+                for price in liquid_inputs
+            }
+            for price in liquid_inputs:
+                if embodied_pp[price.item_code] is None:
+                    exclusions.append(IndexComponentExclusion(price.item_code, "missing_total_upstream_pp"))
+            weights = base_pp_weights(
+                {price.item_code: price.traded_quantity for price in liquid_inputs}, embodied_pp
+            )
+        else:
+            weights = traded_value_weights({price.item_code: price.traded_value for price in liquid_inputs})
+        base_prices = {
+            price.item_code: price.representative_price
+            for price in liquid_inputs if price.item_code in weights
+        }
+        component_codes = tuple(weights)
+        component_set = set(component_codes)
+        series = tuple(HistoricalPeriodPrices(
+            as_of=period.as_of, period_start=period.period_start, period_end=period.period_end,
+            prices=tuple(price for price in period.prices if price.item_code in component_set),
+            requested_item_codes=component_codes,
+        ) for period in shared_series) if component_codes else ()
+        prices_by_as_of: dict[datetime, dict[str, float]] = {}
+        observations: list[IndexObservation] = []
+        for period in series:
+            period_prices = {price.item_code: price.representative_price for price in period.prices}
+            prices_by_as_of[period.as_of] = period_prices
+            level = calculate_fixed_weight_index(
+                weights, base_prices, period_prices,
+                minimum_coverage_pct=definition.minimum_coverage_pct,
+            )
+            observations.append(IndexObservation(
+                index_key=definition.key, index_version=definition.version, as_of=period.as_of,
+                is_provisional=False, level=level.level, coverage_pct=level.coverage_pct,
+                eligible_component_count=level.eligible_component_count,
+                priced_component_count=level.priced_component_count,
+                missing_item_codes=level.missing_item_codes,
+            ))
+        end = last
+        changes: list[IndexChange] = []
+        for days in (7, 30, 90):
+            start = end - timedelta(days=days)
+            matched = calculate_matched_index_change(
+                weights, prices_by_as_of.get(start, {}), prices_by_as_of.get(end, {}),
+                minimum_coverage_pct=definition.minimum_coverage_pct,
+            )
+            changes.append(IndexChange(
+                index_key=definition.key, index_version=definition.version,
+                period_label=f"{days}D", start_at=start, end_at=end,
+                change_pct=matched.change_pct, classification=matched.classification,
+                matched_coverage_pct=matched.matched_coverage_pct,
+                purchasing_power_change_pct=matched.purchasing_power_change_pct,
+                contributors=matched.contributors, missing_item_codes=matched.missing_item_codes,
+                annualized_change_pct=(
+                    ((1.0 + matched.change_pct / 100.0) ** (365.0 / days) - 1.0) * 100.0
+                    if matched.change_pct is not None else None
+                ),
+            ))
+        month_start = last - timedelta(days=30)
+        month_start_prices = prices_by_as_of.get(month_start, {})
+        monthly_evolution = []
+        for as_of in sorted(date for date in prices_by_as_of if date >= month_start):
+            matched = calculate_matched_index_change(
+                weights, month_start_prices, prices_by_as_of[as_of],
+                minimum_coverage_pct=definition.minimum_coverage_pct,
+            )
+            monthly_evolution.append(InflationEvolutionPoint(
+                as_of=as_of, change_pct=matched.change_pct,
+                matched_coverage_pct=matched.matched_coverage_pct,
+            ))
+        results.append(InflationIndexResult(
+            definition=definition, weights=tuple(weights.items()), base_prices=tuple(base_prices.items()),
+            current_prices=tuple(prices_by_as_of.get(last, {}).items()),
+            observations=tuple(observations), changes=tuple(changes), exclusions=tuple(exclusions),
+            monthly_evolution=tuple(monthly_evolution),
+        ))
+    return tuple(results)
+
+
+def load_period_item_prices(
+    store: MarketStore,
+    *,
+    item_codes: Iterable[str],
+    period_start: datetime,
+    period_end: datetime,
+) -> tuple[PeriodItemPrice, ...]:
+    """Aggregate eligible completed transactions inside a half-open UTC period."""
+    start = _as_utc(period_start)
+    end = _as_utc(period_end)
+    if end <= start:
+        raise ValueError("period_end must be after period_start.")
+    codes = _normalized_item_codes(item_codes)
+    if not codes:
+        return ()
+    rows = store.transactions_for_period(codes, int(start.timestamp()), int(end.timestamp()))
+    return _period_item_prices_from_rows(rows, codes=codes, period_start=start, period_end=end)
+
+
+def load_base_period_price_inputs(
+    store: MarketStore,
+    *,
+    item_codes: Iterable[str],
+    base_period_start: datetime,
+    base_period_end: datetime,
+) -> tuple[PeriodItemPrice, ...]:
+    """Load immutable base-period prices and trade totals for weight construction."""
+    return load_period_item_prices(
+        store,
+        item_codes=item_codes,
+        period_start=base_period_start,
+        period_end=base_period_end,
+    )
+
+
+def load_trailing_period_price_series(
+    store: MarketStore,
+    *,
+    item_codes: Iterable[str],
+    first_as_of: datetime,
+    last_as_of: datetime,
+    price_window_days: int = 7,
+) -> tuple[HistoricalPeriodPrices, ...]:
+    """Build one trailing-window observation per complete UTC-day boundary.
+
+    Both ``first_as_of`` and ``last_as_of`` must be UTC midnight boundaries and
+    are included. Callers may separately construct a labelled provisional point
+    for an incomplete day; this function never silently mixes one in.
+    """
+    if price_window_days < 1:
+        raise ValueError("price_window_days must be at least 1.")
+    first = _require_utc_day_boundary(first_as_of, "first_as_of")
+    last = _require_utc_day_boundary(last_as_of, "last_as_of")
+    if last < first:
+        raise ValueError("last_as_of cannot be before first_as_of.")
+    codes = _normalized_item_codes(item_codes)
+    if not codes:
+        return ()
+
+    earliest = first - timedelta(days=price_window_days)
+    rows = store.transactions_for_period(codes, int(earliest.timestamp()), int(last.timestamp()))
+    return _trailing_period_price_series_from_index(
+        _index_transaction_rows(rows), codes=codes, first_as_of=first,
+        last_as_of=last, price_window_days=price_window_days,
+    )
+
+
+def _trailing_period_price_series_from_index(
+    row_index: dict[str, tuple[list[int], list[dict[str, Any]]]],
+    *,
+    codes: tuple[str, ...],
+    first_as_of: datetime,
+    last_as_of: datetime,
+    price_window_days: int,
+) -> tuple[HistoricalPeriodPrices, ...]:
+    observations: list[HistoricalPeriodPrices] = []
+    as_of = first_as_of
+    while as_of <= last_as_of:
+        period_start = as_of - timedelta(days=price_window_days)
+        observations.append(HistoricalPeriodPrices(
+            as_of=as_of,
+            period_start=period_start,
+            period_end=as_of,
+            prices=_period_item_prices_from_index(
+                row_index, codes=codes, period_start=period_start, period_end=as_of
+            ),
+            requested_item_codes=codes,
+        ))
+        as_of += timedelta(days=1)
+    return tuple(observations)
+
+
+def _period_item_prices_from_rows(
+    rows: Iterable[dict[str, Any]],
+    *,
+    codes: tuple[str, ...],
+    period_start: datetime,
+    period_end: datetime,
+) -> tuple[PeriodItemPrice, ...]:
+    return _period_item_prices_from_index(
+        _index_transaction_rows(rows), codes=codes,
+        period_start=period_start, period_end=period_end,
+    )
+
+
+def _index_transaction_rows(
+    rows: Iterable[dict[str, Any]],
+) -> dict[str, tuple[list[int], list[dict[str, Any]]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        code = str(row.get("item_code", "")).strip()
+        grouped.setdefault(code, []).append(row)
+    result = {}
+    for code, code_rows in grouped.items():
+        ordered = sorted(code_rows, key=lambda row: (int(row["created_at_epoch"]), str(row.get("id", ""))))
+        result[code] = ([int(row["created_at_epoch"]) for row in ordered], ordered)
+    return result
+
+
+def _period_item_prices_from_index(
+    row_index: dict[str, tuple[list[int], list[dict[str, Any]]]],
+    *,
+    codes: tuple[str, ...],
+    period_start: datetime,
+    period_end: datetime,
+) -> tuple[PeriodItemPrice, ...]:
+    folded_index = {code.casefold(): value for code, value in row_index.items()}
+
+    results: list[PeriodItemPrice] = []
+    for code in codes:
+        epochs, all_rows = folded_index.get(code.casefold(), ([], []))
+        start = bisect_left(epochs, int(period_start.timestamp()))
+        end = bisect_left(epochs, int(period_end.timestamp()))
+        code_rows = all_rows[start:end]
+        eligible: list[dict[str, Any]] = []
+        excluded = 0
+        for row in code_rows:
+            price = _positive_float(row.get("unit_price"))
+            quantity = _positive_float(row.get("quantity"))
+            if price is None or quantity is None:
+                excluded += 1
+                continue
+            eligible.append({**row, "unit_price": price, "quantity": quantity})
+        representative_price = quantity_weighted_median(eligible)
+        if representative_price is None:
+            continue
+        quantities = [float(row["quantity"]) for row in eligible]
+        values = [float(row["unit_price"]) * float(row["quantity"]) for row in eligible]
+        first_at = _as_utc(datetime.fromtimestamp(int(eligible[0]["created_at_epoch"]), timezone.utc))
+        last_at = _as_utc(datetime.fromtimestamp(int(eligible[-1]["created_at_epoch"]), timezone.utc))
+        results.append(PeriodItemPrice(
+            item_code=code,
+            period_start=period_start,
+            period_end=period_end,
+            representative_price=representative_price,
+            trade_count=len(eligible),
+            traded_quantity=sum(quantities),
+            traded_value=sum(values),
+            first_trade_at=first_at,
+            last_trade_at=last_at,
+            excluded_transaction_count=excluded,
+        ))
+    return tuple(results)
+
+
+def _normalized_item_codes(item_codes: Iterable[str]) -> tuple[str, ...]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in item_codes:
+        code = str(value).strip()
+        folded = code.casefold()
+        if code and folded not in seen:
+            seen.add(folded)
+            result.append(code)
+    return tuple(result)
+
+
+def _require_utc_day_boundary(value: datetime, field_name: str) -> datetime:
+    result = _as_utc(value)
+    if result.time() != datetime.min.time():
+        raise ValueError(f"{field_name} must be a UTC midnight boundary.")
+    return result
 
 
 def evaluate_item_forecast(
