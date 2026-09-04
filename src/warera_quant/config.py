@@ -18,7 +18,7 @@ class ConfigError(ValueError):
 @dataclass(frozen=True)
 class HousekeepingConfig:
     enabled: bool = True
-    retention_days: int = 45
+    retention_days: int = 120
     vacuum_interval_days: int = 30
 
 
@@ -83,7 +83,7 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> AppConfig:
         raise ConfigError(f"Unknown housekeeping setting(s): {names}.")
 
     enabled = housekeeping.get("enabled", True)
-    retention_days = housekeeping.get("retention_days", 45)
+    retention_days = housekeeping.get("retention_days", 120)
     vacuum_interval_days = housekeeping.get("vacuum_interval_days", 30)
     if not isinstance(enabled, bool):
         raise ConfigError("housekeeping.enabled must be true or false.")

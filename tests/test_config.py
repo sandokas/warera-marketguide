@@ -11,7 +11,7 @@ def test_load_config_uses_defaults_when_file_is_missing(tmp_path):
     config = load_config(tmp_path / "missing.toml")
 
     assert config.housekeeping.enabled is True
-    assert config.housekeeping.retention_days == 45
+    assert config.housekeeping.retention_days == 120
     assert config.housekeeping.vacuum_interval_days == 30
     assert config.inflation.enabled is True
     assert config.inflation.base_period_start == datetime(2026, 8, 1, tzinfo=timezone.utc)

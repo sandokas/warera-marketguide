@@ -2,7 +2,7 @@
 # Raw market data older than this is deleted when --housekeeping is run.
 # Increasing this later cannot restore data that has already been pruned.
 enabled = true
-retention_days = 45
+retention_days = 120
 
 # Rebuild the database at most this often when housekeeping finds deleted pages.
 # SQLite reuses deleted pages between rebuilds. Set to 0 to disable compaction.

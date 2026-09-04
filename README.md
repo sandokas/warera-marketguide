@@ -94,13 +94,13 @@ warera-marketguide --housekeeping
 ```
 
 The routine prunes expired transactions, price observations, and order-book observations. The
-default configuration in `marketguide.toml` retains 45 days, which leaves headroom for the
-report's broadest standard completed-transaction window (30 days):
+default configuration in `marketguide.toml` retains 120 days, which leaves headroom for
+90-day static chart history and delayed or missed synchronizations:
 
 ```toml
 [housekeeping]
 enabled = true
-retention_days = 45
+retention_days = 120
 vacuum_interval_days = 30
 ```
 
