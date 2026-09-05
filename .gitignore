@@ -2,7 +2,9 @@
 .venv/
 __pycache__/
 *.pyc
-data/*.sqlite3
+data/*
+!data/.gitkeep
+!data/sample_market.csv
 output/*
 !output/.gitkeep
 *.egg-info/
