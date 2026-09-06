@@ -654,9 +654,16 @@ class MarketStore:
 
     def _connect(self) -> sqlite3.Connection:
         if self._connection is None:
-            self._connection = sqlite3.connect(self.path)
-            self._connection.row_factory = sqlite3.Row
-            self._connection.execute("pragma foreign_keys = on")
+            connection = sqlite3.connect(self.path, timeout=30.0)
+            try:
+                connection.row_factory = sqlite3.Row
+                connection.execute("pragma foreign_keys = on")
+                # Readers can keep their snapshot while sync commits new pages.
+                connection.execute("pragma journal_mode = wal").fetchone()
+            except Exception:
+                connection.close()
+                raise
+            self._connection = connection
         return self._connection
 
 

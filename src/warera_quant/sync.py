@@ -131,7 +131,11 @@ def sync_market_data(
                 f"{result.pages_fetched} page(s), {result.transactions_inserted} new transaction(s)",
             )
         except Exception as exc:
-            store.mark_item_sync_failure(item_code, exc, attempted_at=observed_at)
+            try:
+                store.mark_item_sync_failure(item_code, exc, attempted_at=observed_at)
+            except Exception as state_exc:
+                exc.add_note(f"Could not record sync failure for {item_code}: {state_exc}")
+                raise exc from state_exc
             item_results.append(
                 ItemSyncResult(
                     item_code=item_code,

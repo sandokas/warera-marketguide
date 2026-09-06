@@ -7,12 +7,14 @@ import pytest
 
 from warera_quant.charts import render_featured_chart
 from warera_quant.market_data import (
+    DISPLAY_HISTORY_DAYS,
     build_forecast_features,
     estimate_latest_execution,
     evaluate_item_forecast,
     load_chart_data,
     load_chart_trades,
     load_highlight_trade_history,
+    load_price_action_history,
     load_market_rows,
     parse_report_window,
 )
@@ -23,16 +25,46 @@ from warera_quant.warera_api import OrderLevel, TopOrders
 NOW = datetime(2026, 6, 30, 12, 0, tzinfo=timezone.utc)
 
 
-def test_highlight_history_is_fixed_to_trailing_30_days_and_excludes_future(tmp_path):
+def test_highlight_history_is_fixed_to_trailing_90_days_and_excludes_future(tmp_path):
     with _store(tmp_path) as store:
         store.upsert_transactions("bread", [
-            _transaction("old", (NOW - timedelta(days=30, seconds=1)).isoformat(), money=10, quantity=1),
-            _transaction("boundary", (NOW - timedelta(days=30)).isoformat(), money=11, quantity=1),
+            _transaction("old", (NOW - timedelta(days=90, seconds=1)).isoformat(), money=10, quantity=1),
+            _transaction("boundary", (NOW - timedelta(days=90)).isoformat(), money=11, quantity=1),
             _transaction("recent", (NOW - timedelta(days=1)).isoformat(), money=12, quantity=1),
             _transaction("future", (NOW + timedelta(seconds=1)).isoformat(), money=13, quantity=1),
         ], fetched_at=NOW)
         result = load_highlight_trade_history(store, item_codes=["Bread"], now=NOW)
     assert [trade["price"] for trade in result["bread"]] == [11.0, 12.0]
+
+
+def test_price_action_history_reports_authentic_sparse_coverage(tmp_path):
+    with _store(tmp_path) as store:
+        first = NOW - timedelta(days=70)
+        last = NOW - timedelta(days=2)
+        store.upsert_transactions("bread", [
+            _transaction("first", first.isoformat(), money=10, quantity=1),
+            _transaction("same-time", first.isoformat(), money=11, quantity=1),
+            _transaction("last", last.isoformat(), money=12, quantity=1),
+        ], fetched_at=NOW)
+        result = load_price_action_history(store, item_code="Bread", now=NOW)
+
+    assert result.window_days == DISPLAY_HISTORY_DAYS == 90
+    assert result.window_start == NOW - timedelta(days=90)
+    assert result.window_end == NOW
+    assert len(result.trades) == 3
+    assert result.coverage.first_observation_at == first
+    assert result.coverage.last_observation_at == last
+    assert result.coverage.observation_count == 3
+
+
+def test_price_action_history_empty_coverage_is_explicit(tmp_path):
+    with _store(tmp_path) as store:
+        result = load_price_action_history(store, item_code="bread", now=NOW)
+
+    assert result.trades == ()
+    assert result.coverage.first_observation_at is None
+    assert result.coverage.last_observation_at is None
+    assert result.coverage.observation_count == 0
 
 
 def _store(tmp_path: Path) -> MarketStore:
@@ -260,6 +292,16 @@ def test_load_market_rows_applies_each_window_boundary(tmp_path):
     ]
     assert row["trend_path_30d_start_epoch"] == int((NOW - timedelta(days=30)).timestamp())
     assert row["trend_path_30d_end_epoch"] == int(NOW.timestamp())
+    assert row["trend_path_90d"] == row["trend_path_30d"]
+    assert row["trend_path_90d_start_epoch"] == int((NOW - timedelta(days=90)).timestamp())
+    assert row["trend_path_90d_end_epoch"] == int(NOW.timestamp())
+    assert row["trend_path_90d_first_observation_epoch"] == int(
+        datetime(2026, 6, 22, 11, 59, 59, tzinfo=timezone.utc).timestamp()
+    )
+    assert row["trend_path_90d_last_observation_epoch"] == int(
+        datetime(2026, 6, 29, 12, tzinfo=timezone.utc).timestamp()
+    )
+    assert row["trend_path_90d_observation_count"] == 3
 
 
 def test_window_change_requires_two_distinct_transaction_timestamps(tmp_path):

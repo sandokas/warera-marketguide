@@ -344,6 +344,28 @@ def test_trend_path_svg_preserves_blank_time_without_observations():
     assert 'points="63.2,25.5 78.3,2.5"' in svg
 
 
+def test_trend_path_svg_breaks_line_across_missing_daily_observations():
+    day = 24 * 60 * 60
+    svg = render_trend_path_svg(
+        [
+            {"timestamp": 0, "price": 10},
+            {"timestamp": day, "price": 11},
+            {"timestamp": 3 * day, "price": 12},
+            {"timestamp": 4 * day, "price": 9},
+        ],
+        aria_label="90D path with a missing day",
+        window_start=0,
+        window_end=5 * day,
+    )
+
+    assert svg is not None
+    assert svg.count('<polyline class="trend-path-line"') == 2
+    assert 'points="2.5,17.8 20.7,10.2"' in svg
+    assert 'points="57.1,2.5 75.3,25.5"' in svg
+    assert "20.7,10.2 57.1,2.5" not in svg
+    assert '<circle class="trend-path-latest" cx="75.3" cy="25.5"' in svg
+
+
 def test_build_ohlc_uses_15_minute_buckets():
     candles = build_ohlc(
         [
@@ -406,7 +428,7 @@ def test_daily_chart_can_render_without_moving_average(tmp_path: Path):
     assert output.exists()
 
 
-def test_highlight_chart_renders_role_based_30d_asset(tmp_path: Path):
+def test_highlight_chart_renders_role_based_90d_asset(tmp_path: Path):
     trades = [
         _trade(f"2026-06-{day:02d}T{hour:02d}:00:00Z", 10 + index / 10, quantity=index + 1)
         for index, (day, hour) in enumerate(
@@ -421,6 +443,39 @@ def test_highlight_chart_renders_role_based_30d_asset(tmp_path: Path):
     output = render_highlight_price_action_chart(highlight, tmp_path / highlight.filename)
     assert output == tmp_path / "largest-discount-price-action.png"
     assert output.exists() and output.stat().st_size > 0
+
+
+def test_highlight_chart_subtitle_discloses_window_interval_span_and_populated_candles(
+    monkeypatch, tmp_path: Path,
+):
+    trades = [
+        _trade(f"2026-06-{day:02d}T{hour:02d}:00:00Z", 10)
+        for day in (1, 2, 3)
+        for hour in (0, 4, 8, 12)
+    ]
+    highlight = select_highlighted_items([{
+        "item_code": "bread", "item_name": "Bread with a deliberately long chart title",
+        "last_trade_price": 8, "stable_fair_price_7d": 10,
+        "price_p10_7d": 9, "price_p90_7d": 11,
+    }], {"bread": trades})[0]
+    captured = {}
+
+    import matplotlib.figure
+    original = matplotlib.figure.Figure.suptitle
+
+    def capture(figure, text, *args, **kwargs):
+        captured["text"] = text
+        return original(figure, text, *args, **kwargs)
+
+    monkeypatch.setattr(matplotlib.figure.Figure, "suptitle", capture)
+    output = render_highlight_price_action_chart(highlight, tmp_path / highlight.filename)
+
+    assert output is not None and output.exists()
+    assert "Trailing 90D" in captured["text"]
+    assert "4h candles" in captured["text"]
+    assert "3-day span" in captured["text"]
+    assert "12 populated candles" in captured["text"]
+    assert "cycle" not in captured["text"].lower()
 
 
 def test_chart_can_render_with_spread_line(tmp_path: Path):

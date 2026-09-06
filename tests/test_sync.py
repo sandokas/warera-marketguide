@@ -49,6 +49,25 @@ def _store(tmp_path: Path) -> MarketStore:
     return store
 
 
+def test_failure_recording_does_not_replace_original_sync_error(tmp_path, monkeypatch):
+    original = RuntimeError("transaction write failed")
+
+    def fail_write(*args, **kwargs):
+        raise original
+
+    def fail_record(*args, **kwargs):
+        raise RuntimeError("failure recording also failed")
+
+    api = FakeMarketApi({("bread", None): PageResponse(items=[])})
+    with _store(tmp_path) as store:
+        monkeypatch.setattr(store, "upsert_transactions", fail_write)
+        monkeypatch.setattr(store, "mark_item_sync_failure", fail_record)
+        with pytest.raises(RuntimeError, match="transaction write failed") as caught:
+            sync_market_data(api, store)
+    assert caught.value is original
+    assert "failure recording also failed" in original.__notes__[0]
+
+
 def _transaction(transaction_id: str, created_at: str, money: str = "12", quantity: str = "4") -> dict[str, object]:
     return {
         "id": transaction_id,

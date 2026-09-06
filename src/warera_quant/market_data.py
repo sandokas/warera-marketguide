@@ -39,7 +39,9 @@ from .metrics import (
 
 SUPPORTED_REPORT_WINDOWS = ("1D", "7D", "30D", "90D", "1Y")
 DEFAULT_REPORT_WINDOWS = ("1D", "7D", "30D")
-HIGHLIGHT_HISTORY_DAYS = 30
+DISPLAY_HISTORY_DAYS = 90
+# Backwards-compatible name for callers that still load highlighted chart history.
+HIGHLIGHT_HISTORY_DAYS = DISPLAY_HISTORY_DAYS
 FORECAST_TRAILING_SECONDS = 7 * 24 * 60 * 60
 DEFAULT_INFLATION_MIN_BASE_TRADE_COUNT = 1
 DEFAULT_INFLATION_MIN_BASE_TRADED_QUANTITY = 1e-12
@@ -132,7 +134,7 @@ class IndexChange:
 
 @dataclass(frozen=True)
 class InflationEvolutionPoint:
-    """Cumulative matched-basket price change from the displayed month's start."""
+    """Rolling 30D matched-basket price change for one authentic UTC boundary."""
 
     as_of: datetime
     change_pct: float | None
@@ -435,12 +437,15 @@ def build_inflation_index_results(
                     if matched.change_pct is not None else None
                 ),
             ))
-        month_start = last - timedelta(days=30)
-        month_start_prices = prices_by_as_of.get(month_start, {})
+        display_start = last - timedelta(days=DISPLAY_HISTORY_DAYS)
         monthly_evolution = []
-        for as_of in sorted(date for date in prices_by_as_of if date >= month_start):
+        for as_of in sorted(date for date in prices_by_as_of if date >= display_start):
+            lookback_prices = prices_by_as_of.get(as_of - timedelta(days=30))
+            if lookback_prices is None:
+                # A rolling observation requires an authentic boundary exactly 30 days earlier.
+                continue
             matched = calculate_matched_index_change(
-                weights, month_start_prices, prices_by_as_of[as_of],
+                weights, lookback_prices, prices_by_as_of[as_of],
                 minimum_coverage_pct=definition.minimum_coverage_pct,
             )
             monthly_evolution.append(InflationEvolutionPoint(
@@ -853,6 +858,27 @@ class ReportWindow:
         return self.label.lower()
 
 
+@dataclass(frozen=True)
+class HistoryCoverage:
+    """Authentic observation coverage inside a requested display window."""
+
+    first_observation_at: datetime | None
+    last_observation_at: datetime | None
+    observation_count: int
+
+
+@dataclass(frozen=True)
+class PriceActionHistory:
+    """Completed trades and raw coverage facts for a static price chart."""
+
+    item_code: str
+    window_days: int
+    window_start: datetime
+    window_end: datetime
+    trades: tuple[dict[str, Any], ...]
+    coverage: HistoryCoverage
+
+
 def parse_report_window(value: str) -> ReportWindow:
     normalized = value.strip().upper()
     if normalized not in SUPPORTED_REPORT_WINDOWS:
@@ -890,7 +916,8 @@ def load_market_rows(
         window.label: int((now - timedelta(days=window.days)).timestamp())
         for window in report_windows
     }
-    earliest_since_epoch = min(since_epochs.values())
+    display_since_epoch = int((now - timedelta(days=DISPLAY_HISTORY_DAYS)).timestamp())
+    earliest_since_epoch = min(*since_epochs.values(), display_since_epoch)
 
     latest_prices = store.latest_price_observations()
     latest_books = store.latest_order_book_observations()
@@ -950,6 +977,19 @@ def load_market_rows(
             _add_flattened_window_stats(row, window, stats)
 
         row["windows"] = window_stats
+        trend_history = _rows_since(trades, display_since_epoch, "created_at_epoch")
+        trend_path_90d = _daily_last_trade_prices(trend_history)
+        trend_coverage = _history_coverage(trend_path_90d)
+        row["trend_path_90d"] = trend_path_90d
+        row["trend_path_90d_start_epoch"] = display_since_epoch
+        row["trend_path_90d_end_epoch"] = int(now.timestamp())
+        row["trend_path_90d_first_observation_epoch"] = _epoch_or_none(
+            trend_coverage.first_observation_at
+        )
+        row["trend_path_90d_last_observation_epoch"] = _epoch_or_none(
+            trend_coverage.last_observation_at
+        )
+        row["trend_path_90d_observation_count"] = trend_coverage.observation_count
         row["trend_path_30d"] = (
             _daily_last_trade_prices(_rows_since(trades, since_epochs["30D"], "created_at_epoch"))
             if "30D" in since_epochs
@@ -1114,7 +1154,7 @@ def load_highlight_trade_history(
     item_codes: Iterable[str],
     now: datetime | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
-    """Load at most the trailing 30 calendar days of completed trades for highlights."""
+    """Load at most the trailing display window of completed trades for highlights."""
     now = _as_utc(now or datetime.now(timezone.utc))
     since_epoch = int((now - timedelta(days=HIGHLIGHT_HISTORY_DAYS)).timestamp())
     end_epoch = int(now.timestamp())
@@ -1131,6 +1171,33 @@ def load_highlight_trade_history(
             if int(row.get("created_at_epoch", end_epoch + 1)) <= end_epoch
         ])
     return histories
+
+
+def load_price_action_history(
+    store: MarketStore,
+    *,
+    item_code: str,
+    now: datetime | None = None,
+) -> PriceActionHistory:
+    """Load authentic completed trades and coverage facts for the 90D display window."""
+    window_end = _as_utc(now or datetime.now(timezone.utc))
+    window_start = window_end - timedelta(days=DISPLAY_HISTORY_DAYS)
+    end_epoch = int(window_end.timestamp())
+    rows = store.transactions_for_window(item_code, int(window_start.timestamp()))
+    if not rows and item_code != item_code.lower():
+        rows = store.transactions_for_window(item_code.lower(), int(window_start.timestamp()))
+    trades = _chart_trades_from_rows([
+        row for row in rows
+        if int(row.get("created_at_epoch", end_epoch + 1)) <= end_epoch
+    ])
+    return PriceActionHistory(
+        item_code=item_code.lower(),
+        window_days=DISPLAY_HISTORY_DAYS,
+        window_start=window_start,
+        window_end=window_end,
+        trades=tuple(trades),
+        coverage=_history_coverage(trades),
+    )
 
 
 def _resolve_windows(
@@ -1162,6 +1229,25 @@ def _chart_trades_from_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for row in rows
         if row.get("unit_price") is not None
     ]
+
+
+def _history_coverage(observations: Iterable[dict[str, Any]]) -> HistoryCoverage:
+    timestamps = sorted(
+        int(timestamp)
+        for observation in observations
+        if (timestamp := observation.get("created_at_epoch", observation.get("timestamp"))) is not None
+    )
+    if not timestamps:
+        return HistoryCoverage(None, None, 0)
+    return HistoryCoverage(
+        datetime.fromtimestamp(timestamps[0], tz=timezone.utc),
+        datetime.fromtimestamp(timestamps[-1], tz=timezone.utc),
+        len(timestamps),
+    )
+
+
+def _epoch_or_none(value: datetime | None) -> int | None:
+    return int(value.timestamp()) if value is not None else None
 
 
 def _window_from_days(days: float) -> ReportWindow:

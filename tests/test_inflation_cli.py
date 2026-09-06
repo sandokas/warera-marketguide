@@ -44,7 +44,7 @@ def test_configured_inflation_uses_stable_base_and_complete_day(monkeypatch):
     assert captured[0][1] == {
         "base_period_start": datetime(2026, 8, 1, tzinfo=timezone.utc),
         "base_period_end": datetime(2026, 8, 8, tzinfo=timezone.utc),
-        "first_as_of": datetime(2026, 7, 29, tzinfo=timezone.utc),
+        "first_as_of": datetime(2026, 4, 30, tzinfo=timezone.utc),
         "last_as_of": datetime(2026, 8, 28, tzinfo=timezone.utc),
         "version": "v-test",
         "price_window_days": 7,
@@ -109,7 +109,9 @@ def test_from_db_calculates_inflation_once_and_forwards_same_results(monkeypatch
     monkeypatch.setattr(cli, "load_market_rows", lambda *_a, **_k: [{
         "item_code": "bread", "item_name": "Bread", "bid": 1.0, "ask": 2.0,
     }])
-    monkeypatch.setattr(cli, "load_highlight_trade_history", lambda *_a, **_k: {})
+    monkeypatch.setattr(cli, "load_price_action_history", lambda *_a, **_k: SimpleNamespace(
+        trades=(), window_days=90, coverage=SimpleNamespace(observation_count=0),
+    ))
     monkeypatch.setattr(
         cli,
         "build_inflation_index_results",

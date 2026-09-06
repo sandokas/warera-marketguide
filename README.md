@@ -73,8 +73,13 @@ Use an explicit backfill to ignore high-water marks and stop at the lookback bou
 warera-marketguide \
   --sync \
   --transaction-backfill \
-  --lookback-days 30
+  --lookback-days 120
 ```
+
+For the 90-day static graphics, a 120-day backfill is recommended: 90 days are displayed and
+the additional history supports rolling 30-day comparisons at the beginning of the inflation
+timeline. Existing transactions are deduplicated during backfill. Backfilling can restore only
+authentic history still offered by the API; it does not fabricate observations.
 
 Useful sync options:
 
@@ -171,8 +176,9 @@ housekeeping removes the configured base transactions, the fixed vintage becomes
 increasing retention later cannot recreate deleted history.
 
 Each DB-backed report writes the detailed audit data to `market_inflation.csv` and one combined
-`output/charts/inflation/inflation-overview.png`. The chart shows accumulated Broad Market inflation
-over the displayed month, with its final point matching the 30D headline. This report asset does not require `--charts`,
+`output/charts/inflation/inflation-overview.png`. The static chart shows up to 90 calendar days of
+rolling 30D Broad Market inflation values, with its final point matching the 30D headline. Dates
+without an authentic 30-day comparison are omitted and partial history is disclosed. This report asset does not require `--charts`,
 which continues to control item price-action charts. The HTML presents one current broad-market
 inflation/deflation signal, its inverse effect on BTC purchasing power, and an evidence-history label.
 Detailed weights, coverage, exclusions, and
@@ -203,11 +209,16 @@ warera-marketguide \
   --output output
 ```
 
-The featured chart is written to `output/charts/featured-trade.png` and embedded in the HTML report. Use `--featured-item-code bread` to prefer a particular item and `--chart-min-range-pct 5` to set the minimum visible price range. A moving average is shown only when `--lookback-days` is greater than 1.
+Highlighted item charts are embedded in the HTML report and written under `output/charts/`.
+They show up to 90 trailing calendar days of authentic completed trades, using a deterministic
+4h, 8h, 12h, or 1D candle interval for static readability. Each image discloses its actual
+observation span and populated-candle count, so a newly backfilled database may show fewer than
+90 days without implying continuous coverage. Use `--chart-min-range-pct 5` to set the minimum
+visible price range.
 
 The database-backed HTML report always combines 1D, 7D, and 30D fair-value perspectives. Guidance,
 meaningful price dislocations, completed activity, and Item Price Context use an explicit 7D basis; `--lookback-days`
-continues to control sync/backfill and existing chart behavior, not those report semantics.
+continues to control sync/backfill, not those report semantics or the fixed 90-day display window.
 
 Export every chart-capable item without adding the extra charts to the report:
 
@@ -219,6 +230,10 @@ warera-marketguide --from-db --charts \
 The additional item-based PNGs are written sequentially under `output/charts/all/`. Items without
 enough completed-transaction evidence are skipped; the report still embeds only its highlighted
 price-action charts.
+
+The Market Trends table uses a static `90D Path` sparkline with calendar-time spacing. Missing
+days remain visible as gaps. None of the rolling 90-day graphics claim alignment with strategic-resource
+reshuffles or other game cycles, whose exact timing is not assumed by the report.
 
 Export the report header, every Item Price Context card, and every table as standalone PNGs:
 

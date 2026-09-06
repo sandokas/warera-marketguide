@@ -854,7 +854,7 @@ def test_report_is_print_first_without_price_evolution_styles():
     assert ".price-guide .col-signal" not in report
 
 
-def test_market_trends_uses_cross_horizon_completed_transaction_fields():
+def test_market_trends_uses_cross_horizon_completed_transaction_fields_and_90d_path():
     report = generate_html_report(pd.DataFrame([{
         "item_name": "Scraps",
         "last_trade_price": 0.212,
@@ -863,13 +863,16 @@ def test_market_trends_uses_cross_horizon_completed_transaction_fields():
         "percent_change_30d": 4.0,
         "min_30d": 0.180,
         "max_30d": 0.220,
-        "trend_path_30d": [
+        "trend_path_90d": [
             {"timestamp": 1_780_000_000, "price": 0.190},
             {"timestamp": 1_780_518_400, "price": 0.205},
             {"timestamp": 1_781_036_800, "price": 0.212},
         ],
-        "trend_path_30d_start_epoch": 1_780_000_000,
-        "trend_path_30d_end_epoch": 1_782_592_000,
+        "trend_path_90d_start_epoch": 1_774_816_000,
+        "trend_path_90d_end_epoch": 1_782_592_000,
+        "trend_path_90d_first_observation_epoch": 1_780_000_000,
+        "trend_path_90d_last_observation_epoch": 1_781_036_800,
+        "trend_path_90d_observation_count": 3,
     }]))
 
     assert '<div class="table-wrap compact-table market-trends-table" role="region" aria-label="Market trends table">' in report
@@ -877,7 +880,8 @@ def test_market_trends_uses_cross_horizon_completed_transaction_fields():
     assert '<th class="col-1d-change number">1D Change</th>' in report
     assert '<th class="col-7d-change number">7D Change</th>' in report
     assert '<th class="col-30d-change number">30D Change</th>' in report
-    assert '<th class="col-30d-path text">30D Path</th>' in report
+    assert '<th class="col-90d-path text">90D Path</th>' in report
+    assert ">30D Path<" not in report
     assert '<th class="col-30d-position number">30D Position</th>' in report
     assert '<th class="col-pattern text">Pattern</th>' in report
     assert "Pullback" in report
@@ -886,13 +890,42 @@ def test_market_trends_uses_cross_horizon_completed_transaction_fields():
     assert ".market-trends-table .col-item { font-weight: 700; white-space: nowrap; }" in report
     assert "grid-template-columns: 56px 36px minmax(72px, 1fr)" in report
     assert '<svg class="trend-path"' in report
-    assert "3 daily observations spanning 12 of 30 days" in report
-    assert "Completed-trade price changes, 30-day range position, and trend shape." in report
+    assert "90D rolling price path: 3 daily observations spanning 12 of 90 days" in report
+    assert "Completed-trade price changes, 30-day range position, and trailing 90-day price path." in report
     trends_section = report[report.index("<h2>Market Trends</h2>"):report.index("<h2>Item Price Context</h2>")]
     for forbidden in (">Spread %<", ">Activity<", ">Range<", ">Price State<"):
         assert forbidden not in trends_section
     assert "Price / 7D Change" not in report
     assert '<div class="table-wrap compact-table price-evolution-table">' not in report
+
+
+def test_market_trends_does_not_mislabel_legacy_30d_path_as_90d():
+    report = generate_html_report(pd.DataFrame([{
+        "item_name": "Legacy",
+        "last_trade_price": 1.0,
+        "trend_path_30d": [
+            {"timestamp": 1_780_000_000, "price": 0.9},
+            {"timestamp": 1_781_000_000, "price": 1.0},
+        ],
+        "trend_path_30d_start_epoch": 1_780_000_000,
+        "trend_path_30d_end_epoch": 1_782_592_000,
+    }]))
+
+    trends_section = report[report.index("<h2>Market Trends</h2>"):report.index("<h2>Item Price Context</h2>")]
+    assert ">90D Path<" in trends_section
+    assert '<svg class="trend-path"' not in trends_section
+    assert '<td class="col-90d-path text">N/A</td>' in trends_section
+
+
+def test_report_chart_alt_text_describes_trailing_90d_history(tmp_path):
+    report = generate_html_report(
+        pd.DataFrame(),
+        chart_path=tmp_path / "featured.png",
+        chart_label="Iron",
+        output_dir=tmp_path,
+    )
+
+    assert 'alt="Featured trailing 90D market price-action chart"' in report
 
 
 def test_market_trends_renders_flat_30d_range_without_a_position_graphic():

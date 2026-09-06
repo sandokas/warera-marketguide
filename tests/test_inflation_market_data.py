@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -310,3 +310,47 @@ def test_index_pipeline_retains_unavailable_observations_and_missing_horizons(st
     assert result.changes[1].change_pct is None
     assert result.changes[1].classification == "Insufficient data"
     assert result.changes[2].change_pct is None
+
+
+def test_inflation_evolution_is_90d_timeline_of_authentic_rolling_30d_changes(store):
+    base_start = datetime(2026, 4, 1, tzinfo=UTC)
+    base_end = base_start + timedelta(days=7)
+    last = datetime(2026, 8, 8, tzinfo=UTC)
+    trades = []
+    current = base_start
+    index = 0
+    while current < last:
+        trades.append(_trade(f"paper-{index}", current + timedelta(hours=12), 10 + index, 1))
+        current += timedelta(days=1)
+        index += 1
+    store.upsert_transactions("paper", trades, fetched_at=last)
+
+    result = next(result for result in build_inflation_index_results(
+        store, base_period_start=base_start, base_period_end=base_end,
+        first_as_of=base_end, last_as_of=last,
+    ) if result.definition.key == "governance")
+
+    evolution = result.monthly_evolution
+    assert evolution[0].as_of == last - timedelta(days=90)
+    assert evolution[-1].as_of == last
+    assert len(evolution) == 91
+    prices = {observation.as_of: observation.level for observation in result.observations}
+    for point in evolution:
+        expected = (
+            prices[point.as_of] / prices[point.as_of - timedelta(days=30)] - 1
+        ) * 100
+        assert point.change_pct == pytest.approx(expected)
+
+
+def test_inflation_evolution_omits_dates_without_authentic_30d_boundary(store):
+    store.upsert_transactions("paper", [
+        _trade("base", _dt(1, 12), 10, 1),
+        _trade("latest", _dt(16, 12), 11, 1),
+    ], fetched_at=_dt(17))
+
+    result = next(result for result in build_inflation_index_results(
+        store, base_period_start=_dt(1), base_period_end=_dt(8),
+        first_as_of=_dt(8), last_as_of=_dt(17),
+    ) if result.definition.key == "governance")
+
+    assert result.monthly_evolution == ()

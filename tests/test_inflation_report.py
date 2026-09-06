@@ -163,7 +163,9 @@ def test_chart_is_optional_and_rendered_relative_to_output_directory(tmp_path):
     assert '<div class="inflation-section">' in html
     assert '<section class="inflation-section">' not in html
     assert 'src="charts/inflation-overview.png"' in html
-    assert "Accumulated Broad Market inflation over the last 30 days" in html
+    assert "Broad Market Inflation: rolling 30D inflation values over the last 90 days" in html
+    assert "positive means BTC buys less" in html
+    assert "Dates without an authentic 30-day comparison are omitted" in html
 
     without_chart = inflation_summary_html([_result()], chart_paths={})
     assert "inflation-chart" not in without_chart
@@ -215,4 +217,3 @@ def test_broad_market_scope_and_friendly_weight_labels_are_disclosed():
     html = inflation_summary_html([broad])
 
     assert "BTC is losing purchasing power" in html
-

@@ -1177,7 +1177,7 @@ def _highlight_pairs_html(highlights: list[dict[str, object]], output_dir: Path)
         )
         chart = ""
         if chart_src:
-            alt = f"{name} {title.lower()} trailing 30D price-action chart"
+            alt = f"{name} {title.lower()} trailing 90D price-action chart"
             chart = (f'<img class="highlight-chart" src="{escape(chart_src, quote=True)}" '
                      f'alt="{escape(alt, quote=True)}">')
         columns.append(
@@ -1445,7 +1445,7 @@ def _render_table_cell(column: str, value: object) -> str:
         return _trend_change(value)
     if column == "30D Position":
         return _trend_position(value)
-    if column == "30D Path":
+    if column == "90D Path":
         return _trend_path(value)
     if column == "Pattern":
         return _trend_pattern(value)
@@ -1564,25 +1564,34 @@ def _trend_path(value: object) -> str:
     points = value.get("points")
     if not isinstance(points, list) or len(points) < 2:
         return "N/A"
-    low = _number(value.get("low"))
-    high = _number(value.get("high"))
-    latest = _number(value.get("latest"))
     window_start = _number(value.get("window_start"))
     window_end = _number(value.get("window_end"))
     direction = str(value.get("direction") or "flat").lower()
-    if low is None or high is None or latest is None or window_start is None or window_end is None:
+    if window_start is None or window_end is None:
         return "N/A"
-    timestamps = sorted(
-        int(point["timestamp"])
+    usable = sorted(
+        (int(point["timestamp"]), float(point["price"]))
         for point in points
-        if isinstance(point, dict) and _number(point.get("timestamp")) is not None
+        if (
+            isinstance(point, dict)
+            and _number(point.get("timestamp")) is not None
+            and _number(point.get("price")) is not None
+            and float(point["price"]) > 0
+        )
     )
-    if len(timestamps) < 2:
+    if len(usable) < 2:
         return "N/A"
+    timestamps = [timestamp for timestamp, _ in usable]
+    prices = [price for _, price in usable]
+    low = min(prices)
+    high = max(prices)
+    latest = prices[-1]
     coverage_days = max(1, round((timestamps[-1] - timestamps[0]) / 86_400))
     window_days = max(1, round((window_end - window_start) / 86_400))
+    reported_count = _number(value.get("observation_count"))
+    observation_count = int(reported_count) if reported_count is not None else len(timestamps)
     label = (
-        f"30D price path: {len(points)} daily observations spanning "
+        f"90D rolling price path: {observation_count} daily observations spanning "
         f"{coverage_days} of {window_days} days; "
         f"low {_fmt(low)}, high {_fmt(high)}, latest {_fmt(latest)}; overall {direction}."
     )
@@ -1690,8 +1699,9 @@ def inflation_summary_html(
     chart = (
         '<figure class="panel inflation-chart">'
         f'<img src="{escape(chart_path, quote=True)}" '
-        'alt="Accumulated Broad Market inflation over the last 30 days">'
-        '<figcaption>Signed percentage change over the latest 30 days; positive means BTC buys less.</figcaption>'
+        'alt="Broad Market Inflation: rolling 30D inflation values over the last 90 days; positive means BTC buys less">'
+        '<figcaption>Rolling 30D broad-market inflation values across the last 90 calendar days; '
+        'positive means BTC buys less. Dates without an authentic 30-day comparison are omitted.</figcaption>'
         '</figure>'
         if chart_path else ""
     )
@@ -1903,7 +1913,7 @@ def generate_html_report(
                     if high_30d == low_30d
                     else calculate_range_position_pct(last_price=last_trade, low=low_30d, high=high_30d)
                 )
-            path_points = row.get("trend_path_30d")
+            path_points = row.get("trend_path_90d")
             path_direction = (
                 "up"
                 if changes["30D"] is not None and changes["30D"] > 0.5
@@ -1917,14 +1927,15 @@ def generate_html_report(
                 "1D Change": changes["1D"],
                 "7D Change": changes["7D"],
                 "30D Change": changes["30D"],
-                "30D Path": {
+                "90D Path": {
                     "points": path_points if isinstance(path_points, list) else [],
-                    "low": low_30d,
-                    "high": high_30d,
                     "latest": last_trade,
                     "direction": path_direction,
-                    "window_start": row.get("trend_path_30d_start_epoch"),
-                    "window_end": row.get("trend_path_30d_end_epoch"),
+                    "window_start": row.get("trend_path_90d_start_epoch"),
+                    "window_end": row.get("trend_path_90d_end_epoch"),
+                    "first_observation": row.get("trend_path_90d_first_observation_epoch"),
+                    "last_observation": row.get("trend_path_90d_last_observation_epoch"),
+                    "observation_count": row.get("trend_path_90d_observation_count"),
                 },
                 "30D Position": position,
                 "Pattern": f"{pattern.label}|{pattern.description}",
@@ -1933,7 +1944,7 @@ def generate_html_report(
         blocks.append(
             f"""    <section>
       <h2>Market Trends</h2>
-      <p class="muted">Completed-trade price changes, 30-day range position, and trend shape.</p>
+      <p class="muted">Completed-trade price changes, 30-day range position, and trailing 90-day price path.</p>
       {_compact_table_html(trend_table, table_kind="market-trends")}
     </section>"""
         )
@@ -1981,7 +1992,7 @@ def generate_html_report(
     chart_src = _relative_chart_path(chart_path, Path(output_dir)) if highlights is None else None
     if chart_src:
         chart_heading = f"Featured Price History: {chart_label}" if chart_label else "Featured Price History"
-        blocks.append(f'<section><h2>{escape(chart_heading)}</h2><img class="chart" src="{escape(chart_src)}" alt="Featured market history chart"></section>')
+        blocks.append(f'<section><h2>{escape(chart_heading)}</h2><img class="chart" src="{escape(chart_src)}" alt="Featured trailing 90D market price-action chart"></section>')
 
     blocks.append(
         """    <footer class="report-footer">

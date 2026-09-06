@@ -20,9 +20,10 @@ from .config import ConfigError, load_config, production_inflation_chart_events
 from .csv_loader import load_market_csv
 from .json_loader import market_json_to_dataframe
 from .market_data import (
+    DISPLAY_HISTORY_DAYS,
     build_inflation_index_results,
     build_action_cost_results,
-    load_highlight_trade_history,
+    load_price_action_history,
     load_market_rows,
     opportunity_fields,
 )
@@ -75,7 +76,9 @@ def _build_configured_inflation_results(store, inflation_config, *, quiet: bool)
         store,
         base_period_start=base_start,
         base_period_end=base_end,
-        first_as_of=last_as_of - timedelta(days=30),
+        # The 90D display contains rolling 30D changes, so the read model needs
+        # 30 additional authentic days for the earliest plotted comparison.
+        first_as_of=last_as_of - timedelta(days=DISPLAY_HISTORY_DAYS + 30),
         last_as_of=last_as_of,
         version=inflation_config.version,
         price_window_days=inflation_config.price_window_days,
@@ -443,7 +446,10 @@ def main() -> None:
             if code in codes_by_normalized
         ]
         with MarketStore(args.market_db) as store:
-            histories = load_highlight_trade_history(store, item_codes=item_codes)
+            histories = {
+                item_code.lower(): load_price_action_history(store, item_code=item_code)
+                for item_code in item_codes
+            }
         chart_capable_highlights = select_highlighted_items(
             dislocations,
             histories,
@@ -487,10 +493,10 @@ def main() -> None:
             rendered_count = 0
             with MarketStore(args.market_db) as store:
                 for storage_code, row in rows_by_code.items():
-                    histories = load_highlight_trade_history(store, item_codes=[storage_code])
+                    history = load_price_action_history(store, item_code=storage_code)
                     chart_item = prepare_price_action_item(
                         row,
-                        histories.get(storage_code.lower(), ()),
+                        history,
                         min_tick=args.min_tick,
                     )
                     if chart_item is None:

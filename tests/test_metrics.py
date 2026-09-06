@@ -1,3 +1,6 @@
+from types import SimpleNamespace
+
+import pandas as pd
 import pytest
 
 from warera_quant.metrics import (
@@ -60,6 +63,33 @@ def test_highlight_interval_boundary_and_unmodified_ohlc_units_volume():
     assert combined.iloc[0].to_dict() == {
         "Open": 10.0, "High": 12.0, "Low": 10.0, "Close": 12.0, "Volume": 5.0,
     }
+
+
+@pytest.mark.parametrize(
+    ("days", "expected"),
+    [
+        (30, "4h"),
+        (60, "8h"),
+        (90, "12h"),
+        (91, "1D"),
+    ],
+)
+def test_price_action_interval_selection_limits_populated_candle_density(days, expected):
+    trades = [
+        {
+            "created_at": timestamp.isoformat(),
+            "price": 10 + index / 1000,
+            "quantity": 1,
+        }
+        for index, timestamp in enumerate(
+            pd.date_range("2026-01-01T00:00:00Z", periods=days * 6, freq="4h")
+        )
+    ]
+
+    interval, candles = select_price_action_interval(trades)
+
+    assert interval == expected
+    assert len(candles) <= 180
 
 
 def test_highlight_selection_ranks_gaps_before_optional_chart_capability():
@@ -216,6 +246,24 @@ def test_all_item_price_action_preparation_supports_neutral_items_and_stable_fil
     assert item.gap_pct == 0
     assert item.interval == "4h"
     assert price_action_chart_filename("Heavy Ammo") == "heavy-ammo-price-action.png"
+
+
+def test_price_action_preparation_accepts_phase_one_history_contract():
+    history = SimpleNamespace(
+        trades=tuple(_highlight_trades()),
+        window_days=90,
+        coverage=SimpleNamespace(observation_count=12),
+    )
+
+    item = prepare_price_action_item({
+        "item_code": "bread", "item_name": "Bread",
+        "last_trade_price": 10, "stable_fair_price_7d": 10,
+    }, history)
+
+    assert item is not None
+    assert item.display_window_days == 90
+    assert item.observation_count == 12
+    assert item.history_span == "3-day span"
 
 
 @pytest.mark.parametrize(

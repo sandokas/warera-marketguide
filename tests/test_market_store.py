@@ -28,6 +28,20 @@ def test_initialize_creates_schema_tables(tmp_path):
         }
 
 
+def test_sync_write_commits_while_another_connection_holds_read_snapshot(tmp_path):
+    with _store(tmp_path) as writer, MarketStore(writer.path) as reader:
+        writer.mark_item_sync_attempt("bread")
+        connection = reader._connect()
+        connection.execute("begin")
+        assert reader.get_item_state("bread").last_error is None
+        try:
+            writer.mark_item_sync_failure("bread", "test failure")
+            assert reader.get_item_state("bread").last_error is None
+        finally:
+            connection.rollback()
+        assert reader.get_item_state("bread").last_error == "test failure"
+
+
 def test_upsert_item_production_points_preserves_undefined_items(tmp_path):
     observed_at = datetime(2026, 6, 30, 10, 0, tzinfo=timezone.utc)
     with _store(tmp_path) as store:

@@ -13,6 +13,8 @@ HIGHLIGHT_CANDLE_INTERVALS = (("4h", "4h"), ("8h", "8h"), ("12h", "12h"), ("1D",
 HIGHLIGHT_MIN_POPULATED_CANDLES = 12
 HIGHLIGHT_MIN_DISTINCT_UTC_DAYS = 3
 HIGHLIGHT_SMA_MIN_CLOSES = 6
+PRICE_ACTION_MAX_POPULATED_CANDLES = 180
+PRICE_ACTION_DISPLAY_WINDOW_DAYS = 90
 NUMERIC_COMPARISON_REL_TOL = 1e-12
 NUMERIC_COMPARISON_ABS_TOL = 1e-12
 
@@ -353,6 +355,8 @@ class HighlightedItem:
     history_span: str | None
     candles: pd.DataFrame
     sma_7d: pd.Series
+    display_window_days: int = PRICE_ACTION_DISPLAY_WINDOW_DAYS
+    observation_count: int = 0
 
     @property
     def filename(self) -> str:
@@ -553,13 +557,33 @@ def build_price_action_candles(transactions: Sequence[dict], *, interval: str) -
 
 
 def select_price_action_interval(transactions: Sequence[dict]) -> tuple[str, pd.DataFrame] | None:
-    """Choose the finest supported interval with 12 candles spanning 3 UTC dates."""
+    """Choose the finest publishable interval with sufficient authentic evidence.
+
+    A populated-candle ceiling keeps dense histories legible at the fixed report
+    image size. Sparse histories retain the finest (4h) detail; empty buckets do
+    not count toward the density limit.
+    """
+    coarsest_eligible: tuple[str, pd.DataFrame] | None = None
     for label, frequency in HIGHLIGHT_CANDLE_INTERVALS:
         candles = build_price_action_candles(transactions, interval=frequency)
         distinct_days = len({timestamp.date() for timestamp in candles.index})
         if len(candles) >= HIGHLIGHT_MIN_POPULATED_CANDLES and distinct_days >= HIGHLIGHT_MIN_DISTINCT_UTC_DAYS:
-            return label, candles
-    return None
+            coarsest_eligible = (label, candles)
+            if len(candles) <= PRICE_ACTION_MAX_POPULATED_CANDLES:
+                return coarsest_eligible
+    return coarsest_eligible
+
+
+def _price_action_history_values(history: object) -> tuple[Sequence[dict], int, int]:
+    """Normalize a trade sequence or Phase 1 PriceActionHistory domain object."""
+    if hasattr(history, "trades") and hasattr(history, "window_days"):
+        transactions = getattr(history, "trades")
+        window_days = int(getattr(history, "window_days"))
+        coverage = getattr(history, "coverage", None)
+        observation_count = int(getattr(coverage, "observation_count", len(transactions)))
+        return transactions, window_days, observation_count
+    transactions = history  # type: ignore[assignment]
+    return transactions, PRICE_ACTION_DISPLAY_WINDOW_DAYS, len(transactions)  # type: ignore[arg-type]
 
 
 def time_based_sma_7d(candles: pd.DataFrame) -> pd.Series:
@@ -572,7 +596,7 @@ def time_based_sma_7d(candles: pd.DataFrame) -> pd.Series:
 
 def prepare_price_action_item(
     row: dict,
-    transactions: Sequence[dict],
+    transactions: Sequence[dict] | object,
     *,
     role: str = "price_action",
     rank_within_role: int = 1,
@@ -588,12 +612,13 @@ def prepare_price_action_item(
         or item.fair_7d <= 0
     ):
         return None
-    selected_interval = select_price_action_interval(transactions)
+    trade_rows, window_days, observation_count = _price_action_history_values(transactions)
+    selected_interval = select_price_action_interval(trade_rows)
     if selected_interval is None:
         return None
     interval, candles = selected_interval
     first, last = candles.index[0], candles.index[-1]
-    span = f"{max(1, (last.date() - first.date()).days + 1)} calendar days available"
+    span = f"{max(1, (last.date() - first.date()).days + 1)}-day span"
     return replace(
         item,
         role=role,
@@ -602,6 +627,8 @@ def prepare_price_action_item(
         history_span=span,
         candles=candles,
         sma_7d=time_based_sma_7d(candles),
+        display_window_days=window_days,
+        observation_count=observation_count,
     )
 
 
@@ -613,7 +640,7 @@ def price_action_chart_filename(item_code: str) -> str:
 
 def select_highlighted_items(
     rows: Sequence[dict] | Sequence[HighlightedItem],
-    trades_by_item: dict[str, Sequence[dict]],
+    trades_by_item: dict[str, Sequence[dict] | object],
     *,
     min_tick: object = 0.001,
     require_chart_history: bool = True,
@@ -637,7 +664,9 @@ def select_highlighted_items(
             if not require_chart_history:
                 supported.append(item)
                 continue
-            selected_interval = select_price_action_interval(trades_by_item.get(item.item_code, ()))
+            history = trades_by_item.get(item.item_code, ())
+            trade_rows, window_days, observation_count = _price_action_history_values(history)
+            selected_interval = select_price_action_interval(trade_rows)
             if selected_interval is None:
                 continue
             interval, candles = selected_interval
@@ -645,9 +674,11 @@ def select_highlighted_items(
             supported.append(replace(
                 item,
                 interval=interval,
-                history_span=f"{max(1, (last.date() - first.date()).days + 1)} calendar days available",
+                history_span=f"{max(1, (last.date() - first.date()).days + 1)}-day span",
                 candles=candles,
                 sma_7d=time_based_sma_7d(candles),
+                display_window_days=window_days,
+                observation_count=observation_count,
             ))
         return supported
 

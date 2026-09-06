@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 import logging
 import math
 import os
@@ -38,6 +39,7 @@ _REPORT_CHART_COLORS = {
 _REPORT_CHART_WIDTHS = {"volume_linewidth": 0}
 _OUTLIER_WICK_RANGE_MULTIPLIER = 2.0
 _MIN_MONEY_UNIT = 0.001
+_TREND_PATH_EXPECTED_INTERVAL_SECONDS = 24 * 60 * 60
 _COMPACT_AXIS_UNITS = (
     (1_000_000_000, "B"),
     (1_000_000, "M"),
@@ -68,13 +70,13 @@ def render_inflation_overview_chart(
     *,
     events: Iterable[InflationChartEvent | Mapping[str, Any]] = (),
 ) -> Path:
-    """Render 30 days of cumulative Broad Market inflation."""
+    """Render up to 90 days of authentic rolling 30D Broad Market inflation."""
     broad = next((
         result for result in results
         if result.definition.enabled and result.definition.key == "broad_market"
     ), None)
-    if broad is None or not broad.monthly_evolution:
-        raise ValueError("An inflation overview chart requires Broad Market monthly evolution.")
+    if broad is None:
+        raise ValueError("An inflation overview chart requires a Broad Market result.")
 
     style = _REPORT_CHART_COLORS
     figure, axis = plt.subplots(figsize=(10.8, 5.4), constrained_layout=True)
@@ -93,18 +95,30 @@ def render_inflation_overview_chart(
     rows.sort(key=lambda row: row[0])
     dates = [row[0] for row in rows]
     changes = [row[1] for row in rows]
-    axis.plot(dates, changes, color=style["accent"], linewidth=2, label="Market prices")
+    axis.plot(dates, changes, color=style["accent"], linewidth=2, label="Rolling 30D inflation")
     finite = [(date, value) for date, value in rows if math.isfinite(value)]
-    if not finite:
-        plt.close(figure)
-        raise ValueError("Inflation overview has no publishable index levels.")
-    last_date, last_change = finite[-1]
-    axis.annotate(
-        f"{last_change:+.2f}%", xy=(last_date, last_change), xytext=(6, 0),
-        textcoords="offset points", color=style["accent"], fontsize=9, va="center",
-    )
+    if finite:
+        last_date, last_change = finite[-1]
+        axis.annotate(
+            f"Latest 30D: {last_change:+.2f}%", xy=(last_date, last_change), xytext=(-6, 9),
+            textcoords="offset points", color=style["accent"], fontsize=9,
+            va="bottom", ha="right",
+        )
+        coverage_days = (finite[-1][0].date() - finite[0][0].date()).days
+        if coverage_days < 89:
+            status = f"Partial history: {len(finite)} rolling observation(s) available"
+        else:
+            status = f"{len(finite)} authentic rolling observations"
+    else:
+        status = "Unavailable: authentic 30-day lookback is not yet available"
+        axis.text(
+            0.5, 0.5, status, transform=axis.transAxes, ha="center", va="center",
+            color=style["muted"], fontsize=11,
+        )
 
-    axis.axhline(0.0, color=style["muted"], linestyle="--", linewidth=1, label="Start = 0%")
+    axis.axhline(0.0, color=style["muted"], linestyle="--", linewidth=1, label="No 30D change")
+    display_end = max(dates) if dates else datetime.now(timezone.utc)
+    display_start = display_end - timedelta(days=90)
     for event in events:
         at = event.at if isinstance(event, InflationChartEvent) else event["at"]
         label = event.label if isinstance(event, InflationChartEvent) else str(event["label"])
@@ -113,6 +127,8 @@ def render_inflation_overview_chart(
             plt.close(figure)
             raise ValueError("Inflation event timestamps must be timezone-aware UTC values.")
         timestamp = timestamp.tz_convert("UTC").to_pydatetime()
+        if not display_start <= timestamp <= display_end:
+            continue
         axis.axvline(timestamp, color=style["muted"], linestyle=":", linewidth=1)
         axis.annotate(
             label, xy=(timestamp, 1), xycoords=("data", "axes fraction"), xytext=(4, -6),
@@ -120,7 +136,14 @@ def render_inflation_overview_chart(
             va="top", ha="left",
         )
 
-    axis.set_title("Accumulated Inflation — Last 30 Days", color=style["text"], loc="left")
+    axis.set_title(
+        "Broad Market Inflation — Rolling 30D over the Last 90 Days",
+        color=style["text"], loc="left", pad=24,
+    )
+    axis.text(
+        0.0, 1.01, f"Positive means BTC buys less · {status}", transform=axis.transAxes,
+        color=style["muted"], fontsize=9, ha="left", va="bottom",
+    )
     axis.set_xlabel("UTC date", color=style["text"])
     axis.set_ylabel("Price change (%)", color=style["text"])
     axis.grid(color=style["grid"], linestyle=":", alpha=0.8)
@@ -437,7 +460,7 @@ def render_trend_path_svg(
     width: int = 96,
     height: int = 28,
 ) -> str | None:
-    """Render a compact, time-proportional path from completed-trade observations."""
+    """Render a compact daily path without bridging missing calendar days."""
     by_timestamp: dict[int, float] = {}
     for point in points:
         try:
@@ -461,7 +484,22 @@ def render_trend_path_svg(
         x = padding + (timestamp - window_start) / time_span * (width - 2 * padding)
         y = height / 2 if price_span == 0 else padding + (high - price) / price_span * (height - 2 * padding)
         coordinates.append((x, y))
-    path_points = " ".join(f"{x:.1f},{y:.1f}" for x, y in coordinates)
+    segments: list[list[tuple[float, float]]] = [[]]
+    previous_timestamp: int | None = None
+    for (timestamp, _price), coordinate in zip(usable, coordinates):
+        if (
+            previous_timestamp is not None
+            and timestamp - previous_timestamp > _TREND_PATH_EXPECTED_INTERVAL_SECONDS
+        ):
+            segments.append([])
+        segments[-1].append(coordinate)
+        previous_timestamp = timestamp
+    path_elements = "".join(
+        '<polyline class="trend-path-line" points="'
+        + " ".join(f"{x:.1f},{y:.1f}" for x, y in segment)
+        + '" />'
+        for segment in segments
+    )
     latest_x, latest_y = coordinates[-1]
     safe_label = (
         aria_label.replace("&", "&amp;")
@@ -472,7 +510,7 @@ def render_trend_path_svg(
     return (
         f'<svg class="trend-path" viewBox="0 0 {width} {height}" role="img" '
         f'aria-label="{safe_label}" preserveAspectRatio="none">'
-        f'<polyline class="trend-path-line" points="{path_points}" />'
+        f"{path_elements}"
         f'<circle class="trend-path-latest" cx="{latest_x:.1f}" cy="{latest_y:.1f}" r="2.2" />'
         "</svg>"
     )
@@ -866,7 +904,10 @@ def render_highlight_price_action_chart(
         "second_largest_discount": "Second-cheapest below normal range",
     }.get(str(highlight.role), str(highlight.role).replace("_", " ").title())
     title = f"{highlight.item_name} — {role_label}"
-    subtitle = f"Trailing 30D · {highlight.interval} candles · {highlight.history_span}"
+    subtitle = (
+        f"Trailing {highlight.display_window_days}D · {highlight.interval} candles · "
+        f"{highlight.history_span} · {len(analytical)} populated candles"
+    )
     kwargs = {
         "type": "candle", "volume": True, "style": style,
         "ylabel": "Price", "ylabel_lower": "Units traded", "datetime_format": "%m-%d",
