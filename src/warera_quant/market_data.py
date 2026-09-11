@@ -34,6 +34,9 @@ from .metrics import (
     traded_value_weights,
     total_upstream_production_points,
     calculate_fixed_action_cost,
+    calculate_we23_market_index,
+    calculate_short_term_guidance,
+    WE23_COMPONENTS,
 )
 
 
@@ -234,6 +237,12 @@ def build_action_cost_results(
                 raise ValueError(f"Conflicting current representative prices for {item_code}.")
             current_prices[item_code] = price
 
+    return _action_cost_results_from_prices(current_prices, definitions=definitions)
+
+
+def _action_cost_results_from_prices(
+    current_prices: dict[str, float], *, definitions: Iterable[ActionCostDefinition] | None = None,
+) -> tuple[ActionCostResult, ...]:
     benchmark_definitions = (
         default_action_cost_definitions() if definitions is None else tuple(definitions)
     )
@@ -250,6 +259,45 @@ def build_action_cost_results(
             components=calculated.components,
         ))
     return tuple(results)
+
+
+def load_action_cost_results(
+    store: MarketStore, *, as_of: datetime,
+    definitions: Iterable[ActionCostDefinition] | None = None,
+) -> tuple[ActionCostResult, ...]:
+    """Load reusable completed-price inputs without computing inflation indexes."""
+    definitions = tuple(default_action_cost_definitions() if definitions is None else definitions)
+    codes = tuple(dict.fromkeys(code for definition in definitions for code, _ in definition.quantities))
+    end = _as_utc(as_of).replace(hour=0, minute=0, second=0, microsecond=0)
+    prices = load_period_item_prices(
+        store, item_codes=codes, period_start=end - timedelta(days=7), period_end=end,
+    )
+    return _action_cost_results_from_prices(
+        {price.item_code: price.representative_price for price in prices}, definitions=definitions,
+    )
+
+
+def build_we23_market_index(
+    store: MarketStore, *, as_of: datetime, display_days: int = 30,
+    inception: datetime = datetime(2026, 8, 1, tzinfo=timezone.utc), weighting_days: int = 28,
+) -> dict[str, Any]:
+    """Read completed transaction inputs, independently of synchronization metadata."""
+    end = _as_utc(as_of).replace(hour=0, minute=0, second=0, microsecond=0)
+    start = _as_utc(inception) - timedelta(days=weighting_days + 1)
+    facts = store.completed_daily_facts(WE23_COMPONENTS, int(start.timestamp()), int(end.timestamp()))
+    result = calculate_we23_market_index(
+        facts, as_of=end, inception=inception,
+        display_days=display_days, weighting_days=weighting_days,
+    )
+    unexpected = sorted(set(store.item_codes()) - set(WE23_COMPONENTS))
+    if unexpected:
+        reason = "Membership review required for additional item codes: " + ", ".join(unexpected)
+        result.update(latest_level=None, coverage_status="unavailable", reason=reason,
+                      first_valid_at=None, last_valid_at=None, valid_observation_count=0,
+                      weights={}, weight_history=[], top_weight_pct=None, top_three_weight_pct=None)
+        result["observations"] = [dict(point, level=None, reason=reason, weights={}) for point in result["observations"]]
+    return result
+
 
 
 _PURPOSE_INDEXES = (
@@ -1042,7 +1090,7 @@ def load_market_rows(
             best_bid = snapshot.get("best_bid")
             best_ask = snapshot.get("best_ask")
             observed = datetime.fromtimestamp(int(snapshot["observed_at_epoch"]), tz=timezone.utc)
-            quote_age_minutes = max(0.0, (now - observed).total_seconds() / 60)
+            quote_age_minutes = (now - observed).total_seconds() / 60
             if snapshot.get("levels_available"):
                 bids = snapshot.get("bids", ())
                 asks = snapshot.get("asks", ())
@@ -1074,7 +1122,7 @@ def load_market_rows(
         )
         guidance_stats = window_stats[guidance_window.label]
         guidance = calculate_fair_value_guidance(
-            fair_price=guidance_stats.get("stable_fair_price"),
+            fair_price=guidance_stats.get("vwap"),
             rich_exit_price=guidance_stats.get("price_p90"),
             price_p10=guidance_stats.get("price_p10"),
             price_p25=guidance_stats.get("price_p25"),
@@ -1086,6 +1134,15 @@ def load_market_rows(
             assumptions=assumptions,
         )
         row.update(guidance_fields(guidance))
+        row.update({
+            "guide_entry_slippage_pct": entry_sweep.slippage_pct if entry_sweep and entry_sweep.fully_filled else None,
+            "guide_exit_slippage_pct": exit_sweep.slippage_pct if exit_sweep and exit_sweep.fully_filled else None,
+            "guide_entry_filled_quantity": entry_sweep.filled_quantity if entry_sweep else None,
+            "guide_exit_filled_quantity": exit_sweep.filled_quantity if exit_sweep else None,
+        })
+        row.update(calculate_short_term_guidance(
+            guidance, quote_age_minutes=quote_age_minutes, assumptions=assumptions,
+        ))
         rows.append(row)
 
     return rows
@@ -1178,10 +1235,13 @@ def load_price_action_history(
     *,
     item_code: str,
     now: datetime | None = None,
+    window_days: int = 30,
 ) -> PriceActionHistory:
-    """Load authentic completed trades and coverage facts for the 90D display window."""
+    """Load chart history independently of download and retention settings."""
+    if window_days <= 0:
+        raise ValueError("Item chart window_days must be positive.")
     window_end = _as_utc(now or datetime.now(timezone.utc))
-    window_start = window_end - timedelta(days=DISPLAY_HISTORY_DAYS)
+    window_start = window_end - timedelta(days=window_days)
     end_epoch = int(window_end.timestamp())
     rows = store.transactions_for_window(item_code, int(window_start.timestamp()))
     if not rows and item_code != item_code.lower():
@@ -1192,7 +1252,7 @@ def load_price_action_history(
     ])
     return PriceActionHistory(
         item_code=item_code.lower(),
-        window_days=DISPLAY_HISTORY_DAYS,
+        window_days=window_days,
         window_start=window_start,
         window_end=window_end,
         trades=tuple(trades),

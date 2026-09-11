@@ -185,6 +185,8 @@ def _sync_item_transactions(
     stopped_at_high_water = False
     stopped_at_duplicate = False
     newest_summary: InsertSummary | None = None
+    verified_start_epoch: int | None = None
+    coverage_source = ""
     page_numbers = range(history_pages) if history_pages > 0 else count()
 
     for page_index, _ in enumerate(page_numbers, start=1):
@@ -215,26 +217,46 @@ def _sync_item_transactions(
         )
         if high_water_epoch is not None and oldest_epoch is not None and oldest_epoch <= high_water_epoch:
             stopped_at_high_water = True
+            verified_start_epoch = high_water_epoch + 1
+            coverage_source = "contiguous-pagination-to-high-water"
             _log(progress, f"{item_code}: reached stored high-water mark on page {page_index}")
             break
         if not transaction_backfill and insert_summary.skipped > 0:
             stopped_at_duplicate = True
+            # The current scan verifies only the fully fetched recent interval,
+            # not any legacy history beyond the duplicate that stopped it.
+            verified_start_epoch = oldest_epoch + 1 if oldest_epoch is not None else None
+            coverage_source = "contiguous-pagination-to-duplicate"
             _log(
                 progress,
                 f"{item_code}: found {insert_summary.skipped} duplicate transaction(s) on page {page_index}; stopping",
             )
             break
-        if backfill_boundary is not None and oldest_epoch is not None and oldest_epoch <= int(backfill_boundary.timestamp()):
+        if backfill_boundary is not None and oldest_epoch is not None and oldest_epoch < int(backfill_boundary.timestamp()):
+            verified_start_epoch = int(backfill_boundary.timestamp())
+            coverage_source = "contiguous-pagination-to-backfill-boundary"
             _log(progress, f"{item_code}: reached backfill lookback boundary on page {page_index}")
             break
         if not page.next_cursor:
+            verified_start_epoch = (
+                int(backfill_boundary.timestamp()) if backfill_boundary is not None else 0
+            )
+            coverage_source = "exhausted-api-pagination"
             _log_verbose(progress, verbose, f"{item_code}: stopped because API returned no next cursor.")
             break
         if history_pages > 0 and page_index >= history_pages:
+            # The oldest second can straddle pages: exclude that second when
+            # stopping on a cap. Everything newer was traversed contiguously.
+            verified_start_epoch = oldest_epoch + 1 if oldest_epoch is not None else None
+            coverage_source = "contiguous-pagination-page-cap-recent-interval"
             _log_verbose(progress, verbose, f"{item_code}: stopped after configured page cap ({history_pages}).")
             break
         cursor = page.next_cursor
 
+    if verified_start_epoch is not None:
+        store.record_transaction_coverage(
+            item_code, verified_start_epoch, int(fetched_at.timestamp()), source=coverage_source,
+        )
     state_newest = _newest_state(
         state_epoch=state.newest_created_at_epoch if state else None,
         state_created_at=state.newest_created_at if state else None,

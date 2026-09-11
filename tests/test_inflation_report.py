@@ -89,8 +89,8 @@ def test_unavailable_change_is_not_rendered_as_zero_or_stable():
 def test_generate_report_accepts_precomputed_inflation_results():
     html = generate_html_report(pd.DataFrame(), inflation_results=[_result(provisional=True)])
 
-    assert "Historical Inflation" in html
-    assert "Historical Inflation" in html
+    assert "Historical Inflation" not in html
+    assert "WE23 Market Index" in html
 
 
 def test_inflation_is_between_market_trends_and_item_price_context():
@@ -100,8 +100,9 @@ def test_inflation_is_between_market_trends_and_item_price_context():
 
     html = generate_html_report(frame, inflation_results=[_result()])
 
-    assert html.index("Market Trends") < html.index("Historical Inflation")
-    assert html.index("Historical Inflation") < html.index("Item Price Context")
+    assert "Market Trends" not in html
+    assert "Historical Inflation" not in html
+    assert html.index("WE23 Market Index") < html.index("Item Price Context")
 
 
 def test_inflation_export_is_normalized_and_contains_no_json(tmp_path):

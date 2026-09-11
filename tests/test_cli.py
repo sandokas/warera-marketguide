@@ -13,6 +13,10 @@ from warera_quant.market_store import MarketStore
 @pytest.fixture(autouse=True)
 def prevent_tests_from_loading_local_dotenv(monkeypatch):
     monkeypatch.setattr(cli_module, "load_dotenv", lambda: False)
+    monkeypatch.setattr(cli_module, "export_report_assets", lambda *a, **k: [])
+    monkeypatch.setattr(cli_module, "render_we23_chart", lambda index, path, **k: path)
+    monkeypatch.setattr(cli_module, "build_we23_market_index", lambda *a, **k: {})
+    monkeypatch.setattr(cli_module, "load_action_cost_results", lambda *a, **k: ())
 
 
 def test_order_book_sync_defaults_to_api_maximum():
@@ -136,21 +140,7 @@ def test_table_png_flow_exports_header_cards_and_tables_without_a_new_flag(tmp_p
     }]).to_csv(csv_path, index=False)
     calls = []
 
-    monkeypatch.setattr(
-        cli_module,
-        "render_report_header_png",
-        lambda report, destination: calls.append(("header", report, destination)) or destination / "report-header.png",
-    )
-    monkeypatch.setattr(
-        cli_module,
-        "render_report_item_context_pngs",
-        lambda report, destination: calls.append(("cards", report, destination)) or [destination / "bread-price-context.png"],
-    )
-    monkeypatch.setattr(
-        cli_module,
-        "render_report_table_pngs",
-        lambda report, destination: calls.append(("tables", report, destination)) or [destination / "01-table.png"],
-    )
+    monkeypatch.setattr(cli_module, "export_report_assets", lambda report, destination, **kwargs: calls.append(("inventory", report, destination)) or [])
     monkeypatch.setattr(sys, "argv", [
         "warera-quant", "--csv", str(csv_path), "--output", str(output),
         "--table-pngs", "--quiet",
@@ -158,8 +148,8 @@ def test_table_png_flow_exports_header_cards_and_tables_without_a_new_flag(tmp_p
 
     main()
 
-    assert [call[0] for call in calls] == ["header", "cards", "tables"]
-    assert calls[1][2] == output / "cards"
+    assert [call[0] for call in calls] == ["inventory"]
+    assert calls[0][2] == output
 
 
 def test_housekeeping_is_an_independent_command(tmp_path, monkeypatch):
@@ -195,3 +185,10 @@ def test_housekeeping_is_an_independent_command(tmp_path, monkeypatch):
 
     with MarketStore(database_path) as store:
         assert store.transactions_for_window("bread", 0) == []
+
+
+def test_display_settings_do_not_change_download_window():
+    args = build_parser().parse_args(["--item-chart-days", "14", "--we23-days", "60", "--research-days", "90", "--lookback-days", "180"])
+    assert (args.item_chart_days, args.we23_days, args.research_days, args.lookback_days) == (14, 60, 90, 180)
+    defaults = build_parser().parse_args([])
+    assert (defaults.item_chart_days, defaults.chart_interval, defaults.we23_days) == (30, "4h", 30)

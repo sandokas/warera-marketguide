@@ -22,6 +22,15 @@ Signals can use aggressive thresholds because this is an in-game economy. Aggres
 greater willingness to act on a plausible edge; it does not mean inventing prices, hiding weak
 liquidity, silently substituting one price source for another, or claiming certainty.
 
+## Current implementation versus goal
+
+The decisions above describe the product goal. The current published Trading Guide has one
+BUY/SELL/HOLD signal, executable Buy/Sell prices, Median 7D, 7D VWAP, a latest-trade gap to the
+blended 7D reference, and Price State. Entry and holder decisions remain separate internally.
+The table does not currently publish a full target, stop-loss, or forecast-horizon plan.
+Historical reference gaps are valuation context, not promised profits or seven-day returns.
+WE23 provides broad market context, and all report tables are published as static PNGs.
+
 ## Position-aware action semantics
 
 WarEra does not support short selling. A `Sell` signal must never mean opening a short position or

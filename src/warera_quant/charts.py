@@ -564,11 +564,6 @@ def build_ohlc(transactions: Iterable[dict[str, Any]], *, interval: str = "1h") 
     volume = trades["volume"].resample(interval).sum()
     candles = pd.concat([ohlc, volume.rename("Volume")], axis=1).dropna(subset=["open", "high", "low", "close"])
     candles = candles.rename(columns={"open": "Open", "high": "High", "low": "Low", "close": "Close"})
-    flat = candles["High"] == candles["Low"]
-    if flat.any():
-        padding = candles.loc[flat, "Close"].abs().mul(0.005).clip(lower=0.001)
-        candles.loc[flat, "High"] = candles.loc[flat, "High"] + padding
-        candles.loc[flat, "Low"] = (candles.loc[flat, "Low"] - padding).clip(lower=0)
     return candles
 
 
@@ -672,12 +667,12 @@ def chart_ylim(candles: pd.DataFrame, *, min_range_pct: float = 5.0) -> tuple[fl
     return viewport.ylim if viewport is not None else None
 
 
-def _mark_off_scale_wicks(axis: Any, viewport: ChartViewport) -> None:
+def _mark_off_scale_wicks(axis: Any, viewport: ChartViewport, *, x_coordinates: Sequence[float] | None = None) -> None:
     lower, upper = viewport.ylim
     inset = (upper - lower) * 0.025
     if viewport.low_positions:
         axis.scatter(
-            viewport.low_positions,
+            [x_coordinates[i] for i in viewport.low_positions] if x_coordinates is not None else viewport.low_positions,
             [lower + inset] * len(viewport.low_positions),
             marker="v",
             s=44,
@@ -690,7 +685,7 @@ def _mark_off_scale_wicks(axis: Any, viewport: ChartViewport) -> None:
         )
     if viewport.high_positions:
         axis.scatter(
-            viewport.high_positions,
+            [x_coordinates[i] for i in viewport.high_positions] if x_coordinates is not None else viewport.high_positions,
             [upper - inset] * len(viewport.high_positions),
             marker="^",
             s=44,
@@ -869,73 +864,100 @@ def render_highlight_price_action_chart(
     *,
     min_range_pct: float = 5.0,
 ) -> Path | None:
-    """Render prepared analytical candles without mutating their OHLC values."""
-    analytical = normalize_ohlc(highlight.candles)
-    if analytical.empty:
+    """Render true OHLC on a UTC axis, preserving gaps and partial interval volume."""
+    import matplotlib.dates as mdates
+    from matplotlib.patches import Rectangle
+
+    candles = normalize_ohlc(highlight.candles)
+    if candles.empty:
         return None
-    visual = analytical.copy()
-    flat = visual["High"] == visual["Low"]
-    if flat.any():
-        padding = visual.loc[flat, "Close"].abs().mul(0.005).clip(lower=0.001)
-        visual.loc[flat, "High"] += padding
-        visual.loc[flat, "Low"] = (visual.loc[flat, "Low"] - padding).clip(lower=0)
-
-    add_plots = []
-    sma = highlight.sma_7d.copy()
-    sma.index = pd.to_datetime(sma.index, utc=True, errors="coerce").tz_convert(None)
-    sma = sma.reindex(visual.index)
-    if sma.notna().any():
-        add_plots.append(
-            mpf.make_addplot(
-                sma,
-                color=_REPORT_CHART_COLORS["accent"],
-                width=1.3,
-                label="7D SMA",
-            )
+    start = pd.Timestamp(highlight.window_start or candles.index[0])
+    end = pd.Timestamp(highlight.window_end or (candles.index[-1] + pd.Timedelta(highlight.interval)))
+    start = start.tz_convert(None) if start.tzinfo else start
+    end = end.tz_convert(None) if end.tzinfo else end
+    interval = pd.Timedelta(highlight.interval)
+    width = interval.total_seconds() / 86400 * 0.72
+    figure, (price_axis, volume_axis) = plt.subplots(
+        2, 1, figsize=(12, 6.6), sharex=True, gridspec_kw={"height_ratios": [3, 1]},
+    )
+    figure.set_facecolor(_REPORT_CHART_COLORS["background"])
+    for axis in (price_axis, volume_axis):
+        axis.set_facecolor(_REPORT_CHART_COLORS["panel"])
+        axis.tick_params(colors="#e2e8f0", labelsize=10)
+        axis.yaxis.label.set_color("#e2e8f0")
+        axis.grid(axis="y", color="#2e3a55", alpha=0.45)
+        for spine in axis.spines.values():
+            spine.set_color("#2e3a55")
+    partial_count = 0
+    for timestamp, candle in candles.iterrows():
+        x = mdates.date2num(timestamp.to_pydatetime())
+        partial = timestamp < start or timestamp + interval > end
+        partial_count += int(partial)
+        color = "#6ee7b7" if candle.Close >= candle.Open else "#f87171"
+        price_axis.vlines(x, candle.Low, candle.High, color=color, linewidth=0.9)
+        if candle.Open == candle.Close:
+            price_axis.hlines(candle.Close, x - width / 2, x + width / 2, color=color, linewidth=1)
+        else:
+            price_axis.add_patch(Rectangle((x-width/2, min(candle.Open, candle.Close)), width,
+                                          abs(candle.Close-candle.Open), facecolor=color,
+                                          edgecolor=color, linewidth=0.6, hatch="//" if partial else None))
+        volume_axis.bar(x, candle.Volume, width=width, color=color,
+                        alpha=0.35 if partial else 0.85, edgecolor="#fbbf24" if partial else color,
+                        hatch="//" if partial else None, linewidth=0.8 if partial else 0)
+        if partial:
+            price_axis.axvspan(x-width/2, x+width/2, color="#fbbf24", alpha=0.15)
+    for day in pd.date_range(start.normalize(), end.normalize(), freq="D"):
+        for axis in (price_axis, volume_axis):
+            axis.axvline(day, color="#94a3b8", linewidth=0.6, alpha=0.35)
+    reference = highlight.fair_7d
+    if reference is not None:
+        price_axis.axhline(reference, color="#fbbf24", linestyle="--", linewidth=1,
+                          label="7D reference")
+    if highlight.price_p10_7d is not None and highlight.price_p90_7d is not None:
+        price_axis.axhspan(highlight.price_p10_7d, highlight.price_p90_7d, color="#60a5fa",
+                          alpha=0.09, label="P10-P90")
+    price_axis.set_ylabel("BTC")
+    volume_axis.set_ylabel("Units")
+    volume_axis.yaxis.set_major_formatter(FuncFormatter(_format_quantity_axis_value))
+    volume_axis.yaxis.set_major_locator(MaxNLocator(nbins=4, integer=True))
+    volume_axis.xaxis.set_major_locator(mdates.DayLocator(interval=max(1, math.ceil((end - start).total_seconds() / 86400 / 7))))
+    volume_axis.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
+    volume_axis.set_xlabel("UTC", color="#e2e8f0")
+    price_axis.set_xlim(mdates.date2num(start)-width, mdates.date2num(end)+width)
+    viewport = chart_viewport(candles, min_range_pct=min_range_pct)
+    if viewport is not None:
+        price_axis.set_ylim(viewport.ylim)
+        _mark_off_scale_wicks(
+            price_axis, viewport,
+            x_coordinates=mdates.date2num(candles.index.to_pydatetime()),
         )
-
+    _format_monetary_axis(price_axis)
+    legend = price_axis.legend(loc="best", fontsize=9, facecolor="#111826", edgecolor="#2e3a55")
+    for label in legend.get_texts():
+        label.set_color("#e2e8f0")
+        if label.get_text().startswith("Off-scale high"):
+            label.set_text(f"Above scale: {viewport.observed_high:g}")
+        elif label.get_text().startswith("Off-scale low"):
+            label.set_text(f"Below scale: {viewport.observed_low:g}")
+    figure.suptitle(highlight.item_name, x=0.09, ha="left", fontsize=17,
+                    fontweight="bold", color="#e2e8f0", y=0.98)
+    latest = highlight.latest_completed_price
+    value = _format_monetary_axis_value(latest) if latest is not None else "\u2014"
+    figure.text(0.09, 0.90, f"{value} BTC", fontsize=22, fontweight="bold", color="#e2e8f0")
+    gap = highlight.raw_gap_pct
+    if gap is not None:
+        gap = round(gap, 2)
+        color = _REPORT_CHART_COLORS["good" if gap > 0 else "bad" if gap < 0 else "muted"]
+        symbol = "\u25b2" if gap > 0 else "\u25bc" if gap < 0 else ""
+        figure.text(0.40, 0.90, f"{symbol} {gap:+.2f}% vs 7D", fontsize=15, color=color)
+    context = f"{highlight.display_window_days}D | {highlight.interval}"
+    if partial_count:
+        context += " | // Partial"
+    figure.text(0.97, 0.95, context, ha="right", fontsize=10, color="#94a3b8")
+    figure.subplots_adjust(top=0.84, left=0.09, right=0.97, bottom=0.11, hspace=0.08)
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    style = _report_chart_style()
-    role_label = {
-        "largest_premium": "Rich above normal range",
-        "largest_discount": "Cheap below normal range",
-        "second_largest_premium": "Second-richest above normal range",
-        "second_largest_discount": "Second-cheapest below normal range",
-    }.get(str(highlight.role), str(highlight.role).replace("_", " ").title())
-    title = f"{highlight.item_name} — {role_label}"
-    subtitle = (
-        f"Trailing {highlight.display_window_days}D · {highlight.interval} candles · "
-        f"{highlight.history_span} · {len(analytical)} populated candles"
-    )
-    kwargs = {
-        "type": "candle", "volume": True, "style": style,
-        "ylabel": "Price", "ylabel_lower": "Units traded", "datetime_format": "%m-%d",
-        "tight_layout": False,
-        "update_width_config": _REPORT_CHART_WIDTHS,
-        "savefig": dict(fname=str(output), dpi=150, bbox_inches="tight"),
-    }
-    if add_plots:
-        kwargs["addplot"] = add_plots
-    viewport = chart_viewport(analytical, min_range_pct=min_range_pct)
-    if viewport is not None:
-        kwargs["ylim"] = viewport.ylim
-    figure, axes = mpf.plot(visual, returnfig=True, **{k: v for k, v in kwargs.items() if k != "savefig"})
-    _apply_market_axis_formatters(axes, has_spread=False)
-    figure.suptitle(f"{title}\n{subtitle}", fontsize=14, fontweight="bold", y=0.98)
-    figure.subplots_adjust(top=0.84, left=0.10, right=0.91, bottom=0.12)
-    axes[0].axhline(
-        highlight.fair_7d,
-        color=_REPORT_CHART_COLORS["amber"],
-        linestyle="--",
-        linewidth=1.2,
-        label="Strict 7D fair",
-    )
-    if viewport is not None:
-        _mark_off_scale_wicks(axes[0], viewport)
-    axes[0].legend(loc="best")
-    figure.savefig(output, dpi=150, bbox_inches="tight")
-    import matplotlib.pyplot as plt
+    figure.savefig(output, dpi=150, facecolor=figure.get_facecolor())
     plt.close(figure)
     return output
 
@@ -967,3 +989,50 @@ def _optional_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def render_we23_chart(index: dict, output_path: str | Path, *, display_days: int = 30) -> Path:
+    """Render the supplied WE23 level series, keeping unsupported dates as gaps."""
+    import matplotlib.dates as mdates
+    observations = index.get("observations", [])
+    frame = pd.DataFrame(observations)
+    figure, axis = plt.subplots(figsize=(12, 3.7), layout="constrained")
+    figure.set_facecolor("#0b1120")
+    axis.set_facecolor("#111826")
+    axis.tick_params(colors="#e2e8f0", labelsize=10)
+    axis.grid(color="#2e3a55", alpha=0.5)
+    for spine in axis.spines.values():
+        spine.set_color("#2e3a55")
+    valid = pd.DataFrame()
+    if not frame.empty and "as_of" in frame:
+        frame["date"] = pd.to_datetime(frame["as_of"], utc=True)
+        end = frame["date"].max()
+        frame = frame[frame["date"] >= end - pd.Timedelta(days=display_days-1)].sort_values("date")
+        frame["level"] = pd.to_numeric(frame["level"], errors="coerce")
+        # Reindex calendar dates to keep absent observations visibly disconnected.
+        series = frame.set_index("date")["level"]
+        series = series.reindex(pd.date_range(series.index.min(), series.index.max(), freq="D"))
+        axis.plot(series.index, series.values, color="#60a5fa", linewidth=1.8, marker=".", markersize=4)
+        valid = frame[frame["level"].notna()]
+        axis.set_xlim(end-pd.Timedelta(days=display_days-1), end+pd.Timedelta(hours=6))
+    if valid.empty:
+        axis.text(0.5, 0.5, "Unavailable", transform=axis.transAxes, color="#94a3b8",
+                  ha="center", fontsize=15)
+        axis.set_xticks([])
+        axis.set_yticks([])
+    if not valid.empty:
+        # Fixed day steps remain equally spaced across month boundaries. Anchor
+        # to the latest observation so its date is always visible on the axis.
+        tick_days = max(1, math.ceil((display_days - 1) / 6))
+        ticks = pd.date_range(
+            end=end, periods=(display_days - 1) // tick_days + 1,
+            freq=pd.Timedelta(days=tick_days),
+        )
+        axis.set_xticks(ticks)
+        axis.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
+    axis.set_title(f"WE23 | {display_days}D", loc="left", color="#94a3b8", fontsize=11, pad=12)
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(output, dpi=150, facecolor=figure.get_facecolor())
+    plt.close(figure)
+    return output

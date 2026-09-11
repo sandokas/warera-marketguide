@@ -29,7 +29,9 @@ For each report window, stored executions provide:
 - rolling average and distance from that average;
 - a stable fair price and stable range.
 
-Volume is the sum of transaction quantities. VWAP weights unit price by positive quantity. The stable fair price combines VWAP (50%), median (30%), and rolling average (20%), reweighting the available inputs. The stable range is the 10th-to-90th percentile span as a percentage of the median.
+Volume is the sum of transaction quantities. VWAP weights unit price by positive quantity. The stable fair price combines VWAP (50%), median (30%), and rolling average (20%), reweighting the available inputs. The rolling average is the arithmetic mean of the last five priced trades in the window (or all of them if fewer than five exist). The stable range is the 10th-to-90th percentile span as a percentage of the median.
+
+`percent_change` compares the window's first and last priced trades and requires at least two distinct timestamps. The published guide and item-chart percentage instead use `(last_trade_price / stable_fair_price_7d - 1) * 100`. This reference gap is not a return from seven days ago. The guide's Buy/Sell columns remain executable quotes, and its 7D VWAP is a separate historical statistic.
 
 When a window has no executions, transaction-derived prices and metrics are unavailable. Neither a
 price-endpoint observation nor an order-book midpoint may fill average, minimum, maximum, fair-price,
@@ -64,7 +66,7 @@ position, stable range, trade count, volume, and current spread. Labels such as 
 The product's decision layer combines that evidence with transaction-derived valuation and current
 executable order-book conditions. It separately issues entry guidance (`Buy now` or `Wait to buy`)
 for users without inventory and exit guidance (`Sell now` or `Hold`) for users who already own the
-item, with targets and stop-loss or invalidation levels. `Sell now` never represents a short-selling
+item. The current compact table summarizes those actions as BUY, SELL, or HOLD; it does not display a full target/stop plan. `Sell now` never represents a short-selling
 recommendation. Market-state labels must not be confused with either action.
 
 Fair-value guidance uses quantity-aware order-book sweeps. For configured quantity `q`, the current
@@ -106,7 +108,7 @@ spread_penalty = 1 + max(spread_pct, 0.5) / 100
 liquidity = depth / spread_penalty
 ```
 
-The report normalizes liquidity bars against the strongest displayed row.
+This liquidity metric remains derived data; the current report uses completed value and PP-equivalent volume for its activity bars.
 
 Trading attractiveness is a separate compatibility metric intended for market-making comparisons:
 

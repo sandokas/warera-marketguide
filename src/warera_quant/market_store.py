@@ -6,9 +6,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from collections.abc import Iterable
 
 
-LATEST_SCHEMA_VERSION = 3
+LATEST_SCHEMA_VERSION = 4
 
 
 class MarketStoreError(RuntimeError):
@@ -393,6 +394,15 @@ class MarketStore:
         cutoff_epoch = _epoch_seconds(cutoff_at)
         connection = self._connect()
         with connection:
+            connection.execute(
+                "insert or replace into schema_meta (key, value) values ('transaction_retention_cutoff_epoch', ?)",
+                (str(cutoff_epoch),),
+            )
+            connection.execute("delete from transaction_coverage where end_epoch <= ?", (cutoff_epoch,))
+            connection.execute(
+                "update transaction_coverage set start_epoch = ? where start_epoch < ?",
+                (cutoff_epoch, cutoff_epoch),
+            )
             transactions_deleted = connection.execute(
                 "delete from transactions where created_at_epoch < ?",
                 (cutoff_epoch,),
@@ -438,6 +448,69 @@ class MarketStore:
             order by created_at_epoch asc, id asc
             """,
             (item_code, since_epoch),
+        ).fetchall()
+        return [_dict_from_row(row) for row in rows]
+
+    def record_transaction_coverage(
+        self, item_code: str, start_epoch: int, end_epoch: int, *, source: str,
+    ) -> None:
+        """Record a completed contiguous API scan, never inferred trade coverage.
+
+        Call only after all pages covering the interval were successfully read.
+        Retention clamps provenance just as it clamps the underlying facts.
+        """
+        if end_epoch <= start_epoch:
+            return
+        connection = self._connect()
+        # A new verified backfill has reinserted its complete scanned interval.
+        # Previous pruning trims old provenance, but must not permanently prevent
+        # a later, longer download from restoring that history.
+        with connection:
+            connection.execute(
+                "insert or ignore into transaction_coverage "
+                "(item_code, start_epoch, end_epoch, source) values (?, ?, ?, ?)",
+                (item_code, int(start_epoch), int(end_epoch), source),
+            )
+
+    def transaction_coverage(self, item_codes: Iterable[str] | None = None) -> dict[str, list[tuple[int, int]]]:
+        """Return merged verified intervals; legacy metadata is not provenance."""
+        connection = self._connect()
+        if "transaction_coverage" not in self.table_names():
+            return {}
+        allowed = set(item_codes) if item_codes is not None else None
+        result: dict[str, list[tuple[int, int]]] = {}
+        for row in connection.execute(
+            "select item_code, start_epoch, end_epoch from transaction_coverage "
+            "order by item_code, start_epoch, end_epoch"
+        ):
+            code = str(row["item_code"])
+            if allowed is not None and code not in allowed:
+                continue
+            intervals = result.setdefault(code, [])
+            start, end = int(row["start_epoch"]), int(row["end_epoch"])
+            if intervals and start <= intervals[-1][1]:
+                intervals[-1] = (intervals[-1][0], max(intervals[-1][1], end))
+            else:
+                intervals.append((start, end))
+        return result
+
+    def completed_daily_facts(
+        self, item_codes: Iterable[str], start_epoch: int, end_epoch: int,
+    ) -> list[dict[str, Any]]:
+        """Bounded UTC-day transaction aggregates for price/turnover read models."""
+        codes = tuple(dict.fromkeys(item_codes))
+        if not codes or end_epoch <= start_epoch:
+            return []
+        placeholders = ",".join("?" for _ in codes)
+        rows = self._connect().execute(
+            f"select item_code, (created_at_epoch / 86400) * 86400 as day_epoch, "
+            "sum(quantity) as quantity, sum(unit_price * quantity) as turnover, "
+            "count(*) as trade_count, max(created_at_epoch) as last_trade_epoch "
+            f"from transactions where item_code in ({placeholders}) "
+            "and created_at_epoch >= ? and created_at_epoch < ? "
+            "and unit_price > 0 and unit_price < 1e308 and quantity > 0 and quantity < 1e308 "
+            "group by item_code, day_epoch order by day_epoch, item_code",
+            (*codes, int(start_epoch), int(end_epoch)),
         ).fetchall()
         return [_dict_from_row(row) for row in rows]
 
@@ -759,10 +832,19 @@ def migrate_to_v3(connection: sqlite3.Connection) -> None:
     )
 
 
+def migrate_to_v4(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        "create table transaction_coverage ("
+        "item_code text not null, start_epoch integer not null, end_epoch integer not null, "
+        "source text not null, check (end_epoch > start_epoch))"
+    )
+
+
 MIGRATIONS = {
     1: migrate_to_v1,
     2: migrate_to_v2,
     3: migrate_to_v3,
+    4: migrate_to_v4,
 }
 
 

@@ -10,19 +10,15 @@ from dotenv import load_dotenv
 
 from .api_client import WarEraApiClient
 from .charts import (
-    render_inflation_overview_chart,
+    render_we23_chart,
     render_highlight_price_action_chart,
-    render_report_header_png,
-    render_report_item_context_pngs,
-    render_report_table_pngs,
 )
-from .config import ConfigError, load_config, production_inflation_chart_events
+from .config import ConfigError, load_config
 from .csv_loader import load_market_csv
 from .json_loader import market_json_to_dataframe
 from .market_data import (
-    DISPLAY_HISTORY_DAYS,
-    build_inflation_index_results,
-    build_action_cost_results,
+    build_we23_market_index,
+    load_action_cost_results,
     load_price_action_history,
     load_market_rows,
     opportunity_fields,
@@ -39,7 +35,7 @@ from .metrics import (
     price_action_chart_filename,
     select_highlighted_items,
 )
-from .report import combine_market_rows_with_metrics, write_outputs
+from .report import combine_market_rows_with_metrics, write_outputs, export_report_assets
 from .sync import sync_market_data
 from .warera_api import WarEraMarketApi
 
@@ -60,31 +56,6 @@ def _current_complete_utc_midnight(now: datetime | None = None) -> datetime:
     if current.tzinfo is None:
         raise ValueError("now must be timezone-aware.")
     return current.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-
-
-def _build_configured_inflation_results(store, inflation_config, *, quiet: bool):
-    if not inflation_config.enabled:
-        return None
-    base_start = inflation_config.base_period_start
-    base_end = base_start + timedelta(days=inflation_config.price_window_days)
-    last_as_of = _current_complete_utc_midnight()
-    if last_as_of < base_end:
-        if not quiet:
-            print("Skipped inflation: the configured base period is not complete yet.", flush=True)
-        return None
-    return build_inflation_index_results(
-        store,
-        base_period_start=base_start,
-        base_period_end=base_end,
-        # The 90D display contains rolling 30D changes, so the read model needs
-        # 30 additional authentic days for the earliest plotted comparison.
-        first_as_of=last_as_of - timedelta(days=DISPLAY_HISTORY_DAYS + 30),
-        last_as_of=last_as_of,
-        version=inflation_config.version,
-        price_window_days=inflation_config.price_window_days,
-        min_base_trade_count=inflation_config.min_base_trade_count,
-        min_base_traded_quantity=inflation_config.min_base_traded_quantity,
-    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -199,23 +170,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Minimum seconds between API requests.",
     )
     parser.add_argument("--output", default="output", help="Output directory.")
-    parser.add_argument("--top", type=int, default=0, help="Number of ranked items to show. Use 0 to show all.")
+    parser.add_argument("--top", type=int, default=0, help="Legacy option; published reports retain every item regardless of this value.")
     parser.add_argument(
         "--table-pngs",
         action="store_true",
-        help="Export the report header, Item Price Context cards, and tables as standalone PNGs.",
+        help="Compatibility flag; all report PNG exports are now automatic.",
     )
     parser.add_argument(
         "--charts",
         action="store_true",
-        help="Render stock-style price charts from DB-backed live market data.",
+        help="Compatibility flag; DB-backed highlight charts are now automatic.",
     )
     parser.add_argument(
         "--all-price-action-charts",
         action="store_true",
         help="Export every chart-capable item under OUTPUT/charts/all/ without embedding them.",
     )
-    parser.add_argument("--chart-interval", default="1h", help="Chart candle interval, such as 1h or 15min.")
+    parser.add_argument("--item-chart-days", type=int, default=30, help="Primary item display days, independent of download and retention.")
+    parser.add_argument("--we23-days", type=int, default=30, help="WE23 overview display days.")
+    parser.add_argument("--research-days", type=int, help="Optional standalone longer-history item and WE23 exports, e.g. 90.")
+    parser.add_argument("--chart-interval", default="4h", choices=("1h", "2h", "4h", "1D"), help="Primary candle interval (UTC); no automatic coarsening.")
     parser.add_argument(
         "--chart-ma-window",
         type=int,
@@ -243,7 +217,7 @@ def main() -> None:
     args = build_parser().parse_args()
     output_dir = Path(args.output)
     data_sync_metadata = None
-    inflation_results = None
+    we23 = None
     action_cost_results = None
     try:
         config = load_config(args.config)
@@ -257,6 +231,8 @@ def main() -> None:
         raise SystemExit("Use only one of --live, --sync, --housekeeping, or --api-endpoint.")
     if args.transaction_backfill and not (args.live or args.sync):
         raise SystemExit("--transaction-backfill requires --live or --sync.")
+    if args.item_chart_days < 1 or args.we23_days < 1 or (args.research_days is not None and args.research_days < 1):
+        raise SystemExit("Display periods must be positive days.")
     if args.chart_ma_window < 1:
         raise SystemExit("--chart-ma-window must be at least 1.")
     if args.chart_min_range_pct < 0:
@@ -339,9 +315,8 @@ def main() -> None:
             )
             data_sync_metadata = store.market_sync_metadata()
             if args.live and not args.sync:
-                inflation_results = _build_configured_inflation_results(
-                    store, config.inflation, quiet=args.quiet,
-                )
+                we23 = build_we23_market_index(store, as_of=datetime.now(timezone.utc), display_days=max(args.we23_days, args.research_days or 0))
+                action_cost_results = load_action_cost_results(store, as_of=datetime.now(timezone.utc))
         if not args.quiet:
             print(
                 f"Synced {sync_result.prices_observed} price(s), "
@@ -370,9 +345,8 @@ def main() -> None:
                 flip_assumptions=assumptions,
             )
             data_sync_metadata = store.market_sync_metadata()
-            inflation_results = _build_configured_inflation_results(
-                store, config.inflation, quiet=args.quiet,
-            )
+            we23 = build_we23_market_index(store, as_of=datetime.now(timezone.utc), display_days=max(args.we23_days, args.research_days or 0))
+            action_cost_results = load_action_cost_results(store, as_of=datetime.now(timezone.utc))
         df_in = pd.DataFrame(rows)
     elif args.api_endpoint:
         client = WarEraApiClient(min_interval_seconds=args.min_interval)
@@ -447,7 +421,7 @@ def main() -> None:
         ]
         with MarketStore(args.market_db) as store:
             histories = {
-                item_code.lower(): load_price_action_history(store, item_code=item_code)
+                item_code.lower(): load_price_action_history(store, item_code=item_code, window_days=args.item_chart_days)
                 for item_code in item_codes
             }
         chart_capable_highlights = select_highlighted_items(
@@ -455,12 +429,13 @@ def main() -> None:
             histories,
             min_tick=args.min_tick,
             require_chart_history=True,
+            interval=args.chart_interval,
         )
         rendered_highlights = [
             {"item": item, "chart_path": None}
             for item in chart_capable_highlights
         ]
-    if args.charts:
+    if args.charts or args.live or args.from_db:
         if not (args.live or args.from_db):
             print("Skipped charts: charts require DB-backed market data.")
         else:
@@ -482,7 +457,8 @@ def main() -> None:
                     print(f"Wrote highlighted chart to {rendered}")
             if not any(entry["chart_path"] for entry in rendered_highlights):
                 print("Skipped highlighted charts: no item had enough completed-transaction history.")
-    if args.all_price_action_charts:
+    optional_chart_paths = []
+    if args.all_price_action_charts or args.research_days:
         if not (args.live or args.from_db):
             print("Skipped all-item charts: charts require DB-backed market data.")
         else:
@@ -493,11 +469,12 @@ def main() -> None:
             rendered_count = 0
             with MarketStore(args.market_db) as store:
                 for storage_code, row in rows_by_code.items():
-                    history = load_price_action_history(store, item_code=storage_code)
+                    history = load_price_action_history(store, item_code=storage_code, window_days=args.research_days or args.item_chart_days)
                     chart_item = prepare_price_action_item(
                         row,
                         history,
                         min_tick=args.min_tick,
+                        interval=args.chart_interval,
                     )
                     if chart_item is None:
                         continue
@@ -514,37 +491,15 @@ def main() -> None:
                             print(f"Skipped {chart_item.item_name} all-item chart: {exc}")
                         continue
                     if rendered is not None:
+                        optional_chart_paths.append(rendered)
                         rendered_count += 1
                         if not args.quiet:
                             print(f"Wrote all-item chart to {rendered}")
             if not args.quiet:
                 print(f"Wrote {rendered_count} all-item price-action chart(s).")
-    inflation_chart_paths: dict[str, Path] = {}
-    if inflation_results:
-        action_cost_results = build_action_cost_results(inflation_results)
-        headline_results = tuple(
-            result for result in inflation_results
-            if result.definition.enabled and result.definition.key == "broad_market"
-            and any(observation.level is not None for observation in result.observations)
-        )
-        if headline_results:
-            output_path = output_dir / "charts" / "inflation" / "inflation-overview.png"
-            try:
-                events = []
-                events.extend(production_inflation_chart_events(
-                    config.inflation.events, index_key="broad_market",
-                ))
-                events = list({(event["at"], event["label"]): event for event in events}.values())
-                rendered = render_inflation_overview_chart(
-                    headline_results, output_path, events=events,
-                )
-            except Exception as exc:
-                if not args.quiet:
-                    print(f"Skipped inflation overview chart: {exc}", flush=True)
-            else:
-                inflation_chart_paths["overview"] = rendered
-                if not args.quiet:
-                    print(f"Wrote inflation chart to {rendered}", flush=True)
+    we23_chart_path = render_we23_chart(we23 or {}, output_dir / "charts" / "we23.png", display_days=args.we23_days)
+    if args.research_days:
+        optional_chart_paths.append(render_we23_chart(we23 or {}, output_dir / "charts" / "research-we23.png", display_days=args.research_days))
     csv_path, report_path = write_outputs(
         df_out,
         output_dir,
@@ -555,23 +510,20 @@ def main() -> None:
         assumptions=assumptions,
         data_synced_at=data_sync_metadata.synced_at if data_sync_metadata else None,
         data_sync_status=data_sync_metadata.status if data_sync_metadata else None,
-        inflation_results=inflation_results,
-        inflation_chart_paths=inflation_chart_paths,
+        we23=we23,
+        we23_chart_path=we23_chart_path,
         action_cost_results=action_cost_results,
     )
     print(f"Wrote {csv_path}")
-    if inflation_results is not None:
-        print(f"Wrote {output_dir / 'market_inflation.csv'}")
     if action_cost_results:
         print(f"Wrote {output_dir / 'market_action_costs.csv'}")
     print(f"Wrote {report_path}")
-    if args.table_pngs:
-        header_path = render_report_header_png(report_path, output_dir / "sections")
-        print(f"Wrote {header_path}")
-        for card_path in render_report_item_context_pngs(report_path, output_dir / "cards"):
-            print(f"Wrote {card_path}")
-        for table_path in render_report_table_pngs(report_path, output_dir / "tables"):
-            print(f"Wrote {table_path}")
+    data_paths = [output_dir / name for name in ("market_scores.csv", "market_trends.csv", "we23_series.csv", "we23_weights.csv")]
+    if action_cost_results:
+        data_paths.append(output_dir / "market_action_costs.csv")
+    inventory = export_report_assets(report_path, output_dir, extra_paths=optional_chart_paths, data_paths=data_paths)
+    print(f"Wrote {len(inventory)} current publication assets and asset_inventory.json")
+
 
 
 if __name__ == "__main__":

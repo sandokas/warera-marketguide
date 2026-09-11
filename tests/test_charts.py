@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import matplotlib.pyplot as plt
+from matplotlib.backends.backend_agg import FigureCanvasAgg
 import pandas as pd
 
 from warera_quant.charts import (
@@ -25,8 +26,39 @@ from warera_quant.charts import (
     render_report_item_context_pngs,
     render_report_table_pngs,
     render_trend_path_svg,
+    render_we23_chart,
 )
 from warera_quant.metrics import select_highlighted_items
+
+
+def test_we23_date_ticks_are_regular_and_fit_inside_export(tmp_path, monkeypatch):
+    captured = []
+    original_savefig = plt.Figure.savefig
+
+    def capture_figure(figure, *args, **kwargs):
+        FigureCanvasAgg(figure)
+        original_savefig(figure, *args, **kwargs)
+        figure.canvas.draw()
+        captured.append((figure, figure.canvas.get_renderer()))
+
+    monkeypatch.setattr(plt.Figure, "savefig", capture_figure)
+    observations = [
+        {"as_of": date.isoformat(), "level": 100 + offset / 10}
+        for offset, date in enumerate(pd.date_range("2026-08-10", periods=30, tz="UTC"))
+    ]
+    render_we23_chart({"observations": observations}, tmp_path / "we23.png")
+
+    figure, renderer = captured[0]
+    axis = figure.axes[0]
+    ticks = axis.get_xticks()
+    assert len(ticks) >= 4
+    assert set(ticks[1:] - ticks[:-1]) == {5.0}
+    assert axis.get_xticklabels()[-1].get_text() == "2026-09-08"
+    for label in axis.get_xticklabels():
+        bounds = label.get_window_extent(renderer)
+        assert bounds.x0 >= figure.bbox.x0
+        assert bounds.x1 <= figure.bbox.x1
+        assert bounds.y0 >= figure.bbox.y0
 
 
 def test_price_chart_style_matches_dark_report_palette():
@@ -445,7 +477,7 @@ def test_highlight_chart_renders_role_based_90d_asset(tmp_path: Path):
     assert output.exists() and output.stat().st_size > 0
 
 
-def test_highlight_chart_subtitle_discloses_window_interval_span_and_populated_candles(
+def test_highlight_chart_uses_item_name_without_verbose_subtitle(
     monkeypatch, tmp_path: Path,
 ):
     trades = [
@@ -471,11 +503,8 @@ def test_highlight_chart_subtitle_discloses_window_interval_span_and_populated_c
     output = render_highlight_price_action_chart(highlight, tmp_path / highlight.filename)
 
     assert output is not None and output.exists()
-    assert "Trailing 90D" in captured["text"]
-    assert "4h candles" in captured["text"]
-    assert "3-day span" in captured["text"]
-    assert "12 populated candles" in captured["text"]
-    assert "cycle" not in captured["text"].lower()
+    assert captured["text"] == highlight.item_name
+
 
 
 def test_chart_can_render_with_spread_line(tmp_path: Path):
@@ -614,3 +643,40 @@ def test_charts_do_not_import_api_or_db_modules():
 
     forbidden = ["live_market", "warera_api", "api_client", "MarketStore", "sqlite3", "requests"]
     assert [name for name in forbidden if name in source] == []
+
+
+def test_highlight_outlier_wicks_do_not_flatten_bodies_and_remain_disclosed(tmp_path, monkeypatch):
+    from dataclasses import replace
+    import pytest
+    import matplotlib.dates as mdates
+    from matplotlib.figure import Figure
+    trades = [_trade(f'2026-06-{day:02d}T{hour:02d}:00:00Z', 10)
+              for day in (1,2,3) for hour in (0,4,8,12)]
+    item = select_highlighted_items([{'item_code':'bread','item_name':'Spike regression',
+        'last_trade_price':8,'stable_fair_price_7d':10,'price_p10_7d':9,'price_p90_7d':11}],
+        {'bread':trades})[0]
+    candles = item.candles.copy()
+    candles.iloc[4, candles.columns.get_loc('High')] = 1000
+    candles.iloc[7, candles.columns.get_loc('Low')] = .01
+    item = replace(item, candles=candles)
+    before = candles.copy(deep=True)
+    original = Figure.savefig
+    def check(figure,*args,**kwargs):
+        axis = figure.axes[0]
+        assert axis.get_ylim()[1] < 20
+        lower, upper = axis.get_ylim()
+        ticks = [tick for tick in axis.get_yticks() if lower <= tick <= upper]
+        assert len(ticks) >= 3
+        figure.canvas.draw()
+        labels_x = [label.get_text() for label in figure.axes[1].get_xticklabels()]
+        assert labels_x and all(':' not in label for label in labels_x)
+        assert len(labels_x) == len(set(labels_x))
+        labels = axis.get_legend_handles_labels()[1]
+        assert any('Off-scale high: 1 candle(s), max 1000' in label for label in labels)
+        assert any('Off-scale low: 1 candle(s), min 0.01' in label for label in labels)
+        marker = next(c for c in axis.collections if c.get_label().startswith('Off-scale high'))
+        assert marker.get_offsets()[0][0] == pytest.approx(mdates.date2num(candles.index[4].to_pydatetime()))
+        return original(figure,*args,**kwargs)
+    monkeypatch.setattr(Figure,'savefig',check)
+    render_highlight_price_action_chart(item,tmp_path/'spike.png')
+    pd.testing.assert_frame_equal(item.candles,before)

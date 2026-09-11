@@ -2,6 +2,8 @@
 
 __version__ = "0.1.0"
 
-from .cli import main
+def main() -> None:
+    from .cli import main as run
+    run()
 
 __all__ = ["main", "__version__"]

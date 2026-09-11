@@ -1,16 +1,17 @@
 # Production Points by Factory Item
 
-This table records the fixed production-chain ratios used by the report's `Total PP : Item` column
-and `PP-equivalent Volume` calculation:
+This table records the fixed production-chain ratios used by the report's `PP-equivalent Volume` calculation and the
+`total_production_points` read-model field:
 
 ```text
 PP-equivalent Volume = completed units × Total upstream PP per item
 ```
 
 The values are a reference snapshot of the War Era Wiki's
-[Company production and recipes table](https://warera.wiki/company) plus the current WarEra game
-configuration, checked on 2026-07-15. The wiki table does not yet list Wood and Paper; their current
-game configuration is Wood `{productionPoints: 1}` and Paper
+[Company production and recipes table](https://warera.wiki/company) plus the WarEra game
+configuration recorded when this reference was checked on 2026-07-15. This is a historical source
+snapshot, not a fresh verification of the live game or wiki. At that check the wiki table did not
+list Wood and Paper; their recorded game configuration was Wood `{productionPoints: 1}` and Paper
 `{productionPoints: 1, productionNeeds: {wood: 1}}`. The application obtains direct
 `productionPoints` from that configuration during sync. Total upstream PP is a fixed game-mechanics
 mapping in `metrics.py`; it must be updated with this reference if WarEra changes a recipe.

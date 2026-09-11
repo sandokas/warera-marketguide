@@ -46,7 +46,7 @@ def test_price_action_history_reports_authentic_sparse_coverage(tmp_path):
             _transaction("same-time", first.isoformat(), money=11, quantity=1),
             _transaction("last", last.isoformat(), money=12, quantity=1),
         ], fetched_at=NOW)
-        result = load_price_action_history(store, item_code="Bread", now=NOW)
+        result = load_price_action_history(store, item_code="Bread", now=NOW, window_days=90)
 
     assert result.window_days == DISPLAY_HISTORY_DAYS == 90
     assert result.window_start == NOW - timedelta(days=90)
@@ -257,6 +257,8 @@ def test_load_market_rows_computes_window_statistics(tmp_path):
     assert row["order_book"]["ask_value"] == 140.0
     assert row["order_book"]["pressure_pct"] == pytest.approx(-40.0)
     assert row["flip_quantity"] == 1.0
+    assert row["guide_fair_price"] == pytest.approx(stats["vwap"])
+    assert row["guide_fair_price"] != pytest.approx(stats["stable_fair_price"])
     assert row["flip_quote_age_minutes"] == 15.0
     assert row["flip_entry_fully_filled"] is True
     assert row["flip_verdict"] == "Unavailable"
@@ -591,3 +593,21 @@ def _insert_book(
         )},
         observed_at,
     )
+
+
+def test_guidance_read_model_preserves_size_slippage_and_rejects_future_quotes(tmp_path):
+    from warera_quant.metrics import FlipAssumptions
+    with _store(tmp_path) as store:
+        store.insert_order_book_observations({'bread': TopOrders(
+            buy_orders=[OrderLevel(3, 10)],
+            sell_orders=[OrderLevel(4, 2), OrderLevel(5, 4)],
+        )}, NOW)
+        row = load_market_rows(store, now=NOW, flip_assumptions=FlipAssumptions(quantity=5))[0]
+        assert row['guide_executable_ask_vwap'] == pytest.approx(4.6)
+        assert row['guide_entry_slippage_pct'] == pytest.approx(15)
+        assert row['guide_entry_filled_quantity'] == 5
+        assert row['short_term_quote_fresh'] is True
+        future = load_market_rows(store, now=NOW-timedelta(minutes=1), flip_assumptions=FlipAssumptions(quantity=5))[0]
+        assert future['flip_quote_age_minutes'] == -1
+        assert future['short_term_quote_fresh'] is False
+        assert future['short_term_reference_return_pct'] is None

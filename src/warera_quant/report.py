@@ -20,6 +20,7 @@ from .metrics import (
     MarketMetrics,
     WITHIN_NORMAL_RANGE,
     calculate_range_position_pct,
+    calculate_price_gap_pct,
     classify_market_trend_pattern,
 )
 
@@ -194,7 +195,7 @@ def _html_page(title: str, body: str) -> str:
       color: var(--text);
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       line-height: 1.45;
-      overflow-x: hidden;
+      overflow-x: visible;
     }}
     main {{
       width: min(1280px, calc(100vw - 32px));
@@ -557,7 +558,7 @@ def _html_page(title: str, body: str) -> str:
     .depth-profile-labels .buy-label {{ color: var(--good); }}
     .depth-profile-labels .sell-label {{ color: var(--bad); }}
     .depth-label-text {{ text-align: left; }}
-    .depth-label-number {{ overflow: hidden; text-align: right; text-overflow: ellipsis; white-space: nowrap; }}
+    .depth-label-number {{ overflow: visible; text-align: right; white-space: normal; }}
     .depth-profile-track {{
       position: relative;
       display: grid;
@@ -812,6 +813,25 @@ def _html_page(title: str, body: str) -> str:
       .chart {{ max-height: 165mm; }}
       figure.inflation-chart img {{ max-height: 150mm; object-fit: contain; }}
     }}
+    .highlight-section .summary-grid {{ grid-template-columns: minmax(0, 1fr); }}
+    .highlight-chart {{ width: 100%; max-height: none; }}
+    .sr-only {{ position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }}
+    .note, .summary-card {{ overflow: visible; overflow-wrap: anywhere; }}
+    .trading-guide-table .report-table {{ width: max-content; table-layout: auto; }}
+    .trading-guide-table td, .trading-guide-table th {{ white-space: nowrap; max-width: none; }}
+    .quote-gap {{ display: block; font-size: 12px; margin-top: 4px; }}
+    .quote-gap-label {{ display: block; font-size: 10px; font-weight: 400; color: var(--muted); }}
+    .table-wrap {{ max-width: none; }}
+    .report-table tfoot td {{ white-space: normal; text-align: left; font-size: 12px; padding: 10px; }}
+    .we23-summary h2 {{ margin: 0 0 12px; font-size: 16px; color: var(--muted); }}
+    .we23-stats {{ display: flex; align-items: baseline; flex-wrap: wrap; gap: 16px; margin-bottom: 8px; }}
+    .we23-value {{ font-size: 48px; line-height: 1.1; font-variant-numeric: tabular-nums; }}
+    .we23-delta {{ font-size: 24px; font-variant-numeric: tabular-nums; }}
+    .we23-delta small {{ font-size: 12px; color: var(--muted); }}
+    .we23-status {{ color: #fbbf24; font-size: 12px; }}
+    .we23-chart {{ display: block; width: 100%; }}
+    .summary-card::after {{ content: none; }}
+    .book-item small {{ display: block; font-size: 10px; white-space: normal; overflow-wrap: anywhere; }}
   </style>
 </head>
 <body>
@@ -826,7 +846,9 @@ def _html_page(title: str, body: str) -> str:
 def _compact_table_html(df: pd.DataFrame, *, table_kind: str = "trend") -> str:
     kind_class = f"{table_kind}-table"
     header = "".join(
-        f'<th class="{_column_classes(column)}">{escape(str(column))}</th>'
+        f'<th class="{_column_classes(column)}">{escape(str(column))}'
+        + ('<small class="quote-gap-label">vs 7D reference</small>' if column == "%" else '')
+        + '</th>'
         for column in df.columns
     )
     body_rows = []
@@ -867,49 +889,43 @@ def _trend_label(value: object) -> str:
     return _chip("Flat", "flat", prefix="→")
 
 
+def _ordered_report_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Use the guide's priority and name order throughout the publication."""
+    if df.empty:
+        return df.copy()
+    return df.iloc[sorted(range(len(df)), key=lambda position: (
+        _number(df.iloc[position].get("short_term_rank"))
+        if _number(df.iloc[position].get("short_term_rank")) is not None else 2,
+        str(df.iloc[position].get("item_name", "Unknown")).casefold(),
+        str(df.iloc[position].get("item_code", "")).casefold(),
+    ))].copy()
+
+
 def _price_guide_html(df: pd.DataFrame, display_count: int) -> str:
     rows = []
-    for _, row in df.iterrows():
-        entry_value = row.get("guide_entry_action")
-        holder_value = row.get("guide_holder_action")
-        entry_action = entry_value if isinstance(entry_value, str) and entry_value in {"BUY", "WAIT"} else "WAIT"
-        holder_action = holder_value if isinstance(holder_value, str) and holder_value in {"SELL", "HOLD"} else "HOLD"
-        signal = "BUY" if entry_action == "BUY" else "SELL" if holder_action == "SELL" else "WAIT"
-        ask = _first_number(row, "guide_executable_ask_vwap", "latest_ask", "ask")
-        bid = _first_number(row, "guide_executable_bid_vwap", "latest_bid", "bid")
+    for _, row in df.head(display_count).iterrows():
+        entry = str(row.get("guide_entry_action", "")).strip().upper()
+        holder = str(row.get("guide_holder_action", "")).strip().upper()
+        median = _first_number(row, "median_7d")
+        ask = _first_number(row, "guide_executable_ask_vwap")
+        bid = _first_number(row, "guide_executable_bid_vwap")
+        vwap = _first_number(row, "vwap_7d")
         rows.append({
             "Item": row.get("item_name", "Unknown"),
-            "Signal": signal,
-            "Ask": ask,
-            "Bid": bid,
-            "Fair 1D": _strict_fair_price(row, "1D"),
-            "Fair 7D": _strict_fair_price(row, "7D"),
-            "Fair 30D": _strict_fair_price(row, "30D"),
-            "Max Buy": _first_number(row, "guide_max_entry_price"),
-            "Rich Sell": _first_number(row, "guide_rich_exit_price", "price_p90_7d"),
-            "Ask Upside %": _first_number(row, "guide_net_to_fair_pct"),
-            "Price State": _present(
-                row.get("tendency_labels_7d"),
-                _present(
-                    row.get("tendency_7d"),
-                    "Insufficient history",
-                ),
-            ),
+            "Signal": "BUY" if entry == "BUY" else "SELL" if holder == "SELL" else "HOLD",
+            "Buy": ask,
+            "Sell": bid,
+            "Median 7D": median,
+            "7D VWAP": vwap,
+            "%": calculate_price_gap_pct(row.get("last_trade_price"), row.get("stable_fair_price_7d")),
+            "Price State": _present(row.get("tendency_labels_7d"),
+                                    _present(row.get("tendency_7d"), "Insufficient history")),
         })
     if not rows:
         return ""
-    view = pd.DataFrame(rows)
-    view["_signal_rank"] = view["Signal"].map({"BUY": 0, "SELL": 1, "WAIT": 2}).fillna(3)
-    view = view.sort_values(
-        ["_signal_rank", "Ask Upside %", "Item"],
-        ascending=[True, False, True],
-        na_position="last",
-    ).head(display_count).drop(columns="_signal_rank")
     return (
-        '<section><div class="eyebrow">Fair-value detail</div><h2>Fair Value &amp; Buy / Sell Signals</h2>'
-        '<p class="muted">Blended fair estimates provide strict 1D, 7D, and 30D completed-transaction context; Signal, Max Buy, Rich Sell, Ask Upside, and Price State use 7D guidance.</p>'
-        + _compact_table_html(view, table_kind="price-guide")
-        + '</section>'
+        '<section><h2>Trading Guide</h2>'
+        + _compact_table_html(pd.DataFrame(rows), table_kind="trading-guide") + '</section>'
     )
 
 
@@ -933,7 +949,7 @@ def _activity_html(df: pd.DataFrame, display_count: int) -> str:
         })
     if not rows:
         return ""
-    rows.sort(key=lambda row: (-(_number(row["Value"]) or 0.0), str(row["Item"])))
+    rows.sort(key=lambda row: (-(_number(row["Value"]) or 0.0), str(row["Item"]).casefold()))
     rows = rows[:display_count]
     pp_volumes = [
         _number(row["PP-equivalent Volume"]) or 0.0
@@ -964,7 +980,6 @@ def _activity_html(df: pd.DataFrame, display_count: int) -> str:
         body.append(
             '<tr>'
             f'<td class="activity-item text">{escape(str(row["Item"]))}</td>'
-            f'<td class="activity-ratio number" title="{escape(ratio_title)}">{escape(ratio_label)}</td>'
             '<td class="activity-volume number"><div class="activity-volume-content">'
             '<div class="activity-metric"><span class="activity-metric-label">Value</span>'
             f'<div class="activity-track" role="img" aria-label="{escape(value_label)} completed transaction value; {turnover_width:.1f}% of the highest-value market">'
@@ -975,18 +990,15 @@ def _activity_html(df: pd.DataFrame, display_count: int) -> str:
             f'<div class="activity-fill activity-fill-pp" style="width: {pp_width:.1f}%"></div></div>'
             f'<span class="activity-number" title="{escape(_fmt(pp_volume, 0) if pp_volume is not None else "N/A")}">{escape(pp_label)}</span></div>'
             '</div></td>'
-            '<td class="activity-totals number">'
-            f'<span class="activity-total-line">{escape(unit_label)} units</span>'
-            f'<span class="activity-total-line">{escape(trade_label)} trades</span></td></tr>'
+            '</tr>'
         )
     return (
-        '<section><h2>Completed Market Activity</h2>'
-        f'<p class="muted">Completed {ACTIVITY_WINDOW} trades ranked by value; PP volume estimates embodied production effort.</p>'
+        '<section><h2>Activity Comparison</h2>'
+        f'<p class="muted">Completed {ACTIVITY_WINDOW} turnover in BTC; PP-equivalent volume estimates production effort, not executable capacity or exit time.</p>'
         '<div class="table-wrap compact-table activity-table"><table class="report-table">'
         '<thead><tr><th class="activity-item text">Item</th>'
-        '<th class="activity-ratio number" title="Total upstream Production Points required for one item">Total PP : Item</th>'
-        '<th class="activity-volume number">Completed Value / PP-equivalent Volume</th>'
-        '<th class="activity-totals number">Units / Trades</th></tr></thead>'
+        '<th class="activity-volume number">7D completed turnover (BTC) / PP-equivalent volume</th>'
+        '</tr></thead>'
         f'<tbody>{"".join(body)}</tbody></table></div></section>'
     )
 
@@ -1107,10 +1119,10 @@ def _profit_signal_chip(value: object) -> str:
     label = str(value)
     tone, icon = {
         "BUY": ("buy", "+"),
-        "SELL": ("sell", "−"),
-        "WAIT": ("wait", "•"),
-        "HOLD": ("wait", "•"),
-    }.get(label, ("check", "•"))
+        "SELL": ("sell", "&#8722;"),
+        "WAIT": ("wait", "&#9679;"),
+        "HOLD": ("flat", "&#9679;"),
+    }.get(label, ("check", "&#8212;"))
     return _chip(label, tone, prefix=icon)
 
 
@@ -1139,7 +1151,6 @@ def _highlight_pairs_html(highlights: list[dict[str, object]], output_dir: Path)
         "second_largest_discount": "Second-cheapest below normal range",
     }
     columns = []
-    selected_sides: set[str] = set()
     for entry in highlights:
         item = entry.get("item")
         chart_path = entry.get("chart_path")
@@ -1149,60 +1160,42 @@ def _highlight_pairs_html(highlights: list[dict[str, object]], output_dir: Path)
         role = str(getattr(item, "role"))
         title = role_labels.get(role, role.replace("_", " ").title())
         tone = "down" if "discount" in role else "up"
-        selected_sides.add("discount" if tone == "down" else "premium")
-        icon = "↓" if tone == "down" else "↑"
         name = str(getattr(item, "item_name"))
         gap = _number(getattr(item, "raw_gap_pct", getattr(item, "gap_pct", None)))
         latest = _number(getattr(item, "latest_completed_price", None))
-        fair = _number(getattr(item, "fair_7d", None))
-        lower = _number(getattr(item, "price_p10_7d", None))
-        upper = _number(getattr(item, "price_p90_7d", None))
-        severity = _number(getattr(item, "severity", None))
         item_code = str(getattr(item, "item_code"))
-        edge = "below P10" if tone == "down" else "above P90"
-        gap_text = f"{gap:+.2f}% vs 7D fair" if gap is not None else "Gap versus 7D fair unavailable"
-        severity_text = (
-            f"{severity:.2f} normal-range widths {edge}"
-            if severity is not None
-            else "Normalized excess unavailable"
-        )
+        gap = round(gap, 2) if gap is not None else None
+        gap_text = f"{gap:+.2f}%" if gap else "0.00%" if gap == 0 else "\u2014"
+        symbol = "&#9650;" if gap is not None and gap > 0 else "&#9660;" if gap is not None and gap < 0 else ""
+        signal_tone = "positive" if gap is not None and gap > 0 else "negative" if gap is not None and gap < 0 else "neutral"
         card = (
             f'<article class="summary-card summary-card-{tone}" data-item-code="{escape(item_code, quote=True)}" '
-            f'data-highlight-role="{escape(role, quote=True)}"><span>{escape(title)}</span>'
-            f'<strong><span class="summary-arrow" aria-hidden="true">{icon}</span>{escape(name)}</strong>'
-            f'<span class="summary-value">{escape(gap_text)}</span>'
-            f'<span class="summary-detail">Last {_fmt(latest)} | Fair {_fmt(fair)} | '
-            f'Normal {_fmt(lower)}-{_fmt(upper)}</span>'
-            f'<span class="summary-detail">{escape(severity_text)}</span></article>'
+            f'data-highlight-role="{escape(role, quote=True)}">'
+            f'<strong>{escape(name)}</strong>'
+            f'<span class="summary-value">{_fmt(latest)} BTC &nbsp; <span class="signed-{signal_tone}">{symbol} {escape(gap_text)}</span> <small>vs 7D</small></span>'
+            '</article>'
         )
         chart = ""
         if chart_src:
-            alt = f"{name} {title.lower()} trailing 90D price-action chart"
+            alt = f"{name}: {_fmt(latest)} BTC, {gap_text} vs 7D; {title.lower()}"
             chart = (f'<img class="highlight-chart" src="{escape(chart_src, quote=True)}" '
                      f'alt="{escape(alt, quote=True)}">')
         columns.append(
-            f'<div class="highlight-column">{card}{chart}</div>'
+            f'<div class="highlight-column" data-item-code="{escape(item_code, quote=True)}" data-highlight-role="{escape(role, quote=True)}">{chart if chart_src else card}</div>'
         )
     if not columns:
         return (
-            '<section class="highlight-section"><div class="eyebrow">Strict 7D completed-trade context</div>'
-            '<h2>Meaningful price dislocations</h2><span class="sr-only">Chart-linked ranking is limited to items '
+            '<section class="highlight-section"><div class="eyebrow">7D historical price context</div>'
+            '<h2>Historical watch items</h2><span class="sr-only">Chart-linked ranking is limited to items '
             'with sufficient completed-transaction history for a price-action chart.</span>'
             '<article class="summary-card summary-card-neutral highlight-neutral">'
             '<strong>No meaningful price dislocations</strong>'
             '<span class="summary-detail">Eligible latest trades are within their normal 7D ranges or less than one tick from fair value.</span>'
             '</article></section>'
         )
-    side_note = ""
-    if "premium" not in selected_sides:
-        side_note = '<p class="highlight-side-note">No meaningful premium; other eligible items remain within their normal 7D ranges.</p>'
-    elif "discount" not in selected_sides:
-        side_note = '<p class="highlight-side-note">No meaningful discount; other eligible items remain within their normal 7D ranges.</p>'
     return (
-        '<section class="highlight-section"><div class="eyebrow">Strict 7D completed-trade context</div>'
-        '<h2>Meaningful price dislocations</h2><span class="sr-only">Chart-linked ranking is limited to items '
-        'with sufficient completed-transaction history for a price-action chart.</span>'
-        '<div class="summary-grid">' + "".join(columns) + '</div>' + side_note + '</section>'
+        '<section class="highlight-section"><h2>Historical watch items</h2>'
+        '<div class="summary-grid">' + "".join(columns) + '</div></section>'
     )
 
 
@@ -1233,7 +1226,7 @@ def _price_range_rail_html(row: pd.Series) -> str:
     name = str(row.get("item_name") or "item")
     aria = (
         f"7D price range for {name}. P10 {_fmt(lower)}, P90 {_fmt(upper)}, "
-        f"strict 7D fair {_fmt(fair)}, latest completed trade {_fmt(latest)}."
+        f"7D VWAP {_fmt(fair)}, latest completed trade {_fmt(latest)}."
     )
     collapsed_class = " price-range-band-collapsed" if start == end else ""
     return (
@@ -1244,7 +1237,7 @@ def _price_range_rail_html(row: pd.Series) -> str:
         f'<span class="price-range-marker price-range-marker-fair" style="left:{fair_position:.3f}%" aria-hidden="true"></span>'
         f'<span class="price-range-marker price-range-marker-latest" style="left:{latest_position:.3f}%" aria-hidden="true"></span>'
         '</div><div class="price-range-values">'
-        f'<span><span class="range-symbol range-symbol-fair" aria-hidden="true">◆</span>Fair <strong>{_fmt(fair)}</strong></span>'
+        f'<span><span class="range-symbol range-symbol-fair" aria-hidden="true">◆</span>VWAP <strong>{_fmt(fair)}</strong></span>'
         f'<span><span class="range-symbol range-symbol-latest" aria-hidden="true">▲</span>Latest <strong>{_fmt(latest)}</strong></span>'
         f'<span>Normal <strong>{_fmt(lower)}-{_fmt(upper)}</strong></span>'
         '</div></div></div>'
@@ -1431,6 +1424,8 @@ def _is_number_column(column: str) -> bool:
         or label.endswith("change")
         or label.endswith("position")
         or label.startswith("fair ")
+        or label.startswith("median ")
+        or label.endswith("vwap")
         or "%" in label
         or "ask" in label
         or "bid" in label
@@ -1439,6 +1434,14 @@ def _is_number_column(column: str) -> bool:
 
 
 def _render_table_cell(column: str, value: object) -> str:
+    if column == "%":
+        gap = _number(value)
+        tone, label = "neutral", "&mdash;"
+        if gap is not None:
+            gap = round(gap, 2)
+            tone = "positive" if gap > 0 else "negative" if gap < 0 else "neutral"
+            label = f"{gap:+.2f}%" if gap else "0.00%"
+        return f'<span class="signed-{tone}">{label}</span>'
     if column == "7D Trend":
         return _trend_label(value)
     if column in {"1D Change", "7D Change", "30D Change"}:
@@ -1449,7 +1452,7 @@ def _render_table_cell(column: str, value: object) -> str:
         return _trend_path(value)
     if column == "Pattern":
         return _trend_pattern(value)
-    if column == "Signal":
+    if column in {"Signal", "Holder (owned only)"}:
         return _profit_signal_chip(value)
     if column == "Evidence":
         return _evidence_chip(value)
@@ -1489,19 +1492,15 @@ def _market_state_chips(value: object) -> str:
     labels = [part.strip() for part in str(value).split(",") if part.strip()]
     if not labels:
         return "N/A"
-    chips = "".join(_chip(label, _market_state_tone(label)) for label in labels)
+    symbols = {"rising": "&#8593;", "falling": "&#8595;", "stable": "&#8594;",
+               "flat": "&#8594;", "volatile": "&#8597;", "thin": "!"}
+    chips = "".join(_chip(label, _market_state_tone(label), prefix=symbols.get(label.lower())) for label in labels)
     return f'<span class="state-chips">{chips}</span>'
 
 
 def _market_state_tone(label: str) -> str:
-    normalized = label.lower()
-    if normalized == "rising" or normalized == "stable":
-        return "up"
-    if normalized == "falling" or normalized == "volatile":
-        return "down"
-    if normalized == "thin":
-        return "weak"
-    return "flat"
+    return {"rising": "up", "falling": "down", "volatile": "wait",
+            "thin": "weak"}.get(label.lower(), "flat")
 
 
 def _signed_number(value: object, *, invert: bool = False) -> str:
@@ -1835,6 +1834,32 @@ def write_action_costs_csv(
     return path
 
 
+def _we23_html(index: dict | None, chart_path: str | Path | None, output_dir: Path) -> str:
+    index = index or {}
+    chart = _relative_chart_path(chart_path, output_dir)
+    level = _number(index.get('latest_level'))
+    change = _number(index.get('change_7d_pct'))
+    value = f"{level:,.2f}" if level is not None else "&mdash;"
+    tone, symbol = "neutral", ""
+    delta = "&mdash;"
+    if change is not None and level is not None:
+        change = round(change, 2)
+        tone = "positive" if change > 0 else "negative" if change < 0 else "neutral"
+        symbol = "&#9650; " if change > 0 else "&#9660; " if change < 0 else ""
+        delta = f"{change:+.2f}%" if change else "0.00%"
+    status = index.get('coverage_status', 'unavailable')
+    warning = "Unavailable" if level is None else "Partial" if status != 'complete' else ""
+    badge = f'<span class="we23-status">&#9888; {warning}</span>' if warning else ""
+    return ('<section class="we23-section" aria-label="WE23 Market Index">'
+            '<div data-report-asset="we23-summary" class="panel we23-summary">'
+            '<h2>WE23 Market Index</h2><div class="we23-stats">'
+            f'<strong class="we23-value">{value}</strong>'
+            f'<span class="we23-delta signed-{tone}" aria-label="7-day change">{symbol}{delta} <small>7D</small></span>'
+            f'{badge}</div></div>'
+            + (f'<img class="we23-chart" src="{escape(chart)}" alt="WE23 daily index history">' if chart else '')
+            + '</section>')
+
+
 def generate_html_report(
     df: pd.DataFrame,
     *,
@@ -1847,9 +1872,12 @@ def generate_html_report(
     assumptions: FlipAssumptions | None = None,
     data_synced_at: str | None = None,
     data_sync_status: str | None = None,
+    we23: dict | None = None,
+    we23_chart_path: str | Path | None = None,
     inflation_results: Sequence["InflationIndexResult"] | None = None,
     inflation_chart_paths: Mapping[str, str | Path] | None = None,
 ) -> str:
+    assumptions = assumptions or FlipAssumptions()
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     sync_timestamp = _display_report_timestamp(data_synced_at)
     sync_status = (
@@ -1864,7 +1892,8 @@ def generate_html_report(
         if sync_timestamp is not None
         else "Market data sync time unavailable"
     )
-    display_count = len(df) if top <= 0 else top
+    df = _ordered_report_rows(df)
+    display_count = len(df)  # All-item coverage is mandatory in the published report.
     blocks: list[str] = []
     header_html = f"""    <header>
       <div class="hero-copy">
@@ -1872,91 +1901,25 @@ def generate_html_report(
         <h1>Market intelligence, without the noise.</h1>
         <p class="muted">Completed trades provide price history; current visible orders provide executable prices and market depth.</p>
       </div>
-      <div class="hero-meta"><strong>Combined 1D / 7D / 30D report</strong><span>{data_freshness}</span><span>Report generated {escape(generated)}</span></div>
+      <div class="hero-meta"><strong>Short-term trader report | UTC</strong><span>{data_freshness}</span><span>Report generated {escape(generated)}</span></div>
 </header>
 """
     highlight_html = _highlight_pairs_html(highlights or [], Path(output_dir))
     blocks.append(
         '<div class="report-header-capture" data-report-asset="header">'
         + header_html
-        + highlight_html
         + '</div>'
     )
+    blocks.append(_we23_html(we23, we23_chart_path, Path(output_dir)))
+    blocks.append(highlight_html)
     blocks.append(_price_guide_html(df, display_count))
 
     blocks.append(_order_book_html(df, display_count))
     blocks.append(_activity_html(df, display_count))
 
-    if not df.empty:
-        view = df.head(display_count).copy()
-        trend_rows = []
-        for _, row in view.iterrows():
-            changes = {
-                horizon: _number(row.get(f"percent_change_{horizon.lower()}"))
-                for horizon in ("1D", "7D", "30D")
-            }
-            # Legacy inputs may expose only the historical 7D momentum field.
-            if changes["7D"] is None:
-                changes["7D"] = _number(row.get("momentum_7d_pct"))
-            pattern = classify_market_trend_pattern(
-                change_1d_pct=changes["1D"],
-                change_7d_pct=changes["7D"],
-                change_30d_pct=changes["30D"],
-            )
-            last_trade = _number(row.get("last_trade_price"))
-            low_30d = _number(row.get("min_30d"))
-            high_30d = _number(row.get("max_30d"))
-            position: float | str | None = None
-            if changes["30D"] is not None and low_30d is not None and high_30d is not None:
-                position = (
-                    "Flat"
-                    if high_30d == low_30d
-                    else calculate_range_position_pct(last_price=last_trade, low=low_30d, high=high_30d)
-                )
-            path_points = row.get("trend_path_90d")
-            path_direction = (
-                "up"
-                if changes["30D"] is not None and changes["30D"] > 0.5
-                else "down"
-                if changes["30D"] is not None and changes["30D"] < -0.5
-                else "flat"
-            )
-            trend_rows.append({
-                "Item": row.get("item_name", "Unknown"),
-                "Last Trade": last_trade,
-                "1D Change": changes["1D"],
-                "7D Change": changes["7D"],
-                "30D Change": changes["30D"],
-                "90D Path": {
-                    "points": path_points if isinstance(path_points, list) else [],
-                    "latest": last_trade,
-                    "direction": path_direction,
-                    "window_start": row.get("trend_path_90d_start_epoch"),
-                    "window_end": row.get("trend_path_90d_end_epoch"),
-                    "first_observation": row.get("trend_path_90d_first_observation_epoch"),
-                    "last_observation": row.get("trend_path_90d_last_observation_epoch"),
-                    "observation_count": row.get("trend_path_90d_observation_count"),
-                },
-                "30D Position": position,
-                "Pattern": f"{pattern.label}|{pattern.description}",
-            })
-        trend_table = pd.DataFrame(trend_rows)
-        blocks.append(
-            f"""    <section>
-      <h2>Market Trends</h2>
-      <p class="muted">Completed-trade price changes, 30-day range position, and trailing 90-day price path.</p>
-      {_compact_table_html(trend_table, table_kind="market-trends")}
-    </section>"""
-        )
-
-    if inflation_results:
-        blocks.append(inflation_summary_html(
-            inflation_results,
-            chart_paths=inflation_chart_paths,
-            output_dir=output_dir,
-        ))
-
     note_rows = df.head(display_count).copy()
+    if not note_rows.empty:
+        note_rows = note_rows.sort_values("item_name", key=lambda names: names.astype(str).str.casefold(), kind="stable")
     if not note_rows.empty:
         notes: list[str] = []
         for _, row in note_rows.iterrows():
@@ -1968,9 +1931,9 @@ def generate_html_report(
             width_pct = _first_number(row, "dislocation_band_width_pct")
             classification = _classification_label(row.get("dislocation_classification"))
             detail_items = [
-                f"<li>Strict 7D fair: <strong>{escape(_fmt(fair))}</strong></li>",
+                f"<li>7D VWAP: <strong>{escape(_fmt(fair))}</strong></li>",
                 f"<li>Latest completed trade: <strong>{escape(_fmt(latest))}</strong></li>",
-                f"<li>7D normal range: <strong>{escape(_fmt(lower))}-{escape(_fmt(upper))}</strong> ({escape(_fmt(width_pct, 2))}%)</li>",
+                f"<li>7D normal range:<br><strong>{escape(_fmt(lower))}-{escape(_fmt(upper))} ({escape(_fmt(width_pct, 2))}%)</strong></li>",
                 f'<li>Classification: <strong class="price-context-classification">{escape(classification)}</strong></li>',
                 f"<li>Current execution context — Bid: <strong>{escape(_fmt(row.get('bid')))}</strong>; Ask: <strong>{escape(_fmt(row.get('ask')))}</strong></li>",
             ]
@@ -2017,7 +1980,19 @@ def generate_html_report(
     </footer>"""
     )
 
-    return _html_page("WarEra Market Guide", "\n".join(blocks))
+    body = "\n".join(blocks)
+    table_note = (f"Observed: {sync_timestamp or 'sync time unavailable'}{sync_status}. "
+                  f"Prices BTC/unit; size {assumptions.quantity:g} units; fee {assumptions.fee_pct_per_side:g}% per side; quote limit {assumptions.max_quote_age_minutes:g} min. "
+                  "N/A = unavailable / insufficient depth. Current orders do not guarantee future fills.")
+    import re
+    def annotate_table(match):
+        table = match.group(0)
+        if 'col-signal' in table and 'col-price-state' in table:
+            return table
+        columns = table.split("</thead>")[0].count("<th ")
+        return table.replace("</table>", f'<tfoot><tr><td colspan="{max(columns, 1)}">{escape(table_note)}</td></tr></tfoot></table>')
+    body = re.sub(r'<table class="report-table">.*?</table>', annotate_table, body, flags=re.S)
+    return _html_page("WarEra Market Guide", body)
 
 
 def write_outputs(
@@ -2032,6 +2007,8 @@ def write_outputs(
     assumptions: FlipAssumptions | None = None,
     data_synced_at: str | None = None,
     data_sync_status: str | None = None,
+    we23: dict | None = None,
+    we23_chart_path: str | Path | None = None,
     inflation_results: Sequence["InflationIndexResult"] | None = None,
     inflation_chart_paths: Mapping[str, str | Path] | None = None,
     action_cost_results: Sequence["ActionCostResult"] | None = None,
@@ -2069,10 +2046,10 @@ def write_outputs(
     html_path = out / "market_report.html"
     export_df.to_csv(trends_csv_path, index=False)
     export_df.to_csv(scores_csv_path, index=False)
-    if inflation_results is not None:
-        write_inflation_csv(inflation_results, out)
     if action_cost_results:
         write_action_costs_csv(action_cost_results, out)
+    pd.DataFrame([{key: value for key, value in point.items() if key != "weights"} for point in (we23 or {}).get("observations", [])], columns=["as_of", "level", "priced_count", "coverage_pct", "reason", "is_rebalance"]).to_csv(out / "we23_series.csv", index=False)
+    pd.DataFrame((we23 or {}).get("weight_history", []), columns=["effective_at", "reference_start", "reference_end", "item_code", "weight"]).to_csv(out / "we23_weights.csv", index=False)
     html_path.write_text(
         generate_html_report(
             export_df,
@@ -2085,8 +2062,8 @@ def write_outputs(
             assumptions=assumptions,
             data_synced_at=data_synced_at,
             data_sync_status=data_sync_status,
-            inflation_results=inflation_results,
-            inflation_chart_paths=inflation_chart_paths,
+            we23=we23,
+            we23_chart_path=we23_chart_path,
         ),
         encoding="utf-8",
     )
@@ -2103,3 +2080,83 @@ def _display_report_timestamp(value: str | None) -> str | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def export_report_assets(
+    report_path: str | Path, output_dir: str | Path, *, extra_paths: Sequence[Path] = (),
+    data_paths: Sequence[Path] = (),
+    browser_executable: str | Path | None = None,
+) -> list[dict]:
+    """Capture current DOM targets only, then publish tables as static PNGs.
+
+    The explicit inventory is authoritative. Archived files in reused output
+    directories are never discovered by globbing or included in a bundle.
+    """
+    import json
+    import re
+    from playwright.sync_api import sync_playwright
+    from .charts import _chrome_executable
+
+    report = Path(report_path).resolve()
+    destination = Path(output_dir).resolve()
+    inventory: list[dict] = []
+    def record(path: Path, kind: str, selector: str | None = None):
+        relative = path.resolve().relative_to(destination).as_posix()
+        if not any(entry["path"] == relative for entry in inventory):
+            inventory.append({"path": relative, "kind": kind, "selector": selector})
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(executable_path=_chrome_executable(browser_executable), headless=True,
+                                               args=["--allow-file-access-from-files"])
+        try:
+            page = browser.new_page(viewport={"width": 1440, "height": 1080}, device_scale_factor=2)
+            page.goto(report.as_uri(), wait_until="load")
+            page.evaluate("document.fonts.ready")
+            for src in page.locator("img[src]").evaluate_all("els => els.map(e => e.getAttribute('src'))"):
+                path = (report.parent / src).resolve()
+                if path.is_file():
+                    record(path, "chart")
+            targets = [
+                ('table.report-table', 'tables', 'table'),
+                ('header', 'sections', 'header'),
+                ('[data-report-asset="we23-summary"]', 'sections', 'we23-summary'),
+                ('.summary-card', 'cards', 'highlight'),
+                ('.highlight-column', 'sections', 'highlight-pair'),
+                ('[data-report-asset="item-price-context-card"]', 'cards', 'item'),
+                ('section', 'sections', 'composite'),
+                ('footer', 'sections', 'footer'),
+            ]
+            table_paths = []
+            for selector, folder, kind in targets:
+                elements = page.locator(selector)
+                for index in range(elements.count()):
+                    element = elements.nth(index)
+                    name = element.get_attribute("data-item-code")
+                    if not name:
+                        heading = element.locator("h2, h3")
+                        name = heading.first.inner_text() if heading.count() else f"{index + 1:02d}"
+                    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+                    path = destination / folder / f"{kind}-{index + 1:02d}-{slug}.png"
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    element.screenshot(path=str(path), animations="disabled")
+                    geometry = element.evaluate("e => ({width:e.getBoundingClientRect().width,height:e.getBoundingClientRect().height,scrollWidth:e.scrollWidth,scrollHeight:e.scrollHeight})")
+                    if geometry["scrollWidth"] > geometry["width"] + 2 or geometry["scrollHeight"] > geometry["height"] + 2:
+                        raise RuntimeError(f"Incomplete capture: {selector} {index}: {geometry}")
+                    record(path, kind, f"{selector} >> nth={index}")
+                    inventory[-1]["css_size"] = geometry
+                    if kind == "table":
+                        table_paths.append(path)
+            # Replace only after capturing complete table elements and composites.
+            for index, path in enumerate(table_paths):
+                table = page.locator("table.report-table").first
+                table.evaluate("(e, src) => { const img=document.createElement('img'); img.src=src; img.alt=e.innerText; img.className='published-table'; img.style.cssText='display:block;max-width:100%;height:auto'; e.parentElement.style.cssText='width:auto;max-width:100%'; e.replaceWith(img); }", path.relative_to(destination).as_posix())
+            report.write_text(page.content(), encoding="utf-8")
+        finally:
+            browser.close()
+    for path in extra_paths:
+        record(Path(path), "research-chart")
+    record(report, "html")
+    for path in data_paths:
+        if Path(path).is_file():
+            record(Path(path), "data")
+    (destination / "asset_inventory.json").write_text(json.dumps(inventory, indent=2), encoding="utf-8")
+    return inventory

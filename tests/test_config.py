@@ -23,7 +23,7 @@ def test_load_config_uses_defaults_when_file_is_missing(tmp_path):
 
 
 def test_repository_config_keeps_oil_movement_event_out_of_production_history():
-    config = load_config("marketguide.toml")
+    config = load_config("docs/retired-inflation-config.toml")
 
     event = next(event for event in config.inflation.events if event.event_id == "oil-player-movement-dev")
     assert event.status == "planned"

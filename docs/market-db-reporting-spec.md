@@ -37,7 +37,7 @@ Raw API payloads are parsed at the API boundary. They are not stored as JSON or 
 - `market_data.py` constructs report and chart read models from stored records.
 - `metrics.py` performs calculations on domain dictionaries.
 - `charts.py` renders chart-ready data.
-- `report.py` renders HTML and writes CSV output.
+- `report.py` renders HTML, writes CSV output, and exports browser-rendered PNG assets and their inventory.
 - `cli.py` validates arguments and orchestrates these layers.
 
 Dependency constraints are defined in [AGENTS.md](../AGENTS.md).
@@ -93,13 +93,23 @@ orders, not completed transaction history.
 
 Stores the newest transaction timestamp and ID, the most recent attempted and successful sync times, the last error, and counts from the latest successful item sync. The transaction timestamp is the durable pagination high-water mark; API cursors are not persisted.
 
+### `item_production_config`
+
+Stores synchronized direct production-point configuration per item. Total upstream PP remains a
+separate fixed domain mapping in `metrics.py`.
+
+### `transaction_coverage`
+
+Stores ingestion coverage intervals. WE23's normal report calculation uses observed completed
+transaction activity for daily evidence rather than treating downloader metadata as proof of completeness.
+
 ### `schema_meta`
 
 Stores the application schema version. SQLite `user_version` is kept aligned with it.
 
 ## Sync behavior
 
-Each sync currently stores the lagging endpoint values for compatibility or diagnostics. It then
+Each sync collects direct production-point configuration and stores lagging endpoint values for compatibility or diagnostics. It then
 processes every non-excluded item:
 
 1. Mark the item sync attempt.
@@ -129,8 +139,7 @@ Both `--live` and `--sync` accept backfill mode. `--sync` exits after updating t
 
 `market_data.py` filters stored records into requested windows and produces one row per item. Supported
 internal window labels are `1D`, `7D`, `30D`, `90D`, and `1Y`; database-backed reports request `1D`,
-`7D`, and `30D` together. The published report uses strict fair values for each labelled horizon,
-7D guidance and activity, and cross-horizon trends.
+`7D`, and `30D` together. The read model retains horizon-specific statistics; the current publication uses 7D guidance and activity.
 
 Report generation writes:
 
@@ -140,17 +149,31 @@ market_trends.csv
 market_scores.csv
 ```
 
-The scores CSV is retained as an identical compatibility output. During `--live --charts`, a featured PNG may also be written under `charts/` and embedded in the report.
+The scores CSV is retained as an identical compatibility output. The current CLI also writes
+`we23_series.csv`, `we23_weights.csv`, and `asset_inventory.json`, plus
+`market_action_costs.csv` for database-backed action benchmarks. DB-backed highlight charts and
+all report PNG exports are automatic; `--charts` and `--table-pngs` are compatibility flags.
+Published tables are static PNGs. See [README](../README.md) for display settings and output details.
+
+The published report uses a compact 7D guide and context, current orders, completed activity,
+historical watch charts, and WE23. It no longer publishes the older cross-horizon Market Trends
+table or inflation overview, though compatible derived fields and legacy calculations remain.
 
 ## Operational guidance
 
-Sync cadence and report lookback are separate. Cadence determines how often new transactions and
-order books are downloaded; lookback determines which stored completed transactions contribute to
-historical calculations. An hourly run is a reasonable starting point, with shorter intervals
-useful only for actively traded markets. Stored game-calculated endpoint values remain excluded
-from those calculations regardless of cadence.
+Each invocation performs one operation; schedule sync and housekeeping externally. Housekeeping
+is explicit, separate from sync, and defaults to 120-day retention with compaction at most every
+30 days when free pages exist. Sync freshness and report generation time are separate; partial
+syncs are disclosed and failed syncs do not advance successful freshness.
 
-Because the API client spaces requests by 1 second by default and a sync touches every item, frequent full-market runs can take time and generate substantial traffic. Use `--min-interval` in accordance with upstream limits.
+Download/backfill lookback, analytical windows, chart display periods, and retention are distinct.
+The report queries 1D, 7D, and 30D statistics; guide/activity use 7D. Item charts default to 30 days
+and 4h candles. WE23 uses fixed inception and preceding 28-day weighting evidence, independent of
+display length. Retention can remove required inception history; the current cleanup does not
+permanently preserve it. See [README](../README.md#we23-market-index).
+
+Requests are paced at one second by default. Choose sync cadence with the duration of a complete
+run in mind; stored game-calculated endpoint prices remain excluded from analytical inputs.
 
 ## Known upstream assumptions
 

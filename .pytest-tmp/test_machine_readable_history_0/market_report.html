@@ -1,0 +1,717 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WarEra Market Guide</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b1120;
+      --panel: #111826;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --line: #2e3a55;
+      --accent: #7dd3fc;
+      --accent-soft: #153b57;
+      --good: #6ee7b7;
+      --good-soft: #0f766e;
+      --bad: #f87171;
+      --bad-soft: #3f1f1f;
+      --amber: #fbbf24;
+      --amber-soft: #42310d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.45;
+      overflow-x: visible;
+    }
+    main {
+      width: min(1280px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 32px 0 48px;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      align-items: center;
+      padding: 28px 30px;
+      background:
+        radial-gradient(circle at 82% 12%, rgba(56, 189, 248, 0.15), transparent 34%),
+        linear-gradient(135deg, #111b2e 0%, #0e1729 100%);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: 0 18px 50px rgba(0, 0, 0, 0.2);
+    }
+    main > header { width: 100%; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { margin-bottom: 7px; font-size: clamp(1.8rem, 4vw, 2.55rem); letter-spacing: -0.035em; }
+    header h1 {
+      font-size: clamp(2rem, 3vw, 2.8rem);
+      line-height: 1.08;
+    }
+    h2 {
+      margin-bottom: 8px;
+      padding-left: 10px;
+      border-left: 3px solid var(--accent);
+      font-size: 1.28rem;
+      line-height: 1.2;
+    }
+    h3 { margin-bottom: 8px; font-size: 1rem; }
+    section { margin-top: 26px; }
+    section > .muted {
+      max-width: 65ch;
+      margin-bottom: 11px;
+      font-size: 0.82rem;
+      line-height: 1.4;
+    }
+    .eyebrow {
+      margin-bottom: 8px;
+      color: var(--accent);
+      font-size: 0.78rem;
+      font-weight: 750;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+    .muted { color: var(--muted); }
+    .hero-copy { flex: 1 1 auto; min-width: 0; max-width: none; }
+    .hero-copy > p { margin-bottom: 0; max-width: 70ch; font-size: 1rem; line-height: 1.45; }
+    .hero-meta { flex: 0 0 auto; color: var(--muted); font-size: 0.82rem; text-align: left; white-space: nowrap; }
+    .hero-meta strong { display: block; margin-bottom: 4px; color: var(--text); font-size: 0.92rem; }
+    .hero-meta span { display: block; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 14px;
+    }
+    .highlight-column { display: grid; gap: 12px; min-width: 0; }
+    .highlight-chart { display: block; width: 100%; height: auto; border-radius: 10px; }
+    .sr-only {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+    }
+    .summary-card {
+      position: relative;
+      min-height: 154px;
+      overflow: hidden;
+      background: linear-gradient(145deg, rgba(24, 35, 54, 0.98), rgba(15, 23, 42, 0.98));
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      padding: 17px;
+    }
+    .summary-card::after {
+      position: absolute;
+      inset: auto -30px -45px auto;
+      width: 110px;
+      height: 110px;
+      border-radius: 999px;
+      background: var(--card-glow, rgba(148, 163, 184, 0.08));
+      content: "";
+      filter: blur(2px);
+    }
+    .summary-card-up { --card-glow: rgba(110, 231, 183, 0.12); border-color: rgba(110, 231, 183, 0.22); }
+    .summary-card-down { --card-glow: rgba(248, 113, 113, 0.12); border-color: rgba(248, 113, 113, 0.22); }
+    .summary-card-neutral { --card-glow: rgba(251, 191, 36, 0.1); border-color: rgba(251, 191, 36, 0.2); }
+    .summary-card-info { --card-glow: rgba(125, 211, 252, 0.12); border-color: rgba(125, 211, 252, 0.22); }
+    .summary-card strong {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 12px;
+      color: #f8fafc;
+      font-size: 1.18rem;
+      line-height: 1.25;
+    }
+    .summary-card > span { color: var(--muted); font-size: 0.78rem; }
+    .summary-value { display: block; margin-top: 12px; color: var(--text) !important; font-size: 1rem !important; font-weight: 750; }
+    .summary-detail { display: block; margin-top: 3px; line-height: 1.35; }
+    .summary-arrow {
+      display: inline-grid;
+      place-items: center;
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      background: #1e293b;
+      color: var(--muted);
+      font-weight: 800;
+      flex: 0 0 auto;
+    }
+    .summary-card-up .summary-arrow { background: var(--good-soft); color: var(--good); }
+    .summary-card-down .summary-arrow { background: var(--bad-soft); color: var(--bad); }
+    .summary-card-neutral .summary-arrow { background: var(--amber-soft); color: var(--amber); }
+    .summary-card-info .summary-arrow { background: var(--accent-soft); color: var(--accent); }
+    .pill {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-weight: 700;
+      font-size: 0.78rem;
+      white-space: nowrap;
+    }
+    .pill-up { background: var(--good-soft); color: var(--good); }
+    .pill-down { background: var(--bad-soft); color: var(--bad); }
+    .pill-flat { background: var(--amber-soft); color: var(--amber); }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      min-height: 24px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      font-size: 0.78rem;
+      font-weight: 750;
+      white-space: nowrap;
+    }
+    .price-guide-table .col-signal .chip {
+      min-width: 70px;
+      min-height: 28px;
+      border-radius: 5px;
+      font-size: 0.8rem;
+      letter-spacing: 0.035em;
+    }
+    .chip-buy, .chip-up, .chip-strong {
+      color: var(--good);
+      background: rgba(15, 118, 110, 0.28);
+      border-color: rgba(110, 231, 183, 0.28);
+    }
+    .chip-sell, .chip-down {
+      color: var(--bad);
+      background: rgba(63, 31, 31, 0.72);
+      border-color: rgba(248, 113, 113, 0.28);
+    }
+    .chip-wait, .chip-low, .chip-weak {
+      color: var(--amber);
+      background: rgba(66, 49, 13, 0.72);
+      border-color: rgba(251, 191, 36, 0.28);
+    }
+    .chip-hold, .chip-flat, .chip-usable, .chip-medium, .chip-low-medium {
+      color: var(--accent);
+      background: rgba(21, 59, 87, 0.72);
+      border-color: rgba(125, 211, 252, 0.28);
+    }
+    .chip-check {
+      color: #cbd5e1;
+      background: rgba(71, 85, 105, 0.32);
+      border-color: rgba(148, 163, 184, 0.28);
+    }
+    .signed-positive { color: var(--good); font-weight: 700; }
+    .signed-negative { color: var(--bad); font-weight: 700; }
+    .signed-neutral { color: var(--muted); }
+    ul { margin: 0; padding-left: 1.2rem; }
+    li + li { margin-top: 6px; }
+    code {
+      display: inline-block;
+      padding: 3px 6px;
+      border-radius: 6px;
+      background: #1e293b;
+      color: #e2e8f0;
+    }
+    table {
+      width: max-content;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      font-size: 1.1rem;
+      line-height: 1.18;
+    }
+    th, td {
+      padding: 8px 9px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      white-space: normal;
+    }
+    th.number, td.number {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    th.text, td.text { text-align: left; }
+    td {
+      max-width: 220px;
+    }
+    tr:last-child td { border-bottom: 0; }
+    th {
+      background: #172a45;
+      color: #e2e8f0;
+      font-size: 1rem;
+      font-weight: 750;
+      letter-spacing: 0.015em;
+    }
+    tbody tr:nth-child(even) { background: rgba(30, 41, 59, 0.22); }
+    .table-wrap { width: max-content; overflow: visible; }
+    .compact-table .report-table {
+      width: max-content;
+      table-layout: auto;
+    }
+    .compact-table th, .compact-table td {
+      max-width: none;
+      white-space: normal;
+    }
+    .compact-table th.number,
+    .compact-table td.number {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .compact-table .col-commodity,
+    .compact-table .col-item,
+    .compact-table .col-notes,
+    .compact-table .col-read,
+    .compact-table .col-market-state {
+      white-space: normal;
+    }
+    .compact-table .col-commodity,
+    .compact-table .col-item {
+      min-width: 0;
+    }
+    .compact-table .col-notes,
+    .compact-table .col-read,
+    .compact-table .col-market-state {
+      min-width: 0;
+    }
+    .price-guide-table .report-table { width: max-content; table-layout: auto; }
+    .price-guide-table th, .price-guide-table td { padding: 7px 5px; }
+    .price-guide-table .col-item { min-width: 0; font-weight: 700; white-space: nowrap; }
+    .price-guide-table .col-signal { text-align: left; white-space: nowrap; }
+    .price-guide-table .col-ask,
+    .price-guide-table .col-bid,
+    .price-guide-table .col-fair,
+    .price-guide-table .col-max-buy,
+    .price-guide-table .col-rich-sell { white-space: nowrap; }
+    .price-guide-table .col-ask-upside-pct { white-space: nowrap; }
+    .price-guide-table .col-price-state { white-space: nowrap; }
+    .price-guide-table tr.signal-buy { background: linear-gradient(90deg, rgba(15, 118, 110, 0.22), transparent 32%); }
+    .price-guide-table tr.signal-sell { background: linear-gradient(90deg, rgba(127, 29, 29, 0.23), transparent 32%); }
+    .signal-help {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin: 0 0 8px;
+    }
+    .signal-help span {
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: rgba(17, 24, 38, 0.8);
+      color: var(--muted);
+      font-size: 0.92rem;
+      line-height: 1.4;
+    }
+    .signal-help strong { display: block; margin-bottom: 2px; font-size: 1rem; }
+    .signal-help .buy-rule strong { color: var(--good); }
+    .signal-help .sell-rule strong { color: var(--bad); }
+    .signal-help .wait-rule strong { color: var(--amber); }
+    .signal-warning { margin: 0 0 10px; color: var(--muted); font-size: 0.92rem; line-height: 1.4; }
+    .book-summary .report-table { width: max-content; table-layout: auto; }
+    .book-summary th, .book-summary td { white-space: normal; vertical-align: middle; }
+    .book-summary th, .book-summary td { padding: 7px 5px; }
+    .book-summary .book-item { font-weight: 700; }
+    .book-summary .book-pressure { white-space: nowrap; }
+    .activity-table .report-table {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    .market-trends-table {
+      overflow: visible;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    .market-trends-table .report-table { border: 0; border-radius: 0; }
+    .activity-table th, .activity-table td,
+    .market-trends-table th, .market-trends-table td { padding: 7px 6px; }
+    .activity-table .activity-item { font-weight: 700; }
+    .activity-table .activity-ratio { white-space: nowrap; }
+    .activity-volume-content { display: grid; gap: 4px; }
+    .activity-metric { display: grid; grid-template-columns: 54px minmax(0, 1fr) 58px; gap: 7px; align-items: center; }
+    .activity-metric-label { color: var(--muted); font-size: 0.82rem; text-align: left; white-space: nowrap; }
+    .activity-track { height: 12px; overflow: hidden; border-radius: 3px; background: #0b1220; }
+    .activity-fill { height: 100%; min-width: 1px; border-radius: 3px; background: linear-gradient(90deg, #0f766e, #6ee7b7); }
+    .activity-fill-pp { background: linear-gradient(90deg, #1d4ed8, #7dd3fc); }
+    .activity-number,
+    .activity-total-line { display: block; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .activity-total-line + .activity-total-line { margin-top: 2px; color: var(--muted); font-size: 0.86rem; }
+    .market-trends-table th,
+    .market-trends-table td { padding: 6px 8px; vertical-align: middle; white-space: nowrap; }
+    .market-trends-table .col-item { font-weight: 700; white-space: nowrap; }
+    .trend-change { display: inline-flex; align-items: center; justify-content: flex-end; gap: 4px; min-width: 66px; }
+    .trend-arrow { width: 0.9em; text-align: center; font-size: 0.78rem; }
+    .position-cell { display: grid; grid-template-columns: 56px 36px minmax(72px, 1fr); align-items: center; column-gap: 8px; width: 100%; }
+    .position-track { position: relative; width: 56px; height: 4px; border-radius: 999px; background: #334155; }
+    .position-dot { position: absolute; top: 50%; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); transform: translate(-50%, -50%); }
+    .position-value { text-align: right; font-variant-numeric: tabular-nums; }
+    .position-empty { color: var(--muted); text-align: center; }
+    .position-label { color: var(--muted); font-size: 0.82rem; }
+    .trend-path { display: block; width: 96px; height: 28px; overflow: visible; color: var(--muted); }
+    .trend-path-line { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+    .trend-path-latest { fill: var(--accent); stroke: var(--panel); stroke-width: 1; vector-effect: non-scaling-stroke; }
+    .pattern-label { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; }
+    .pattern-mark { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+    .pattern-rise .pattern-mark, .pattern-rebound .pattern-mark { background: var(--good); }
+    .pattern-fall .pattern-mark, .pattern-pullback .pattern-mark { background: var(--bad); }
+    .pattern-flat .pattern-mark { background: var(--amber); }
+    .pattern-mixed .pattern-mark { background: var(--accent); }
+    .state-chips { display: inline-flex; flex-wrap: nowrap; gap: 4px; white-space: nowrap; }
+    .depth-profile { width: 100%; min-width: 0; }
+    .depth-profile-labels {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 3px;
+      color: var(--muted);
+      font-size: 0.82rem;
+      font-variant-numeric: tabular-nums;
+    }
+    .depth-profile-label {
+      display: flex;
+      justify-content: space-between;
+      gap: 4px;
+      min-width: 0;
+    }
+    .depth-profile-labels .buy-label { color: var(--good); }
+    .depth-profile-labels .sell-label { color: var(--bad); }
+    .depth-label-text { text-align: left; }
+    .depth-label-number { overflow: visible; text-align: right; white-space: normal; }
+    .depth-profile-track {
+      position: relative;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px;
+      height: 19px;
+      border-radius: 4px;
+      background: #0b1220;
+      overflow: hidden;
+    }
+    .depth-profile-half { display: flex; min-width: 0; }
+    .depth-profile-fill { display: flex; min-width: 1px; }
+    .depth-profile-bids { justify-content: flex-end; }
+    .depth-profile-bids .depth-profile-fill { margin-left: auto; }
+    .depth-profile-asks .depth-profile-fill { margin-right: auto; }
+    .depth-segment {
+      flex-basis: 0;
+      min-width: 1px;
+      border-inline: 1px solid rgba(11, 17, 32, 0.72);
+    }
+    .depth-segment-bid { background: var(--good-soft); }
+    .depth-segment-ask { background: var(--bad-soft); }
+    .depth-segment.wall-segment {
+      box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.8);
+      filter: brightness(1.25);
+    }
+    .depth-profile-spread {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 0.8rem;
+      text-align: right;
+    }
+    .book-pressure-content {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 5px;
+      white-space: nowrap;
+    }
+    .book-pressure-value { font-variant-numeric: tabular-nums; text-align: right; }
+    .book-pressure-label { text-align: left; }
+    .flip-item {
+      color: #f8fafc;
+      font-weight: 750;
+      line-height: 1.25;
+    }
+    .metric-primary {
+      color: var(--text);
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      line-height: 1.3;
+    }
+    .metric-detail {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 0.88rem;
+      font-variant-numeric: tabular-nums;
+      line-height: 1.35;
+    }
+    .metric-label { color: #cbd5e1; font-weight: 650; }
+    .flip-why { color: #cbd5e1; font-size: 0.82rem; line-height: 1.4; }
+    .readiness-note {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 12px;
+      align-items: start;
+      margin-top: 24px;
+      padding: 14px 16px;
+      border: 1px solid rgba(125, 211, 252, 0.2);
+      border-radius: 10px;
+      background: rgba(21, 59, 87, 0.25);
+    }
+    .readiness-icon {
+      display: grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 800;
+    }
+    .readiness-note strong { display: block; margin-bottom: 2px; }
+    .readiness-note p { margin: 0; color: var(--muted); font-size: 0.95rem; line-height: 1.45; }
+    .chart {
+      width: 100%;
+      max-height: 720px;
+      object-fit: contain;
+      background: #0f172a;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    figure.inflation-chart {
+      width: 100%;
+      min-width: 0;
+      margin: 16px 0 0;
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+    figure.inflation-chart img {
+      display: block;
+      width: 100%;
+      max-width: 100%;
+      height: auto;
+      object-fit: contain;
+      border-radius: 6px;
+    }
+    figure.inflation-chart figcaption {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 0.82rem;
+      line-height: 1.4;
+    }
+    .notes {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 12px;
+    }
+    .note {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      min-width: 0;
+    }
+    .price-context-list { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+    .price-context-list li { margin: 0; }
+    .price-context-classification { font-weight: 750; }
+    .price-range-wrap { margin-top: 13px; }
+    .price-range-title { margin-bottom: 7px; color: var(--muted); font-size: 0.82rem; font-weight: 700; }
+    .price-range-rail { min-width: 0; padding: 10px 4px 4px; }
+    .price-range-track {
+      position: relative;
+      width: 100%;
+      height: 8px;
+      border-radius: 999px;
+      background: #334155;
+    }
+    .price-range-band {
+      position: absolute;
+      top: 0;
+      height: 100%;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      border: 1px solid var(--accent);
+      transform: translateX(0);
+    }
+    .price-range-band-collapsed { width: 8px !important; transform: translateX(-4px); }
+    .price-range-marker {
+      position: absolute;
+      top: 50%;
+      z-index: 2;
+      display: block;
+      transform: translate(-50%, -50%);
+    }
+    .price-range-marker-fair {
+      width: 10px;
+      height: 10px;
+      background: var(--amber);
+      border: 1px solid var(--bg);
+      transform: translate(-50%, -50%) rotate(45deg);
+    }
+    .price-range-marker-latest {
+      width: 0;
+      height: 0;
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-bottom: 11px solid var(--text);
+      transform: translate(-50%, -105%);
+    }
+    .price-range-values {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px 12px;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-variant-numeric: tabular-nums;
+    }
+    .price-range-values strong { color: var(--text); }
+    .range-symbol { display: inline-block; width: 0.9em; margin-right: 3px; text-align: center; }
+    .range-symbol-fair { color: var(--amber); transform: rotate(45deg); }
+    .range-symbol-latest { color: var(--text); }
+    .insufficient-range { margin: 10px 0 0; color: var(--muted); font-weight: 700; }
+    .highlight-neutral { min-height: 0; }
+    .highlight-side-note { margin: 10px 0 0; color: var(--muted); font-size: 0.86rem; }
+    .report-footer {
+      margin-top: 34px;
+      padding: 22px 24px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: linear-gradient(145deg, rgba(17, 24, 38, 0.98), rgba(15, 23, 42, 0.98));
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+    .report-footer h2 {
+      margin-bottom: 12px;
+      color: var(--text);
+      font-size: 1.08rem;
+    }
+    .report-footer a { color: var(--accent); }
+    .third-party-tools {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    .third-party-tool {
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(11, 17, 32, 0.48);
+    }
+    .third-party-tool a { display: inline-block; margin-bottom: 3px; font-weight: 750; }
+    .third-party-tool p, .report-signoff p { margin-bottom: 0; }
+    .report-signoff {
+      padding-top: 18px;
+      border-top: 1px solid var(--line);
+    }
+    .report-signoff strong { color: var(--text); }
+    .report-signoff p + p { margin-top: 8px; }
+    @media (max-width: 720px) {
+      header { display: block; padding: 18px; }
+      .hero-meta { margin-top: 18px; text-align: left; }
+      h1 { font-size: 1.65rem; }
+      th, td { padding: 8px; }
+      .signal-help { grid-template-columns: 1fr; }
+      .price-guide-table th, .price-guide-table td { padding: 6px 3px; }
+      .price-guide-table .chip { padding: 2px 4px; font-size: 1rem; }
+      .summary-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 520px) {
+      main { width: min(100% - 8px, 1180px); padding-top: 10px; }
+      .book-summary th, .book-summary td { padding-inline: 3px; }
+      .book-pressure-content { gap: 2px; }
+      .notes { grid-template-columns: minmax(0, 1fr); }
+      .price-range-values { gap: 4px 8px; font-size: 0.74rem; }
+    }
+    @media print {
+      @page { size: landscape; margin: 10mm; }
+      :root { color-scheme: dark; }
+      * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      body { background: var(--bg); }
+      main { width: 100%; padding: 0; }
+      header { padding: 16px 18px; border-radius: 8px; box-shadow: none; }
+      h1 { font-size: 1.7rem; }
+      section { margin-top: 18px; }
+      h2 { font-size: 1.08rem; }
+      thead { display: table-header-group; }
+      tr, .note, .summary-card { break-inside: avoid; page-break-inside: avoid; }
+      .report-table { font-size: 8.5pt; }
+      .chart { max-height: 165mm; }
+      figure.inflation-chart img { max-height: 150mm; object-fit: contain; }
+    }
+    .highlight-section .summary-grid { grid-template-columns: minmax(0, 1fr); }
+    .highlight-chart { width: 100%; max-height: none; }
+    .sr-only { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
+    .note, .summary-card { overflow: visible; overflow-wrap: anywhere; }
+    .trading-guide-table .report-table { width: max-content; table-layout: auto; }
+    .trading-guide-table td, .trading-guide-table th { white-space: nowrap; max-width: none; }
+    .quote-gap { display: block; font-size: 12px; margin-top: 4px; }
+    .quote-gap-label { display: block; font-size: 10px; font-weight: 400; color: var(--muted); }
+    .table-wrap { max-width: none; }
+    .report-table tfoot td { white-space: normal; text-align: left; font-size: 12px; padding: 10px; }
+    .we23-summary h2 { margin: 0 0 12px; font-size: 16px; color: var(--muted); }
+    .we23-stats { display: flex; align-items: baseline; flex-wrap: wrap; gap: 16px; margin-bottom: 8px; }
+    .we23-value { font-size: 48px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+    .we23-delta { font-size: 24px; font-variant-numeric: tabular-nums; }
+    .we23-delta small { font-size: 12px; color: var(--muted); }
+    .we23-status { color: #fbbf24; font-size: 12px; }
+    .we23-chart { display: block; width: 100%; }
+    .summary-card::after { content: none; }
+    .book-item small { display: block; font-size: 10px; white-space: normal; overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <main>
+<div class="report-header-capture" data-report-asset="header">    <header>
+      <div class="hero-copy">
+        <div class="eyebrow">WarEra Market Guide</div>
+        <h1>Market intelligence, without the noise.</h1>
+        <p class="muted">Completed trades provide price history; current visible orders provide executable prices and market depth.</p>
+      </div>
+      <div class="hero-meta"><strong>Short-term trader report | UTC</strong><span>Market data sync time unavailable</span><span>Report generated 2026-09-08 21:01 UTC</span></div>
+</header>
+</div>
+<section class="we23-section" aria-label="WE23 Market Index"><div data-report-asset="we23-summary" class="panel we23-summary"><h2>WE23 Market Index</h2><div class="we23-stats"><strong class="we23-value">&mdash;</strong><span class="we23-delta signed-neutral" aria-label="7-day change">&mdash; <small>7D</small></span><span class="we23-status">&#9888; Unavailable</span></div></div></section>
+<section class="highlight-section"><div class="eyebrow">7D historical price context</div><h2>Historical watch items</h2><span class="sr-only">Chart-linked ranking is limited to items with sufficient completed-transaction history for a price-action chart.</span><article class="summary-card summary-card-neutral highlight-neutral"><strong>No meaningful price dislocations</strong><span class="summary-detail">Eligible latest trades are within their normal 7D ranges or less than one tick from fair value.</span></article></section>
+<section><h2>Trading Guide</h2><div class="table-wrap compact-table trading-guide-table"><table class="report-table"><thead><tr><th class="col-item text">Item</th><th class="col-signal text">Signal</th><th class="col-buy number">Buy</th><th class="col-sell number">Sell</th><th class="col-median-7d number">Median 7D</th><th class="col-7d-vwap number">7D VWAP</th><th class="col-pct number">%<small class="quote-gap-label">7D VWAP</small></th><th class="col-price-state text">Price State</th></tr></thead><tbody><tr><td class="col-item text">Bread</td><td class="col-signal text"><span class="chip chip-flat"><span>&#9679;</span>HOLD</span></td><td class="col-buy number">N/A</td><td class="col-sell number">N/A</td><td class="col-median-7d number">N/A</td><td class="col-7d-vwap number">N/A</td><td class="col-pct number"><span class="signed-neutral">&mdash;</span></td><td class="col-price-state text"><span class="state-chips"><span class="chip chip-flat">Insufficient history</span></span></td></tr></tbody></table></div></section>
+
+<section><h2>Activity Comparison</h2><p class="muted">Completed 7D turnover in BTC; PP-equivalent volume estimates production effort, not executable capacity or exit time.</p><div class="table-wrap compact-table activity-table"><table class="report-table"><thead><tr><th class="activity-item text">Item</th><th class="activity-volume number">7D completed turnover (BTC) / PP-equivalent volume</th></tr></thead><tbody><tr><td class="activity-item text">Bread</td><td class="activity-volume number"><div class="activity-volume-content"><div class="activity-metric"><span class="activity-metric-label">Value</span><div class="activity-track" role="img" aria-label="N/A completed transaction value; 0.0% of the highest-value market"><div class="activity-fill" style="width: 0.0%"></div></div><span class="activity-number">N/A</span></div><div class="activity-metric"><span class="activity-metric-label">PP equiv.</span><div class="activity-track" role="img" aria-label="N/A PP-equivalent completed volume; 0.0% of the busiest comparable item"><div class="activity-fill activity-fill-pp" style="width: 0.0%"></div></div><span class="activity-number" title="N/A">N/A</span></div></div></td></tr></tbody><tfoot><tr><td colspan="2">Observed: sync time unavailable. Prices BTC/unit; size 1 units; fee 0% per side; quote limit 30 min. N/A = unavailable / insufficient depth. Current orders do not guarantee future fills.</td></tr></tfoot></table></div></section>
+    <section>
+      <h2>Item Price Context</h2>
+      <p class="muted">Strict 7D completed-trade valuation position, with current bid and ask shown separately as execution context.</p>
+      <div class="notes"><article class="note" data-report-asset="item-price-context-card" data-item-code="Bread">
+          <h3>Bread</h3>
+          <ul class="price-context-list"><li>7D VWAP: <strong>N/A</strong></li><li>Latest completed trade: <strong>N/A</strong></li><li>7D normal range:<br><strong>N/A-N/A (N/A%)</strong></li><li>Classification: <strong class="price-context-classification">Insufficient 7D range evidence</strong></li><li>Current execution context — Bid: <strong>N/A</strong>; Ask: <strong>N/A</strong></li></ul>
+          <p class="insufficient-range">Insufficient 7D range evidence</p>
+        </article></div>
+    </section>
+    <footer class="report-footer">
+      <h2>Alternative third-party tools</h2>
+      <div class="third-party-tools">
+        <article class="third-party-tool">
+          <a href="https://workerprofit.theorist.ninja/" target="_blank" rel="noopener noreferrer">Factory Worker Profitability</a>
+          <p>Compare market prices, recipes, wages, and production bonuses to estimate factory and worker profitability.</p>
+        </article>
+        <article class="third-party-tool">
+          <a href="https://warera.unikhorne.dev/market" target="_blank" rel="noopener noreferrer">WarEra Market</a>
+          <p>Explore WarEra market information in an alternative market view.</p>
+        </article>
+      </div>
+      <div class="report-signoff">
+        <p><strong>Did you know?</strong></p>
+        <p>You can download the code that generated this report at:
+          <a href="https://github.com/sandokas/warera-marketguide" target="_blank" rel="noopener noreferrer">github.com/sandokas/warera-marketguide</a>
+        </p>
+        <p>If you found it useful, don't forget to Like and Subscribe!</p>
+      </div>
+    </footer>
+  </main>
+</body>
+</html>

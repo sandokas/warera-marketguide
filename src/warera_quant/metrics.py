@@ -9,12 +9,12 @@ from typing import Any, Mapping, Optional, Sequence
 import pandas as pd
 
 
-HIGHLIGHT_CANDLE_INTERVALS = (("4h", "4h"), ("8h", "8h"), ("12h", "12h"), ("1D", "1D"))
+HIGHLIGHT_CANDLE_INTERVALS = (("1h", "1h"), ("2h", "2h"), ("4h", "4h"), ("1D", "1D"))
 HIGHLIGHT_MIN_POPULATED_CANDLES = 12
 HIGHLIGHT_MIN_DISTINCT_UTC_DAYS = 3
 HIGHLIGHT_SMA_MIN_CLOSES = 6
 PRICE_ACTION_MAX_POPULATED_CANDLES = 180
-PRICE_ACTION_DISPLAY_WINDOW_DAYS = 90
+PRICE_ACTION_DISPLAY_WINDOW_DAYS = 30
 NUMERIC_COMPARISON_REL_TOL = 1e-12
 NUMERIC_COMPARISON_ABS_TOL = 1e-12
 
@@ -357,6 +357,9 @@ class HighlightedItem:
     sma_7d: pd.Series
     display_window_days: int = PRICE_ACTION_DISPLAY_WINDOW_DAYS
     observation_count: int = 0
+    window_start: object | None = None
+    window_end: object | None = None
+    latest_trade_at: object | None = None
 
     @property
     def filename(self) -> str:
@@ -427,11 +430,7 @@ def classify_price_dislocation(
         and lower <= upper
     )
     if not usable:
-        raw_gap_pct = (
-            (latest - fair) / fair * 100
-            if latest is not None and latest > 0 and fair is not None and fair > 0
-            else None
-        )
+        raw_gap_pct = calculate_price_gap_pct(latest, fair)
         return HighlightedItem(
             item_code=item_code,
             item_name=item_name,
@@ -460,7 +459,7 @@ def classify_price_dislocation(
     assert latest is not None and fair is not None and lower is not None and upper is not None and tick is not None
     empirical_width = upper - lower
     scale = max(empirical_width, tick)
-    raw_gap_pct = (latest - fair) / fair * 100
+    raw_gap_pct = calculate_price_gap_pct(latest, fair)
     classification = WITHIN_NORMAL_RANGE
     severity = 0.0
     if _strictly_greater(latest, upper) and _at_least(latest - fair, tick):
@@ -556,22 +555,17 @@ def build_price_action_candles(transactions: Sequence[dict], *, interval: str) -
     return candles.rename(columns={"open": "Open", "high": "High", "low": "Low", "close": "Close"})
 
 
-def select_price_action_interval(transactions: Sequence[dict]) -> tuple[str, pd.DataFrame] | None:
-    """Choose the finest publishable interval with sufficient authentic evidence.
-
-    A populated-candle ceiling keeps dense histories legible at the fixed report
-    image size. Sparse histories retain the finest (4h) detail; empty buckets do
-    not count toward the density limit.
-    """
-    coarsest_eligible: tuple[str, pd.DataFrame] | None = None
-    for label, frequency in HIGHLIGHT_CANDLE_INTERVALS:
-        candles = build_price_action_candles(transactions, interval=frequency)
-        distinct_days = len({timestamp.date() for timestamp in candles.index})
-        if len(candles) >= HIGHLIGHT_MIN_POPULATED_CANDLES and distinct_days >= HIGHLIGHT_MIN_DISTINCT_UTC_DAYS:
-            coarsest_eligible = (label, candles)
-            if len(candles) <= PRICE_ACTION_MAX_POPULATED_CANDLES:
-                return coarsest_eligible
-    return coarsest_eligible
+def select_price_action_interval(
+    transactions: Sequence[dict], *, interval: str = "4h",
+) -> tuple[str, pd.DataFrame] | None:
+    """Use the configured UTC interval; never coarsen or fill sparse history."""
+    if interval not in dict(HIGHLIGHT_CANDLE_INTERVALS):
+        raise ValueError("Item candle interval must be 1h, 2h, 4h, or 1D.")
+    candles = build_price_action_candles(transactions, interval=interval)
+    distinct_days = len({timestamp.date() for timestamp in candles.index})
+    if len(candles) < HIGHLIGHT_MIN_POPULATED_CANDLES or distinct_days < HIGHLIGHT_MIN_DISTINCT_UTC_DAYS:
+        return None
+    return interval, candles
 
 
 def _price_action_history_values(history: object) -> tuple[Sequence[dict], int, int]:
@@ -598,6 +592,7 @@ def prepare_price_action_item(
     row: dict,
     transactions: Sequence[dict] | object,
     *,
+    interval: str = "4h",
     role: str = "price_action",
     rank_within_role: int = 1,
     min_tick: object | None = None,
@@ -613,7 +608,7 @@ def prepare_price_action_item(
     ):
         return None
     trade_rows, window_days, observation_count = _price_action_history_values(transactions)
-    selected_interval = select_price_action_interval(trade_rows)
+    selected_interval = select_price_action_interval(trade_rows, interval=interval)
     if selected_interval is None:
         return None
     interval, candles = selected_interval
@@ -629,6 +624,9 @@ def prepare_price_action_item(
         sma_7d=time_based_sma_7d(candles),
         display_window_days=window_days,
         observation_count=observation_count,
+        window_start=getattr(transactions, "window_start", None),
+        window_end=getattr(transactions, "window_end", None),
+        latest_trade_at=max((str(t.get("created_at", "")) for t in trade_rows), default=None),
     )
 
 
@@ -644,6 +642,7 @@ def select_highlighted_items(
     *,
     min_tick: object = 0.001,
     require_chart_history: bool = True,
+    interval: str = "4h",
 ) -> list[HighlightedItem]:
     """Rank meaningful candidates and fall through unsupported chart histories."""
     items = [
@@ -666,19 +665,22 @@ def select_highlighted_items(
                 continue
             history = trades_by_item.get(item.item_code, ())
             trade_rows, window_days, observation_count = _price_action_history_values(history)
-            selected_interval = select_price_action_interval(trade_rows)
+            selected_interval = select_price_action_interval(trade_rows, interval=interval)
             if selected_interval is None:
                 continue
-            interval, candles = selected_interval
+            selected_label, candles = selected_interval
             first, last = candles.index[0], candles.index[-1]
             supported.append(replace(
                 item,
-                interval=interval,
+                interval=selected_label,
                 history_span=f"{max(1, (last.date() - first.date()).days + 1)}-day span",
                 candles=candles,
                 sma_7d=time_based_sma_7d(candles),
                 display_window_days=window_days,
                 observation_count=observation_count,
+                window_start=getattr(history, "window_start", None),
+                window_end=getattr(history, "window_end", None),
+                latest_trade_at=max((str(t.get("created_at", "")) for t in trade_rows), default=None),
             ))
         return supported
 
@@ -1773,3 +1775,215 @@ def classify_tendency(
         labels.append("Stable")
 
     return labels or ["Stable"]
+
+# WE23 is a separate benchmark. Retained inflation helpers above are archival or
+# reusable calculations and are not used to derive this index.
+WE23_COMPONENTS = (
+    'ammo', 'bread', 'case1', 'case2', 'coca', 'cocain', 'concrete',
+    'cookedFish', 'fish', 'grain', 'heavyAmmo', 'iron', 'lead', 'lightAmmo',
+    'limestone', 'livestock', 'oil', 'paper', 'petroleum', 'scraps', 'steak',
+    'steel', 'wood',
+)
+WE23_METHOD_VERSION = 'we23-daily-vwap-28d-weekly-v1'
+
+
+def verified_window(intervals: Sequence[tuple[int, int]], start: int, end: int) -> bool:
+    """Temporal completeness is independent of observed trade/weight coverage."""
+    cursor = start
+    for left, right in sorted(intervals):
+        if right <= cursor:
+            continue
+        if left > cursor:
+            return False
+        cursor = max(cursor, right)
+        if cursor >= end:
+            return True
+    return cursor >= end
+
+
+def calculate_we23_market_index(
+    daily_facts: Sequence[Mapping[str, Any]],
+    coverage: Mapping[str, Sequence[tuple[int, int]]] | None = None,
+    *, as_of: object, inception: object = '2026-08-01T00:00:00Z',
+    display_days: int = 30, weighting_days: int = 28,
+) -> dict[str, Any]:
+    """Daily VWAP fixed-holdings chain with preceding turnover Monday updates.
+
+    Input rows are UTC-day completed transaction aggregates, never API prices.
+    All calculation dates precede or equal as_of. Inception cannot silently move
+    when display settings, retention, or historical availability change.
+    """
+    if isinstance(display_days, bool) or not isinstance(display_days, int) or display_days < 1:
+        raise ValueError('display_days must be a positive integer.')
+    if isinstance(weighting_days, bool) or not isinstance(weighting_days, int) or weighting_days < 1:
+        raise ValueError('weighting_days must be a positive integer.')
+    end = pd.Timestamp(as_of)
+    end = end.tz_localize('UTC') if end.tzinfo is None else end.tz_convert('UTC')
+    end = end.floor('D')
+    start = pd.Timestamp(inception)
+    start = start.tz_localize('UTC') if start.tzinfo is None else start.tz_convert('UTC')
+    if start != start.floor('D'):
+        raise ValueError('inception must be a UTC midnight.')
+    day = 86400
+    start_epoch, end_epoch = int(start.timestamp()), int(end.timestamp())
+    display_start = end_epoch - (display_days - 1) * day
+    codes = WE23_COMPONENTS
+    facts = {
+        (str(row['item_code']), int(row['day_epoch'])): row
+        for row in daily_facts
+        if str(row['item_code']) in codes and int(row['day_epoch']) < end_epoch
+    }
+    # Normal index inputs are transaction facts, not downloader bookkeeping.
+    # Require observed positive activity on each constituent-day used. Exclude
+    # the first observed day because its leading boundary may be truncated.
+    # Explicit domain coverage can describe known zero-activity days in callers
+    # that have that evidence; it is not required by the database report.
+    if coverage is None:
+        coverage = {}
+        for code in codes:
+            observed = sorted(epoch for (item, epoch), fact in facts.items()
+                              if item == code and _positive_finite(fact.get('quantity'))
+                              and _positive_finite(fact.get('turnover')))
+            coverage[code] = [(epoch, epoch + day) for epoch in observed[1:]]
+    def prices_at(epoch: int) -> dict[str, float]:
+        prices = {}
+        for code in codes:
+            if not verified_window(coverage.get(code, ()), epoch - day, epoch):
+                continue
+            fact = facts.get((code, epoch - day), {})
+            quantity = _finite_float_or_none(fact.get('quantity'))
+            value = _finite_float_or_none(fact.get('turnover'))
+            if quantity is not None and quantity > 0 and value is not None and value > 0:
+                prices[code] = value / quantity
+        return prices
+    def weights_at(epoch: int) -> tuple[dict[str, float], str | None]:
+        first = epoch - weighting_days * day
+        missing = [code for code in codes if not verified_window(coverage.get(code, ()), first, epoch)]
+        if missing:
+            return {}, f'Incomplete turnover window: {len(missing)}/23 constituents have missing or truncated daily history.'
+        turnover = {}
+        for code in codes:
+            values = [facts.get((code, t), {}).get('turnover', 0.0) for t in range(first, epoch, day)]
+            if any(_finite_float_or_none(v) is None or float(v) < 0 for v in values):
+                return {}, 'Invalid completed turnover'
+            turnover[code] = sum(float(v) for v in values)
+        total = sum(turnover.values())
+        if total <= 0 or not math.isfinite(total):
+            return {}, 'Zero or invalid total completed turnover'
+        return {code: turnover[code] / total for code in codes}, None
+    holdings: dict[str, float] = {}
+    last_weights: dict[str, float] = {}
+    all_points = []
+    chain_broken = False
+    inception_reason = None
+    for epoch in range(start_epoch, end_epoch + 1, day):
+        prices = prices_at(epoch)
+        complete_prices = len(prices) == len(codes)
+        reason = None
+        level = None
+        is_rebalance = epoch == start_epoch or pd.Timestamp(epoch, unit='s', tz='UTC').weekday() == 0
+        weights, weight_reason = weights_at(epoch) if is_rebalance else ({}, None)
+        if epoch == start_epoch:
+            if complete_prices and weights:
+                level = 100.0
+                holdings = {code: level * weights[code] / prices[code] for code in codes}
+                last_weights = weights
+            else:
+                chain_broken = True
+                inception_reason = weight_reason or 'Incomplete inception daily prices'
+                reason = inception_reason
+        elif chain_broken:
+            reason = 'Continuity unavailable; backfill the unsupported inception or rebalance'
+        elif not complete_prices:
+            reason = 'Missing complete daily constituent prices'
+            if is_rebalance:
+                chain_broken = True
+        elif is_rebalance and not weights:
+            reason = weight_reason
+            chain_broken = True
+        else:
+            level = sum(holdings[code] * prices[code] for code in codes)
+            if is_rebalance:
+                holdings = {code: level * weights[code] / prices[code] for code in codes}
+                last_weights = weights
+        all_points.append({
+            'as_of': pd.Timestamp(epoch, unit='s', tz='UTC').isoformat(),
+            'level': level, 'priced_count': len(prices),
+            'coverage_pct': 100 * len(prices) / len(codes), 'reason': reason,
+            'is_rebalance': is_rebalance,
+            'weights': dict(weights) if weights and complete_prices and level is not None else {},
+        })
+    points = [point for point in all_points if int(pd.Timestamp(point['as_of']).timestamp()) >= display_start]
+    valid = [point for point in points if point['level'] is not None]
+    all_valid = [point for point in all_points if point['level'] is not None]
+    latest = points[-1] if points else None
+    previous = all_points[-2] if len(all_points) > 1 else None
+    change_1d_pct = None
+    if latest and previous and latest['level'] is not None and previous['level']:
+        if pd.Timestamp(latest['as_of']) - pd.Timestamp(previous['as_of']) == pd.Timedelta(days=1):
+            change_1d_pct = (latest['level'] / previous['level'] - 1) * 100
+    previous_week = all_points[-8] if len(all_points) >= 8 else None
+    change_7d_pct = None
+    if latest and previous_week and latest['level'] is not None and previous_week['level']:
+        if pd.Timestamp(latest['as_of']) - pd.Timestamp(previous_week['as_of']) == pd.Timedelta(days=7):
+            change_7d_pct = (latest['level'] / previous_week['level'] - 1) * 100
+    weight_values = sorted(last_weights.values(), reverse=True)
+    status = 'complete' if len(valid) == display_days else 'partial' if valid else 'unavailable'
+    return {
+        'name': 'WE23 Market Index', 'version': WE23_METHOD_VERSION,
+        'methodology': f'Daily completed-trade VWAP; preceding {weighting_days}-day turnover weights updated Monday UTC; fixed holdings between updates. All 23 constituents and complete observed daily input windows required.',
+        'coverage_basis': 'Stored completed transactions; daily coverage is observed, not a certification of API completeness.',
+        'observations': points, 'latest_level': latest['level'] if latest else None,
+        'change_1d_pct': change_1d_pct,
+        'change_7d_pct': change_7d_pct,
+        'first_valid_at': valid[0]['as_of'] if valid else None,
+        'last_valid_at': valid[-1]['as_of'] if valid else None,
+        'inception': start.isoformat(), 'inception_level': 100.0,
+        'first_calculated_at': all_valid[0]['as_of'] if all_valid else None,
+        'coverage_status': status, 'reason': inception_reason or (latest['reason'] if latest else 'As-of precedes inception'),
+        'weight_history': [{'effective_at': point['as_of'], 'reference_start': (pd.Timestamp(point['as_of']) - pd.Timedelta(days=weighting_days)).isoformat(), 'reference_end': point['as_of'], 'item_code': code, 'weight': weight} for point in all_points for code, weight in point['weights'].items()],
+        'weights': last_weights, 'top_weight_pct': 100 * weight_values[0] if weight_values else None,
+        'top_three_weight_pct': 100 * sum(weight_values[:3]) if weight_values else None,
+        'required_history_start': (start - pd.Timedelta(days=weighting_days)).isoformat(),
+        'component_count': len(codes), 'priced_count': latest['priced_count'] if latest else 0,
+        'display_days': display_days, 'weighting_days': weighting_days,
+        'display_start': pd.Timestamp(display_start, unit='s', tz='UTC').isoformat(),
+        'display_end': end.isoformat(), 'valid_observation_count': len(valid),
+    }
+
+
+def calculate_price_gap_pct(price: object, fair: object) -> float | None:
+    """Signed quote premium/discount to fair; not a fee-adjusted return."""
+    price_value = _finite_float_or_none(price)
+    fair_value = _finite_float_or_none(fair)
+    if price_value is None or fair_value is None or price_value <= 0 or fair_value <= 0:
+        return None
+    return (price_value / fair_value - 1) * 100
+
+
+def calculate_short_term_guidance(
+    guidance: FairValueGuidance, *, quote_age_minutes: float | None,
+    assumptions: FlipAssumptions,
+) -> dict[str, Any]:
+    """Conservative same/next-day readout without an unvalidated target model."""
+    fresh = (
+        quote_age_minutes is not None and math.isfinite(quote_age_minutes)
+        and 0 <= quote_age_minutes <= assumptions.max_quote_age_minutes
+    )
+    entry_ready = fresh and guidance.entry_fully_filled and guidance.executable_ask_vwap is not None
+    exit_ready = fresh and guidance.exit_fully_filled and guidance.executable_bid_vwap is not None
+    return {
+        'short_term_entry_action': 'Wait to buy',
+        'short_term_holder_action': 'Sell now' if exit_ready and guidance.holder_action == 'SELL' else 'Hold / reassess',
+        'short_term_setup_status': 'Short-term setup unconfirmed',
+        'short_term_target': None, 'short_term_invalidation': None,
+        'short_term_net_target_return_pct': None, 'short_term_downside_pct': None,
+        'short_term_horizon': 'Same day or next day; timing unconfirmed',
+        'short_term_evidence': 'No supported target timing or future configured-size exit depth. Historical reference is conditional context.',
+        'short_term_reassessment': 'Recheck when quote expires, configured-size depth disappears, or recent trades change.',
+        'short_term_rank': 0 if entry_ready else 1 if exit_ready else 2,
+        'short_term_entry_executable': entry_ready, 'short_term_exit_executable': exit_ready,
+        'short_term_quote_fresh': fresh,
+        'short_term_reference_return_pct': guidance.net_to_fair_pct if entry_ready else None,
+        'short_term_ranking_rule': 'Fresh full-size entry, then fresh full-size holder exit, then item name; no reference-gap ranking.',
+    }

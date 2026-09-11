@@ -8,7 +8,7 @@ Live data is normalized at the API boundary and stored in SQLite. Reports and ch
 
 ## Quick start
 
-Create a virtual environment and install the dependencies:
+Use the existing `.venv` when present. Otherwise create it, then install the dependencies:
 
 ```bash
 python -m venv .venv
@@ -44,7 +44,7 @@ WARERA_API_BASE_URL=https://api2.warera.io/trpc
 
 Do not commit or hardcode the key. Requests authenticate with the `X-Api-Key` header.
 
-Sync full visible order books, completed transactions, and the official per-item
+Sync fetched visible order books, completed transactions, and the official per-item
 production-point configuration, then generate a report. The game-calculated price endpoint may
 still be collected for compatibility or diagnostics, but it is lagging data and must not drive
 market analysis or trading signals:
@@ -76,10 +76,9 @@ warera-marketguide \
   --lookback-days 120
 ```
 
-For the 90-day static graphics, a 120-day backfill is recommended: 90 days are displayed and
-the additional history supports rolling 30-day comparisons at the beginning of the inflation
-timeline. Existing transactions are deduplicated during backfill. Backfilling can restore only
-authentic history still offered by the API; it does not fabricate observations.
+A backfill imports authentic history still offered by the API and deduplicates existing
+transactions. Download scope, display periods, and retention are independent. WE23 requires
+history from before its fixed inception; see the index section below.
 
 Useful sync options:
 
@@ -146,116 +145,81 @@ Item rows must not be summed because ingredient and processed-item trades can ov
 Items without a defined factory chain still rank by Completed Value and show `N/A` only
 for PP fields.
 
-## Historical inflation tracker
+## WE23 Market Index
 
-DB-backed reports calculate fixed-vintage price indices from completed transactions. The tracker
-publishes broad-market, industrial-expansion, standard and premium combat, governance,
-infrastructure-operation, crafted-equipment-input, and Base PP views. The finished-equipment index
-remains disabled until authoritative market item mappings exist.
+DB-backed reports publish WE23 in place of the retired inflation overview. It uses a fixed
+23-item universe, daily completed-trade VWAPs, and preceding 28-day turnover weights updated
+on Mondays UTC. Holdings remain fixed between updates. Its fixed inception is
+2026-08-01 at 100; changing display days does not rebase it.
 
-The Base PP index uses **total upstream pre-bonus PP**: direct production effort plus the effort
-embodied in consumed materials. It does not infer player or other production bonuses. Because raw
-materials and processed goods may both trade, its weights describe market exposure to embodied PP;
-they are not a total of economy-wide PP production.
+The calculation requires all constituents and complete observed daily input windows. It excludes
+the unfinished UTC day and does not substitute quotes, fabricate prices, or silently restart the
+index when inception evidence is missing. Observed daily activity is not proof that the API supplied
+every transaction. Missing evidence is shown as partial or unavailable. The headline 7D change
+compares index levels seven calendar days apart, unlike the item chart's reference gap.
 
-The initial stable vintage is configured in `marketguide.toml`:
+The weighting history starts 28 days before inception (2026-07-04), and the normal observed-coverage
+rule excludes each item's first observed day. Collect earlier history where available. Housekeeping
+can eventually remove evidence needed to reconstruct the chain; the current 120-day retention does
+not permanently protect inception history. Increasing retention cannot restore deleted data.
 
-```toml
-[inflation]
-enabled = true
-base_period_start = 2026-08-01
-version = "2026-08-01-v1"
-price_window_days = 7
-min_base_trade_count = 1
-min_base_traded_quantity = 0.000000000001
-```
+Exports include `we23_series.csv`, `we23_weights.csv`, and `charts/we23.png`.
+Legacy inflation calculations remain in the package, but the current CLI does not
+publish `market_inflation.csv` or the old inflation overview. DB-backed reports still export
+`market_action_costs.csv`: company relocation and MU HQ operating-cost benchmarks priced from
+trailing representative completed trades, independently of the retired inflation calculation.
+The archived settings in `docs/retired-inflation-config.toml` do not configure WE23.
 
-Changing the base date or weighting policy should create a new version rather than silently
-rewriting the meaning of an existing index. Inflation does not use `--lookback-days`. If
-housekeeping removes the configured base transactions, the fixed vintage becomes unavailable;
-increasing retention later cannot recreate deleted history.
+## Charts and PNG publication
 
-Each DB-backed report writes the detailed audit data to `market_inflation.csv` and one combined
-`output/charts/inflation/inflation-overview.png`. The static chart shows up to 90 calendar days of
-rolling 30D Broad Market inflation values, with its final point matching the 30D headline. Dates
-without an authentic 30-day comparison are omitted and partial history is disclosed. This report asset does not require `--charts`,
-which continues to control item price-action charts. The HTML presents one current broad-market
-inflation/deflation signal, its inverse effect on BTC purchasing power, and an evidence-history label.
-Detailed weights, coverage, exclusions, and
-period comparisons remain in CSV instead of becoming report tables. Missing history is reported as
-unavailable rather than filled from quotes or order books.
-
-The report run also exports exact current action benchmarks in `market_action_costs.csv`:
-moving one company and hourly operation of MU HQ levels 1-4. They reuse the inflation tracker's
-trailing representative completed-trade prices and
-do not replace the market-weighted broad indices. Their quantities and provenance are shown in the
-output.
-
-Structural events may be configured with repeated `[[inflation.events]]` entries. Only sourced,
-dated events marked `live` in `production` can annotate charts. Oil-backed player movement is
-currently recorded as planned development behavior and therefore creates no production annotation
-or new index vintage.
-
-## Charts
-
-Charts are currently available during a live report run:
+DB-backed highlight charts and report PNG exports are automatic. `--charts` and `--table-pngs`
+remain compatibility flags; neither is required. Report publication requires a supported local
+Chrome, Chromium, or Edge installation, including for CSV reports. Set `WARERA_CHROME_PATH`
+in `.env` if automatic browser discovery cannot find it.
 
 ```bash
-warera-marketguide \
-  --live \
-  --charts \
-  --chart-interval 15min \
-  --chart-ma-window 4 \
-  --output output
+warera-marketguide --from-db --item-chart-days 30 --chart-interval 4h --we23-days 30 --output output
 ```
 
-Highlighted item charts are embedded in the HTML report and written under `output/charts/`.
-They show up to 90 trailing calendar days of authentic completed trades, using a deterministic
-4h, 8h, 12h, or 1D candle interval for static readability. Each image discloses its actual
-observation span and populated-candle count, so a newly backfilled database may show fewer than
-90 days without implying continuous coverage. Use `--chart-min-range-pct 5` to set the minimum
-visible price range.
-
-The database-backed HTML report always combines 1D, 7D, and 30D fair-value perspectives. Guidance,
-meaningful price dislocations, completed activity, and Item Price Context use an explicit 7D basis; `--lookback-days`
-continues to control sync/backfill, not those report semantics or the fixed 90-day display window.
-
-Export every chart-capable item without adding the extra charts to the report:
+Item charts default to 30 days and 4-hour UTC candles. Supported primary intervals are `1h`, `2h`,
+`4h`, and `1D`; they are not automatically coarsened. WE23 defaults to 30 display days.
+Use `--chart-min-range-pct 5` to control the minimum visible price range. Sparse history remains
+visible, and partial candles are marked. Database read models calculate 1D, 7D, and 30D statistics;
+guidance, valuation dislocations, activity, and Item Price Context use 7D evidence.
+`--lookback-days` controls download/backfill scope, not these report horizons.
 
 ```bash
-warera-marketguide --from-db --charts \
-  --all-price-action-charts --output output
+warera-marketguide --from-db --all-price-action-charts --research-days 90 --output output
 ```
 
-The additional item-based PNGs are written sequentially under `output/charts/all/`. Items without
-enough completed-transaction evidence are skipped; the report still embeds only its highlighted
-price-action charts.
+`--all-price-action-charts` exports eligible items under `charts/all/` without embedding them all.
+`--research-days` adds standalone item and WE23 research charts. The main report includes eligible
+historical watch charts; unavailable history is not manufactured.
 
-The Market Trends table uses a static `90D Path` sparkline with calendar-time spacing. Missing
-days remain visible as gaps. None of the rolling 90-day graphics claim alignment with strategic-resource
-reshuffles or other game cycles, whose exact timing is not assumed by the report.
+Publication exports tables, the header, WE23 summary, highlight cards and pairs, item context
+cards, section composites, and footer under `tables/`, `cards/`, and `sections/`. Filenames include
+asset kind, position, and a slug; use `asset_inventory.json` for the authoritative current-run list.
+Old files in a reused output directory are not automatically included in that inventory.
 
-Export the report header, every Item Price Context card, and every table as standalone PNGs:
+Each table PNG captures the complete table element without its section heading or surrounding
+whitespace. The exporter checks for overflow and replaces the published HTML tables with those
+static images, retaining table text as image alternative text. Composite section PNGs are separate
+assets and may include headings. All item rows are retained; `--top` is a compatibility option.
 
-```bash
-warera-marketguide --table-pngs --output output
+## Trading guide percentage
+
+Buy and Sell are quantity-aware executable order-book prices. Median 7D and 7D VWAP describe
+completed transactions. The `% vs 7D reference` column and highlighted item chart use one helper:
+
+```text
+(latest completed trade / blended 7D reference - 1) * 100
+blended reference = 50% VWAP + 30% median + 20% average of the last five trades in the window
 ```
 
-The hero and rendered highlight cards are written to `output/sections/report-header.png`; when no
-highlight qualifies, that image contains the explicit neutral dislocation state.
-
-Each Item Price Context card is written as its own tightly cropped image under `output/cards/`,
-using a stable item-based filename such as `bread-price-context.png`. The card PNG contains the
-same fair value, latest completed trade, normal range, classification, execution context, and
-price-range rail as the accessible HTML card.
-
-The table images are written to `output/tables/` in the same order as the HTML report. Each PNG captures
-only its browser-rendered table—without the section heading, description, or surrounding whitespace—
-while preserving the dark theme, signal colors, badges, depth graphics, and other HTML styling. The
-exporter uses Google Chrome, Chromium, or Microsoft Edge from `PATH` or standard Windows install
-locations. If the browser executable is installed
-elsewhere, uncomment `WARERA_CHROME_PATH` in `.env` and set it to the full executable path. A
-ready-to-uncomment Windows example is included in `.env.example`.
+Available reference components are reweighted when necessary. Invalid or missing prices leave
+the percentage unavailable. This is a premium or discount to a historical reference, not the
+change from seven days ago, an executable sell return, or a fee-adjusted profit.
+For example, Wood at 0.106 against a reference of 0.09594023358 gives +10.49%.
 
 ## Other input modes
 
@@ -267,7 +231,7 @@ The minimum useful CSV fields are:
 item_name,bid,ask,trades_7d,high_7d,low_7d
 ```
 
-`current_price`, `open_7d`, and `close_7d` improve compatibility-mode reports but are optional. CSV price fields must represent completed transactions supplied by the user, not the lagging game-calculated price endpoint. See `data/sample_market.csv` for a complete example.
+`last_trade_price`, `open_7d`, and `close_7d` provide completed-price context. Historical price fields must represent completed transactions supplied by the user; `bid` and `ask` represent current orders. Rich guide fields require additional evidence and may be unavailable in minimal CSV input. See `data/sample_market.csv` for a complete example.
 
 ### Custom JSON endpoint
 
@@ -304,7 +268,9 @@ Trading Attractiveness = (Effective Spread % x Window Trades) / Window Range %
 
 Effective spread subtracts the minimum price tick from the raw bid/ask gap.
 
-The intended report leads with clear actions rather than a generic market-quality score. Because
+The product goal is to lead with clear actions rather than a generic market-quality score.
+The current compact table publishes BUY, SELL, or HOLD; targets and risk plans described below
+are product aspirations, not promises that every level is displayed or supported. Because
 WarEra has no short selling and the report does not know the user's inventory, each item needs two
 independent answers: whether a user without inventory should buy now or wait, and whether a user
 holding inventory should sell now or hold. Sell guidance always means exiting owned inventory.
@@ -319,7 +285,8 @@ More detail is available in:
 - [Market data semantics](docs/market-data-model-spec.md)
 - [Report and liquidity semantics](docs/market-reporting-liquidity-spec.md)
 - [Production Points by factory item](docs/production-points-reference.md)
-- [Proposed Market Trends table](docs/market-trends-table-spec.md)
+- [Future web platform migration draft](docs/web-platform-project-definition.md)
+- [Deferred support and resistance idea](docs/support-resistance-zones-future.md)
 - [Project goal and data authority](docs/project-goal.md)
 - [Repository architecture rules](AGENTS.md)
 

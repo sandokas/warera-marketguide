@@ -19,6 +19,7 @@ def test_initialize_creates_schema_tables(tmp_path):
     with _store(tmp_path) as store:
         assert store.table_names() == {
             "transactions",
+            "transaction_coverage",
             "price_observations",
             "order_book_observations",
             "order_book_levels",

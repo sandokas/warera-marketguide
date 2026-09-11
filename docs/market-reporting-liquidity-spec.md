@@ -1,34 +1,52 @@
 # Report and Liquidity Semantics
 
-## Report focus
+## Current publication
 
-The HTML report provides aggressive, clear trading guidance for the WarEra in-game market. WarEra
-has no short selling, so the report must answer two position-dependent questions independently:
-whether a user without inventory should buy now or wait, and whether a user holding inventory
-should sell now or hold. It must show the relevant entry, target, stop-loss or invalidation level,
-executable quantity, expected opportunity, and risk. A sell signal always means exiting inventory
-the user already owns.
+The report presents the header and sync freshness, WE23 Market Index, historical watch items,
+Trading Guide, Current Order Book, Activity Comparison, Item Price Context, and a footer.
+Missing evidence remains unavailable. Completed transactions supply historical values; current
+orders supply execution context. The lagging game price endpoint supplies neither.
 
-Latest execution, fair value, change, range, volume, activity, spread, liquidity, and market state
-support those decisions. They are not competing goals and should not be repeated
-across tables without a distinct purpose.
+Every item is retained regardless of the legacy `--top` argument. Tables follow the guide's
+`short_term_rank`, then case-insensitive item name and code. Item Price Context cards are
+alphabetical. Historical watch items are selected by meaningful 7D price dislocations and
+available chart evidence, not by the legacy trading-attractiveness score.
 
-All historical price and activity fields come from completed transactions stored in SQLite. Current
-execution and liquidity fields come from the newest order book. The lagging game-calculated price
-endpoint must not appear as a fallback or signal input.
+## Trading Guide
 
-## Display conventions
+Columns are Item, Signal, Buy, Sell, Median 7D, 7D VWAP, % vs 7D reference, and Price State.
+BUY takes precedence when entry guidance says BUY; otherwise holder SELL becomes SELL;
+other states display HOLD. SELL means an exit for an owner, never a short position.
+The underlying entry and holder decisions remain separate even though the table shows one signal.
 
-- Price-like values use three decimal places.
-- Volume is total traded quantity for the selected window.
-- Trades is the number of completed transactions for that window.
-- Counts and quantities do not receive a `.000` suffix.
-- Large quantities may use compact notation such as `31.6K`.
-- Signed changes use visual direction cues consistently.
+Buy and Sell are executable ask-side and bid-side VWAPs for the configured quantity. Median and
+VWAP use completed transactions in the 7D window. The percentage uses the latest completed trade
+and blended 7D reference, exactly as the item chart does:
 
-## Liquidity
+```text
+(latest completed trade / stable_fair_price_7d - 1) * 100
+```
 
-Liquidity is based on current fetched order-book depth and spread, not trade count multiplied by volume:
+The reference is 50% VWAP, 30% median, and 20% average of the last five trades within the window,
+with available components reweighted. The displayed 7D VWAP column is a separate statistic;
+it is not the denominator of the percentage. The gap is neither a seven-day price return nor
+an executable profit. Missing or invalid inputs produce an unavailable percentage.
+
+Price State describes historical conditions; it is not the action signal. Max Buy, Rich Sell,
+targets, stops, and expected holding periods are not columns in the current compact guide.
+See [market semantics](market-data-model-spec.md) for underlying threshold calculations and
+[project goal](project-goal.md) for broader intended decision support.
+
+## Activity and liquidity
+
+Activity compares completed transaction value and PP-equivalent completed volume over 7D.
+Bars are normalized within the displayed report. PP-equivalent volume is completed units times
+[total upstream PP per item](production-points-reference.md); it is embodied effort, not measured
+production during the window. Ingredient and processed-item rows must not be summed.
+Items without a mapped factory chain retain completed value but have unavailable PP fields.
+
+The Current Order Book shows fetched open-order structure. A derived compatibility liquidity
+metric remains available in the read model:
 
 ```text
 depth = bid_depth + ask_depth
@@ -36,47 +54,18 @@ spread_penalty = 1 + max(spread_pct, 0.5) / 100
 liquidity = depth / spread_penalty
 ```
 
-Higher depth and a tighter spread increase the value. Missing depth produces a low value rather than an invented proxy.
+The published activity bars do not use this metric. Fetched orders are not guaranteed future fills.
 
-The horizontal liquidity bar is relative to the rows currently displayed:
+## Display and exports
 
-```text
-bar width = row liquidity / maximum displayed liquidity * 100
-```
+Table prices generally use three decimals; percentage gaps use signed two-decimal values.
+Counts and quantities avoid a `.000` suffix, and large quantities may use compact notation.
+The primary item chart defaults to 30 days with 4h candles; WE23 defaults to 30 days.
+Their display settings are independent of download scope, retention, and 7D valuation semantics.
 
-It supports quick comparison within one report and should not be compared as an absolute scale across separate reports.
-
-## Table responsibilities
-
-Each table must state and answer one decision question. At minimum, the report should keep these
-concepts visibly distinct:
-
-- buyer action: buy now or wait to buy;
-- holder action: sell now or hold;
-- valuation: latest completed transaction, historical range, and transaction-derived fair value;
-- execution: best ask, best bid, available quantity, spread, and slippage;
-- activity: completed volume, value, transaction count, and total upstream Production Points (PP)
-  per item used for embodied PP-equivalent volume comparisons;
-- direction: transaction-derived momentum and price state;
-- risk plan: target, stop loss or invalidation, downside, and expected horizon.
-
-Columns that answer different questions must not be combined merely because they fit in one table.
-Supporting visualizations—including the order book, activity bars, and price-state indicators—should
-be retained when their calculation and purpose are clear.
-
-The fixed PP-per-item reference values and the distinction between direct recipe PP and full
-upstream PP are documented in [Production Points by Factory Item](production-points-reference.md).
-
-The fair-value guidance table uses one single-line signal per item: `Buy` when the executable Ask
-reaches `Max Buy`, `Sell` when the executable Bid reaches `Rich Sell`, and `Wait` otherwise. Sell is
-explicitly holder guidance, not short-selling advice. Ask and Bid are quantity-aware executable
-VWAPs. `Max Buy` is margin-adjusted against Fair and capped by P25 or P10 in risky states. Commodity
-guidance uses no transaction fee; fee adjustment applies only to equipment-market analysis. `Rich
-Sell` requires the configured Fair premium subject to the empirical upper range, and `Ask Upside`
-compares the executable Ask with Fair. A synthetic symmetric band and the return
-between its endpoints must not be shown as executable room or profit. Table cells must remain one
-line high.
-
-## Output behavior
-
-`--top 0` displays all items; a positive value limits ranked HTML sections. CSV outputs retain the full calculated data frame. The report rank follows the metric sort order, and the automatic featured chart candidate follows that same order.
+The CLI automatically exports PNGs and an `asset_inventory.json` manifest. Tables are captured
+as complete, intrinsically sized elements without section headings or surrounding whitespace,
+and published HTML replaces them with static PNGs. No scrolling or clipped overflow is allowed.
+Section composites, individual cards, charts, and footer exports are separate assets. CSV outputs
+retain all calculated rows. The current CLI publishes market trends/scores, WE23 series/weights, and database-backed action-cost benchmarks;
+retired inflation exports are not part of the current publication.

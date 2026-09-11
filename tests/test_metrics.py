@@ -69,12 +69,12 @@ def test_highlight_interval_boundary_and_unmodified_ohlc_units_volume():
     ("days", "expected"),
     [
         (30, "4h"),
-        (60, "8h"),
-        (90, "12h"),
-        (91, "1D"),
+        (60, "4h"),
+        (90, "4h"),
+        (91, "4h"),
     ],
 )
-def test_price_action_interval_selection_limits_populated_candle_density(days, expected):
+def test_price_action_interval_selection_does_not_silently_coarsen(days, expected):
     trades = [
         {
             "created_at": timestamp.isoformat(),
@@ -89,7 +89,7 @@ def test_price_action_interval_selection_limits_populated_candle_density(days, e
     interval, candles = select_price_action_interval(trades)
 
     assert interval == expected
-    assert len(candles) <= 180
+    assert len(candles) == days * 6
 
 
 def test_highlight_selection_ranks_gaps_before_optional_chart_capability():
@@ -721,3 +721,17 @@ def test_classify_tendency_labels_market_behavior():
         volume=1,
         spread_pct=1,
     )
+
+
+@pytest.mark.parametrize('price,fair,expected', [
+    (90, 100, -10), (110, 100, 10), (100, 100, 0),
+    (None, 100, None), (100, None, None), (100, 0, None),
+    (float('inf'), 100, None), (100, float('nan'), None),
+])
+def test_price_gap_is_signed_and_requires_valid_prices(price, fair, expected):
+    from warera_quant.metrics import calculate_price_gap_pct
+    result = calculate_price_gap_pct(price, fair)
+    if expected is None:
+        assert result is None
+    else:
+        assert result == pytest.approx(expected)
