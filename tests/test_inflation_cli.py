@@ -20,7 +20,7 @@ def test_report_preserves_archived_inflation_without_publishing_it(tmp_path):
     assert archive.read_text() == 'archived evidence'
     assert 'Historical Inflation' not in html.read_text(encoding='utf-8')
     assert 'market_inflation.csv' not in html.read_text(encoding='utf-8')
-    assert (tmp_path/'we23_series.csv').exists()
+    assert (tmp_path/'we24_series.csv').exists()
 
 
 def test_cli_no_longer_has_dedicated_inflation_builder():
@@ -28,12 +28,12 @@ def test_cli_no_longer_has_dedicated_inflation_builder():
     assert not hasattr(cli, 'build_inflation_index_results')
 
 
-def test_csv_mode_never_calculates_we23_from_substitute_prices(monkeypatch, tmp_path):
+def test_csv_mode_never_calculates_we24_from_substitute_prices(monkeypatch, tmp_path):
     source = tmp_path/'market.csv'
     pd.DataFrame([{'item_name':'Bread', 'bid':9, 'ask':10}]).to_csv(source,index=False)
     monkeypatch.setattr(cli, 'load_dotenv', lambda:None)
-    monkeypatch.setattr(cli, 'build_we23_market_index', lambda *a,**k: (_ for _ in ()).throw(AssertionError('substitute index')))
-    monkeypatch.setattr(cli, 'render_we23_chart', lambda _, path, **k:path)
+    monkeypatch.setattr(cli, 'build_we24_market_index', lambda *a,**k: (_ for _ in ()).throw(AssertionError('substitute index')))
+    monkeypatch.setattr(cli, 'render_we24_chart', lambda _, path, **k:path)
     monkeypatch.setattr(cli, 'export_report_assets', lambda *a,**k:[])
     monkeypatch.setattr(sys,'argv',['guide','--csv',str(source),'--output',str(tmp_path/'report'),'--quiet'])
     cli.main()

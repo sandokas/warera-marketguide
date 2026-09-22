@@ -26,12 +26,12 @@ from warera_quant.charts import (
     render_report_item_context_pngs,
     render_report_table_pngs,
     render_trend_path_svg,
-    render_we23_chart,
+    render_we24_chart,
 )
 from warera_quant.metrics import select_highlighted_items
 
 
-def test_we23_date_ticks_are_regular_and_fit_inside_export(tmp_path, monkeypatch):
+def test_we24_date_ticks_are_regular_and_fit_inside_export(tmp_path, monkeypatch):
     captured = []
     original_savefig = plt.Figure.savefig
 
@@ -46,7 +46,7 @@ def test_we23_date_ticks_are_regular_and_fit_inside_export(tmp_path, monkeypatch
         {"as_of": date.isoformat(), "level": 100 + offset / 10}
         for offset, date in enumerate(pd.date_range("2026-08-10", periods=30, tz="UTC"))
     ]
-    render_we23_chart({"observations": observations}, tmp_path / "we23.png")
+    render_we24_chart({"observations": observations}, tmp_path / "we24.png")
 
     figure, renderer = captured[0]
     axis = figure.axes[0]

@@ -991,8 +991,8 @@ def _optional_float(value: Any) -> float | None:
         return None
 
 
-def render_we23_chart(index: dict, output_path: str | Path, *, display_days: int = 30) -> Path:
-    """Render the supplied WE23 level series, keeping unsupported dates as gaps."""
+def render_we24_chart(index: dict, output_path: str | Path, *, display_days: int = 30) -> Path:
+    """Render the supplied WE24 level series, keeping unsupported dates as gaps."""
     import matplotlib.dates as mdates
     observations = index.get("observations", [])
     frame = pd.DataFrame(observations)
@@ -1030,7 +1030,7 @@ def render_we23_chart(index: dict, output_path: str | Path, *, display_days: int
         )
         axis.set_xticks(ticks)
         axis.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
-    axis.set_title(f"WE23 | {display_days}D", loc="left", color="#94a3b8", fontsize=11, pad=12)
+    axis.set_title(f"WE24 | {display_days}D", loc="left", color="#94a3b8", fontsize=11, pad=12)
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(output, dpi=150, facecolor=figure.get_facecolor())

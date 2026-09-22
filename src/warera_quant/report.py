@@ -823,13 +823,13 @@ def _html_page(title: str, body: str) -> str:
     .quote-gap-label {{ display: block; font-size: 10px; font-weight: 400; color: var(--muted); }}
     .table-wrap {{ max-width: none; }}
     .report-table tfoot td {{ white-space: normal; text-align: left; font-size: 12px; padding: 10px; }}
-    .we23-summary h2 {{ margin: 0 0 12px; font-size: 16px; color: var(--muted); }}
-    .we23-stats {{ display: flex; align-items: baseline; flex-wrap: wrap; gap: 16px; margin-bottom: 8px; }}
-    .we23-value {{ font-size: 48px; line-height: 1.1; font-variant-numeric: tabular-nums; }}
-    .we23-delta {{ font-size: 24px; font-variant-numeric: tabular-nums; }}
-    .we23-delta small {{ font-size: 12px; color: var(--muted); }}
-    .we23-status {{ color: #fbbf24; font-size: 12px; }}
-    .we23-chart {{ display: block; width: 100%; }}
+    .we24-summary h2 {{ margin: 0 0 12px; font-size: 16px; color: var(--muted); }}
+    .we24-stats {{ display: flex; align-items: baseline; flex-wrap: wrap; gap: 16px; margin-bottom: 8px; }}
+    .we24-value {{ font-size: 48px; line-height: 1.1; font-variant-numeric: tabular-nums; }}
+    .we24-delta {{ font-size: 24px; font-variant-numeric: tabular-nums; }}
+    .we24-delta small {{ font-size: 12px; color: var(--muted); }}
+    .we24-status {{ color: #fbbf24; font-size: 12px; }}
+    .we24-chart {{ display: block; width: 100%; }}
     .summary-card::after {{ content: none; }}
     .book-item small {{ display: block; font-size: 10px; white-space: normal; overflow-wrap: anywhere; }}
   </style>
@@ -1834,7 +1834,7 @@ def write_action_costs_csv(
     return path
 
 
-def _we23_html(index: dict | None, chart_path: str | Path | None, output_dir: Path) -> str:
+def _we24_html(index: dict | None, chart_path: str | Path | None, output_dir: Path) -> str:
     index = index or {}
     chart = _relative_chart_path(chart_path, output_dir)
     level = _number(index.get('latest_level'))
@@ -1849,14 +1849,16 @@ def _we23_html(index: dict | None, chart_path: str | Path | None, output_dir: Pa
         delta = f"{change:+.2f}%" if change else "0.00%"
     status = index.get('coverage_status', 'unavailable')
     warning = "Unavailable" if level is None else "Partial" if status != 'complete' else ""
-    badge = f'<span class="we23-status">&#9888; {warning}</span>' if warning else ""
-    return ('<section class="we23-section" aria-label="WE23 Market Index">'
-            '<div data-report-asset="we23-summary" class="panel we23-summary">'
-            '<h2>WE23 Market Index</h2><div class="we23-stats">'
-            f'<strong class="we23-value">{value}</strong>'
-            f'<span class="we23-delta signed-{tone}" aria-label="7-day change">{symbol}{delta} <small>7D</small></span>'
-            f'{badge}</div></div>'
-            + (f'<img class="we23-chart" src="{escape(chart)}" alt="WE23 daily index history">' if chart else '')
+    note = index.get('reason') if level is None else index.get('membership_note')
+    detail = f'<p>{escape(str(note))}</p>' if note else ''
+    badge = f'<span class="we24-status">&#9888; {warning}</span>' if warning else ""
+    return ('<section class="we24-section" aria-label="WE24 Market Index">'
+            '<div data-report-asset="we24-summary" class="panel we24-summary">'
+            '<h2>WE24 Market Index</h2><div class="we24-stats">'
+            f'<strong class="we24-value">{value}</strong>'
+            f'<span class="we24-delta signed-{tone}" aria-label="7-day change">{symbol}{delta} <small>7D</small></span>'
+            f'{badge}</div>{detail}</div>'
+            + (f'<img class="we24-chart" src="{escape(chart)}" alt="WE24 daily index history">' if chart else '')
             + '</section>')
 
 
@@ -1872,8 +1874,8 @@ def generate_html_report(
     assumptions: FlipAssumptions | None = None,
     data_synced_at: str | None = None,
     data_sync_status: str | None = None,
-    we23: dict | None = None,
-    we23_chart_path: str | Path | None = None,
+    we24: dict | None = None,
+    we24_chart_path: str | Path | None = None,
     inflation_results: Sequence["InflationIndexResult"] | None = None,
     inflation_chart_paths: Mapping[str, str | Path] | None = None,
 ) -> str:
@@ -1910,7 +1912,7 @@ def generate_html_report(
         + header_html
         + '</div>'
     )
-    blocks.append(_we23_html(we23, we23_chart_path, Path(output_dir)))
+    blocks.append(_we24_html(we24, we24_chart_path, Path(output_dir)))
     blocks.append(highlight_html)
     blocks.append(_price_guide_html(df, display_count))
 
@@ -2007,8 +2009,8 @@ def write_outputs(
     assumptions: FlipAssumptions | None = None,
     data_synced_at: str | None = None,
     data_sync_status: str | None = None,
-    we23: dict | None = None,
-    we23_chart_path: str | Path | None = None,
+    we24: dict | None = None,
+    we24_chart_path: str | Path | None = None,
     inflation_results: Sequence["InflationIndexResult"] | None = None,
     inflation_chart_paths: Mapping[str, str | Path] | None = None,
     action_cost_results: Sequence["ActionCostResult"] | None = None,
@@ -2048,8 +2050,8 @@ def write_outputs(
     export_df.to_csv(scores_csv_path, index=False)
     if action_cost_results:
         write_action_costs_csv(action_cost_results, out)
-    pd.DataFrame([{key: value for key, value in point.items() if key != "weights"} for point in (we23 or {}).get("observations", [])], columns=["as_of", "level", "priced_count", "coverage_pct", "reason", "is_rebalance"]).to_csv(out / "we23_series.csv", index=False)
-    pd.DataFrame((we23 or {}).get("weight_history", []), columns=["effective_at", "reference_start", "reference_end", "item_code", "weight"]).to_csv(out / "we23_weights.csv", index=False)
+    pd.DataFrame([{key: value for key, value in point.items() if key != "weights"} for point in (we24 or {}).get("observations", [])], columns=["as_of", "level", "priced_count", "component_count", "coverage_pct", "reason", "is_rebalance"]).to_csv(out / "we24_series.csv", index=False)
+    pd.DataFrame((we24 or {}).get("weight_history", []), columns=["effective_at", "reference_start", "reference_end", "item_code", "weight"]).to_csv(out / "we24_weights.csv", index=False)
     html_path.write_text(
         generate_html_report(
             export_df,
@@ -2062,8 +2064,8 @@ def write_outputs(
             assumptions=assumptions,
             data_synced_at=data_synced_at,
             data_sync_status=data_sync_status,
-            we23=we23,
-            we23_chart_path=we23_chart_path,
+            we24=we24,
+            we24_chart_path=we24_chart_path,
         ),
         encoding="utf-8",
     )
@@ -2118,7 +2120,7 @@ def export_report_assets(
             targets = [
                 ('table.report-table', 'tables', 'table'),
                 ('header', 'sections', 'header'),
-                ('[data-report-asset="we23-summary"]', 'sections', 'we23-summary'),
+                ('[data-report-asset="we24-summary"]', 'sections', 'we24-summary'),
                 ('.summary-card', 'cards', 'highlight'),
                 ('.highlight-column', 'sections', 'highlight-pair'),
                 ('[data-report-asset="item-price-context-card"]', 'cards', 'item'),

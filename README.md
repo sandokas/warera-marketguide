@@ -77,7 +77,7 @@ warera-marketguide \
 ```
 
 A backfill imports authentic history still offered by the API and deduplicates existing
-transactions. Download scope, display periods, and retention are independent. WE23 requires
+transactions. Download scope, display periods, and retention are independent. WE24 requires
 history from before its fixed inception; see the index section below.
 
 Useful sync options:
@@ -145,12 +145,19 @@ Item rows must not be summed because ingredient and processed-item trades can ov
 Items without a defined factory chain still rank by Completed Value and show `N/A` only
 for PP fields.
 
-## WE23 Market Index
+## WE24 Market Index
 
-DB-backed reports publish WE23 in place of the retired inflation overview. It uses a fixed
-23-item universe, daily completed-trade VWAPs, and preceding 28-day turnover weights updated
+DB-backed reports publish WE24 in place of the retired inflation overview. It uses a fixed
+24-item universe (including `woodenCase`), daily completed-trade VWAPs, and preceding 28-day turnover weights updated
 on Mondays UTC. Holdings remain fixed between updates. Its fixed inception is
-2026-08-01 at 100; changing display days does not rebase it.
+2026-08-01 at 100; changing display days does not rebase it. The original 23-item
+basket supplies the history before Wooden Case is eligible. Wooden Case joins at the
+first Monday rebalance with a complete preceding 28-day observed turnover window
+and a valid daily price (or at inception if those inputs already exist). Admission
+preserves the index level; it does not fabricate pre-launch prices. Once admitted,
+all 24 constituents are required. Reports disclose pending admission, and the series
+CSV records the active `component_count` for each day. The old `--we23-days` CLI
+option remains an alias for `--we24-days`.
 
 The calculation requires all constituents and complete observed daily input windows. It excludes
 the unfinished UTC day and does not substitute quotes, fabricate prices, or silently restart the
@@ -163,12 +170,12 @@ rule excludes each item's first observed day. Collect earlier history where avai
 can eventually remove evidence needed to reconstruct the chain; the current 120-day retention does
 not permanently protect inception history. Increasing retention cannot restore deleted data.
 
-Exports include `we23_series.csv`, `we23_weights.csv`, and `charts/we23.png`.
+Exports include `we24_series.csv`, `we24_weights.csv`, and `charts/we24.png`.
 Legacy inflation calculations remain in the package, but the current CLI does not
 publish `market_inflation.csv` or the old inflation overview. DB-backed reports still export
 `market_action_costs.csv`: company relocation and MU HQ operating-cost benchmarks priced from
 trailing representative completed trades, independently of the retired inflation calculation.
-The archived settings in `docs/retired-inflation-config.toml` do not configure WE23.
+The archived settings in `docs/retired-inflation-config.toml` do not configure WE24.
 
 ## Charts and PNG publication
 
@@ -178,11 +185,11 @@ Chrome, Chromium, or Edge installation, including for CSV reports. Set `WARERA_C
 in `.env` if automatic browser discovery cannot find it.
 
 ```bash
-warera-marketguide --from-db --item-chart-days 30 --chart-interval 4h --we23-days 30 --output output
+warera-marketguide --from-db --item-chart-days 30 --chart-interval 4h --we24-days 30 --output output
 ```
 
 Item charts default to 30 days and 4-hour UTC candles. Supported primary intervals are `1h`, `2h`,
-`4h`, and `1D`; they are not automatically coarsened. WE23 defaults to 30 display days.
+`4h`, and `1D`; they are not automatically coarsened. WE24 defaults to 30 display days.
 Use `--chart-min-range-pct 5` to control the minimum visible price range. Sparse history remains
 visible, and partial candles are marked. Database read models calculate 1D, 7D, and 30D statistics;
 guidance, valuation dislocations, activity, and Item Price Context use 7D evidence.
@@ -193,10 +200,10 @@ warera-marketguide --from-db --all-price-action-charts --research-days 90 --outp
 ```
 
 `--all-price-action-charts` exports eligible items under `charts/all/` without embedding them all.
-`--research-days` adds standalone item and WE23 research charts. The main report includes eligible
+`--research-days` adds standalone item and WE24 research charts. The main report includes eligible
 historical watch charts; unavailable history is not manufactured.
 
-Publication exports tables, the header, WE23 summary, highlight cards and pairs, item context
+Publication exports tables, the header, WE24 summary, highlight cards and pairs, item context
 cards, section composites, and footer under `tables/`, `cards/`, and `sections/`. Filenames include
 asset kind, position, and a slug; use `asset_inventory.json` for the authoritative current-run list.
 Old files in a reused output directory are not automatically included in that inventory.

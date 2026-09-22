@@ -419,7 +419,7 @@ def test_report_ignores_unavailable_internal_flip_data():
 def test_target_reading_order_and_all_item_coverage_ignore_legacy_top():
     rows = [{'item_code': f'item{i}', 'item_name': f'Item {i:02d}', 'order_book': {'best_bid': 1, 'best_ask': 2}} for i in range(23)]
     report = generate_html_report(pd.DataFrame(rows), top=1)
-    headings = ['WE23 Market Index', 'Historical watch items', '<h2>Trading Guide</h2>', '<h2>Current Order Book</h2>', '<h2>Activity Comparison</h2>', '<h2>Item Price Context</h2>']
+    headings = ['WE24 Market Index', 'Historical watch items', '<h2>Trading Guide</h2>', '<h2>Current Order Book</h2>', '<h2>Activity Comparison</h2>', '<h2>Item Price Context</h2>']
     assert [report.index(h) for h in headings] == sorted(report.index(h) for h in headings)
     assert report.count('data-report-asset="item-price-context-card"') == 23
     for i in range(23):
@@ -500,10 +500,10 @@ def test_activity_retains_value_and_pp_bars_without_secondary_clutter():
     assert '7D completed turnover (BTC)' in activity
 
 
-def test_we23_unavailable_is_visible_without_invented_level():
+def test_we24_unavailable_is_visible_without_invented_level():
     report = generate_html_report(pd.DataFrame())
-    overview = report[report.index('<section class="we23-section"'):report.index('<section class="highlight-section">')]
-    assert 'we23-value">&mdash;' in overview
+    overview = report[report.index('<section class="we24-section"'):report.index('<section class="highlight-section">')]
+    assert 'we24-value">&mdash;' in overview
     assert 'Unavailable' in overview
     assert '+0.00%' not in overview
     assert '<p' not in overview
@@ -572,10 +572,10 @@ def test_execution_prices_and_weekly_vwap_remain_distinct_from_fair():
     assert 'Fair 7D' not in guide
 
 
-def test_we23_summary_uses_weekly_change_without_duplicate_date():
-    from warera_quant.report import _we23_html
+def test_we24_summary_uses_weekly_change_without_duplicate_date():
+    from warera_quant.report import _we24_html
     from pathlib import Path
-    summary = _we23_html({'latest_level': 110, 'change_1d_pct': 2, 'change_7d_pct': 10,
+    summary = _we24_html({'latest_level': 110, 'change_1d_pct': 2, 'change_7d_pct': 10,
                           'display_end': '2026-09-08T00:00:00Z', 'coverage_status': 'complete'}, None, Path('.'))
     assert '+10.00%' in summary and '<small>7D</small>' in summary
     assert '+2.00%' not in summary and '2026-09-08' not in summary

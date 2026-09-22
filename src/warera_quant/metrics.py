@@ -1776,15 +1776,15 @@ def classify_tendency(
 
     return labels or ["Stable"]
 
-# WE23 is a separate benchmark. Retained inflation helpers above are archival or
+# WE24 is a separate benchmark. Retained inflation helpers above are archival or
 # reusable calculations and are not used to derive this index.
-WE23_COMPONENTS = (
+WE24_COMPONENTS = (
     'ammo', 'bread', 'case1', 'case2', 'coca', 'cocain', 'concrete',
     'cookedFish', 'fish', 'grain', 'heavyAmmo', 'iron', 'lead', 'lightAmmo',
     'limestone', 'livestock', 'oil', 'paper', 'petroleum', 'scraps', 'steak',
-    'steel', 'wood',
+    'steel', 'wood', 'woodenCase',
 )
-WE23_METHOD_VERSION = 'we23-daily-vwap-28d-weekly-v1'
+WE24_METHOD_VERSION = 'we24-daily-vwap-28d-weekly-v2'
 
 
 def verified_window(intervals: Sequence[tuple[int, int]], start: int, end: int) -> bool:
@@ -1801,7 +1801,7 @@ def verified_window(intervals: Sequence[tuple[int, int]], start: int, end: int) 
     return cursor >= end
 
 
-def calculate_we23_market_index(
+def calculate_we24_market_index(
     daily_facts: Sequence[Mapping[str, Any]],
     coverage: Mapping[str, Sequence[tuple[int, int]]] | None = None,
     *, as_of: object, inception: object = '2026-08-01T00:00:00Z',
@@ -1827,7 +1827,8 @@ def calculate_we23_market_index(
     day = 86400
     start_epoch, end_epoch = int(start.timestamp()), int(end.timestamp())
     display_start = end_epoch - (display_days - 1) * day
-    codes = WE23_COMPONENTS
+    codes = WE24_COMPONENTS
+    legacy_codes = tuple(code for code in codes if code != 'woodenCase')
     facts = {
         (str(row['item_code']), int(row['day_epoch'])): row
         for row in daily_facts
@@ -1860,7 +1861,7 @@ def calculate_we23_market_index(
         first = epoch - weighting_days * day
         missing = [code for code in codes if not verified_window(coverage.get(code, ()), first, epoch)]
         if missing:
-            return {}, f'Incomplete turnover window: {len(missing)}/23 constituents have missing or truncated daily history.'
+            return {}, f'Incomplete turnover window: {len(missing)}/{len(codes)} constituents have missing or truncated daily history.'
         turnover = {}
         for code in codes:
             values = [facts.get((code, t), {}).get('turnover', 0.0) for t in range(first, epoch, day)]
@@ -1871,12 +1872,22 @@ def calculate_we23_market_index(
         if total <= 0 or not math.isfinite(total):
             return {}, 'Zero or invalid total completed turnover'
         return {code: turnover[code] / total for code in codes}, None
+    admission_at = None
+    codes = legacy_codes
     holdings: dict[str, float] = {}
     last_weights: dict[str, float] = {}
     all_points = []
     chain_broken = False
     inception_reason = None
     for epoch in range(start_epoch, end_epoch + 1, day):
+        is_monday = pd.Timestamp(epoch, unit='s', tz='UTC').weekday() == 0
+        if admission_at is None and (epoch == start_epoch or is_monday):
+            candidate = facts.get(('woodenCase', epoch - day), {})
+            if (verified_window(coverage.get('woodenCase', ()), epoch - weighting_days * day, epoch)
+                    and _positive_finite(candidate.get('quantity'))
+                    and _positive_finite(candidate.get('turnover'))):
+                admission_at = pd.Timestamp(epoch, unit='s', tz='UTC').isoformat()
+                codes = WE24_COMPONENTS
         prices = prices_at(epoch)
         complete_prices = len(prices) == len(codes)
         reason = None
@@ -1902,13 +1913,13 @@ def calculate_we23_market_index(
             reason = weight_reason
             chain_broken = True
         else:
-            level = sum(holdings[code] * prices[code] for code in codes)
+            level = sum(amount * prices[code] for code, amount in holdings.items())
             if is_rebalance:
                 holdings = {code: level * weights[code] / prices[code] for code in codes}
                 last_weights = weights
         all_points.append({
             'as_of': pd.Timestamp(epoch, unit='s', tz='UTC').isoformat(),
-            'level': level, 'priced_count': len(prices),
+            'level': level, 'priced_count': len(prices), 'component_count': len(codes),
             'coverage_pct': 100 * len(prices) / len(codes), 'reason': reason,
             'is_rebalance': is_rebalance,
             'weights': dict(weights) if weights and complete_prices and level is not None else {},
@@ -1930,8 +1941,8 @@ def calculate_we23_market_index(
     weight_values = sorted(last_weights.values(), reverse=True)
     status = 'complete' if len(valid) == display_days else 'partial' if valid else 'unavailable'
     return {
-        'name': 'WE23 Market Index', 'version': WE23_METHOD_VERSION,
-        'methodology': f'Daily completed-trade VWAP; preceding {weighting_days}-day turnover weights updated Monday UTC; fixed holdings between updates. All 23 constituents and complete observed daily input windows required.',
+        'name': 'WE24 Market Index', 'version': WE24_METHOD_VERSION,
+        'methodology': f'Daily completed-trade VWAP; preceding {weighting_days}-day turnover weights updated Monday UTC; fixed holdings between updates. Complete observed daily input windows required; Wooden Case joins at the first eligible Monday rebalance after a full turnover window.',
         'coverage_basis': 'Stored completed transactions; daily coverage is observed, not a certification of API completeness.',
         'observations': points, 'latest_level': latest['level'] if latest else None,
         'change_1d_pct': change_1d_pct,
@@ -1945,6 +1956,9 @@ def calculate_we23_market_index(
         'weights': last_weights, 'top_weight_pct': 100 * weight_values[0] if weight_values else None,
         'top_three_weight_pct': 100 * sum(weight_values[:3]) if weight_values else None,
         'required_history_start': (start - pd.Timedelta(days=weighting_days)).isoformat(),
+        'universe_count': len(WE24_COMPONENTS),
+        'wooden_case_admitted_at': admission_at,
+        'membership_note': None if admission_at else f'Wooden Case pending a complete {weighting_days}-day history and Monday rebalance; 23 active constituents.',
         'component_count': len(codes), 'priced_count': latest['priced_count'] if latest else 0,
         'display_days': display_days, 'weighting_days': weighting_days,
         'display_start': pd.Timestamp(display_start, unit='s', tz='UTC').isoformat(),

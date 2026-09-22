@@ -29,7 +29,7 @@ BUY/SELL/HOLD signal, executable Buy/Sell prices, Median 7D, 7D VWAP, a latest-t
 blended 7D reference, and Price State. Entry and holder decisions remain separate internally.
 The table does not currently publish a full target, stop-loss, or forecast-horizon plan.
 Historical reference gaps are valuation context, not promised profits or seven-day returns.
-WE23 provides broad market context, and all report tables are published as static PNGs.
+WE24 provides broad market context, and all report tables are published as static PNGs.
 
 ## Position-aware action semantics
 

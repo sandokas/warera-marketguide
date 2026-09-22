@@ -100,7 +100,7 @@ separate fixed domain mapping in `metrics.py`.
 
 ### `transaction_coverage`
 
-Stores ingestion coverage intervals. WE23's normal report calculation uses observed completed
+Stores ingestion coverage intervals. WE24's normal report calculation uses observed completed
 transaction activity for daily evidence rather than treating downloader metadata as proof of completeness.
 
 ### `schema_meta`
@@ -150,13 +150,13 @@ market_scores.csv
 ```
 
 The scores CSV is retained as an identical compatibility output. The current CLI also writes
-`we23_series.csv`, `we23_weights.csv`, and `asset_inventory.json`, plus
+`we24_series.csv`, `we24_weights.csv`, and `asset_inventory.json`, plus
 `market_action_costs.csv` for database-backed action benchmarks. DB-backed highlight charts and
 all report PNG exports are automatic; `--charts` and `--table-pngs` are compatibility flags.
 Published tables are static PNGs. See [README](../README.md) for display settings and output details.
 
 The published report uses a compact 7D guide and context, current orders, completed activity,
-historical watch charts, and WE23. It no longer publishes the older cross-horizon Market Trends
+historical watch charts, and WE24. It no longer publishes the older cross-horizon Market Trends
 table or inflation overview, though compatible derived fields and legacy calculations remain.
 
 ## Operational guidance
@@ -168,9 +168,9 @@ syncs are disclosed and failed syncs do not advance successful freshness.
 
 Download/backfill lookback, analytical windows, chart display periods, and retention are distinct.
 The report queries 1D, 7D, and 30D statistics; guide/activity use 7D. Item charts default to 30 days
-and 4h candles. WE23 uses fixed inception and preceding 28-day weighting evidence, independent of
+and 4h candles. WE24 uses fixed inception and preceding 28-day weighting evidence, independent of
 display length. Retention can remove required inception history; the current cleanup does not
-permanently preserve it. See [README](../README.md#we23-market-index).
+permanently preserve it. See [README](../README.md#we24-market-index).
 
 Requests are paced at one second by default. Choose sync cadence with the duration of a complete
 run in mind; stored game-calculated endpoint prices remain excluded from analytical inputs.

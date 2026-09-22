@@ -34,9 +34,9 @@ from .metrics import (
     traded_value_weights,
     total_upstream_production_points,
     calculate_fixed_action_cost,
-    calculate_we23_market_index,
+    calculate_we24_market_index,
     calculate_short_term_guidance,
-    WE23_COMPONENTS,
+    WE24_COMPONENTS,
 )
 
 
@@ -277,22 +277,22 @@ def load_action_cost_results(
     )
 
 
-def build_we23_market_index(
+def build_we24_market_index(
     store: MarketStore, *, as_of: datetime, display_days: int = 30,
     inception: datetime = datetime(2026, 8, 1, tzinfo=timezone.utc), weighting_days: int = 28,
 ) -> dict[str, Any]:
     """Read completed transaction inputs, independently of synchronization metadata."""
     end = _as_utc(as_of).replace(hour=0, minute=0, second=0, microsecond=0)
     start = _as_utc(inception) - timedelta(days=weighting_days + 1)
-    facts = store.completed_daily_facts(WE23_COMPONENTS, int(start.timestamp()), int(end.timestamp()))
-    result = calculate_we23_market_index(
+    facts = store.completed_daily_facts(WE24_COMPONENTS, int(start.timestamp()), int(end.timestamp()))
+    result = calculate_we24_market_index(
         facts, as_of=end, inception=inception,
         display_days=display_days, weighting_days=weighting_days,
     )
-    unexpected = sorted(set(store.item_codes()) - set(WE23_COMPONENTS))
+    unexpected = sorted(set(store.item_codes()) - set(WE24_COMPONENTS))
     if unexpected:
         reason = "Membership review required for additional item codes: " + ", ".join(unexpected)
-        result.update(latest_level=None, coverage_status="unavailable", reason=reason,
+        result.update(latest_level=None, change_1d_pct=None, change_7d_pct=None, first_calculated_at=None, coverage_status="unavailable", reason=reason,
                       first_valid_at=None, last_valid_at=None, valid_observation_count=0,
                       weights={}, weight_history=[], top_weight_pct=None, top_three_weight_pct=None)
         result["observations"] = [dict(point, level=None, reason=reason, weights={}) for point in result["observations"]]

@@ -90,7 +90,7 @@ def test_generate_report_accepts_precomputed_inflation_results():
     html = generate_html_report(pd.DataFrame(), inflation_results=[_result(provisional=True)])
 
     assert "Historical Inflation" not in html
-    assert "WE23 Market Index" in html
+    assert "WE24 Market Index" in html
 
 
 def test_inflation_is_between_market_trends_and_item_price_context():
@@ -102,7 +102,7 @@ def test_inflation_is_between_market_trends_and_item_price_context():
 
     assert "Market Trends" not in html
     assert "Historical Inflation" not in html
-    assert html.index("WE23 Market Index") < html.index("Item Price Context")
+    assert html.index("WE24 Market Index") < html.index("Item Price Context")
 
 
 def test_inflation_export_is_normalized_and_contains_no_json(tmp_path):

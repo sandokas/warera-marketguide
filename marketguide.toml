@@ -9,4 +9,4 @@ retention_days = 120
 vacuum_interval_days = 30
 
 # Display periods are CLI generation settings: --item-chart-days 7 --chart-interval 1h
-# --we23-days 30; optional --research-days 90. Download uses --lookback-days.
+# --we24-days 30; optional --research-days 90. Download uses --lookback-days.

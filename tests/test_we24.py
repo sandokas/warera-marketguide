@@ -4,11 +4,11 @@ import pandas as pd
 import pytest
 
 from warera_quant.metrics import (
-    WE23_COMPONENTS, calculate_we23_market_index, verified_window,
+    WE24_COMPONENTS, calculate_we24_market_index, verified_window,
     FlipAssumptions, calculate_fair_value_guidance, calculate_short_term_guidance,
 )
 from warera_quant.market_store import MarketStore
-from warera_quant.market_data import build_we23_market_index
+from warera_quant.market_data import build_we24_market_index
 
 BASE = pd.Timestamp('2026-08-01T00:00:00Z')
 DAY = 86400
@@ -18,13 +18,13 @@ def fixture(days=60):
     start = BASE - pd.Timedelta(days=28)
     end = BASE + pd.Timedelta(days=days)
     facts = [dict(item_code=code, day_epoch=int(t.timestamp()), quantity=10, turnover=100)
-             for t in pd.date_range(start, end, inclusive='left', freq='D') for code in WE23_COMPONENTS]
-    coverage = {code: [(int(start.timestamp()), int(end.timestamp()))] for code in WE23_COMPONENTS}
+             for t in pd.date_range(start, end, inclusive='left', freq='D') for code in WE24_COMPONENTS]
+    coverage = {code: [(int(start.timestamp()), int(end.timestamp()))] for code in WE24_COMPONENTS}
     return facts, coverage, end
 
 
 def calc(facts, coverage, end, **kwargs):
-    return calculate_we23_market_index(facts, coverage, as_of=end, **kwargs)
+    return calculate_we24_market_index(facts, coverage, as_of=end, **kwargs)
 
 
 @pytest.mark.parametrize('days,display,status,count', [(5,30,'partial',6),(29,30,'complete',30),(60,30,'complete',30),(60,90,'partial',61)])
@@ -84,7 +84,7 @@ def test_missing_non_rebalance_price_is_gap_and_can_resume_fixed_holdings():
     points = result['observations']
     assert points[4]['level'] is None
     assert points[5]['level'] == pytest.approx(100)
-    assert points[4]['priced_count'] == 22
+    assert points[4]['priced_count'] == 23
 
 
 def test_missing_rebalance_price_breaks_chain_without_reset():
@@ -118,7 +118,7 @@ def test_store_legacy_coverage_and_retention_are_independent_of_first_trade(tmp_
         store.record_transaction_coverage('bread', 0, int(now.timestamp()), source='test-contiguous-scan')
         store.run_housekeeping(retention_days=10, vacuum_interval_days=0, now=now)
         assert store.transaction_coverage()['bread'][0][0] == int((now-timedelta(days=10)).timestamp())
-        result = build_we23_market_index(store, as_of=now)
+        result = build_we24_market_index(store, as_of=now)
         assert result['latest_level'] is None
 
 
@@ -144,15 +144,15 @@ def test_relative_price_movements_not_raw_price_average():
         if fact['item_code'] == 'steel' and fact['day_epoch'] == int(BASE.timestamp()):
             fact['turnover'] *= 2
     result = calc(facts, coverage, end)
-    assert result['latest_level'] == pytest.approx(100 + 100/23)
+    assert result['latest_level'] == pytest.approx(100 + 100/24)
 
 
 def test_verified_zero_constituent_is_not_silently_excluded_or_carried():
     facts, coverage, end = fixture(1)
     facts = [fact for fact in facts if fact['item_code'] != 'wood']
     result = calc(facts, coverage, end)
-    assert result['component_count'] == 23
-    assert result['priced_count'] == 22
+    assert result['component_count'] == 24
+    assert result['priced_count'] == 23
     assert result['latest_level'] is None
     assert result['reason'] == 'Incomplete inception daily prices'
 
@@ -171,20 +171,20 @@ def test_new_verified_backfill_can_restore_previously_pruned_coverage(tmp_path):
 def test_database_index_uses_transactions_without_sync_metadata(tmp_path, monkeypatch):
     facts, _, end = fixture(35)
     prior = int((BASE-pd.Timedelta(days=29)).timestamp())
-    facts.extend(dict(item_code=code,day_epoch=prior,quantity=10,turnover=100) for code in WE23_COMPONENTS)
+    facts.extend(dict(item_code=code,day_epoch=prior,quantity=10,turnover=100) for code in WE24_COMPONENTS)
     with MarketStore(tmp_path/'market.db') as store:
         monkeypatch.setattr(store, 'completed_daily_facts', lambda *args: facts)
-        monkeypatch.setattr(store, 'item_codes', lambda: list(WE23_COMPONENTS))
+        monkeypatch.setattr(store, 'item_codes', lambda: list(WE24_COMPONENTS))
         monkeypatch.setattr(store, 'transaction_coverage', lambda *args: (_ for _ in ()).throw(AssertionError('Index must not read sync metadata')))
-        result = build_we23_market_index(store, as_of=end.to_pydatetime())
+        result = build_we24_market_index(store, as_of=end.to_pydatetime())
     assert result['coverage_status'] == 'complete'
-    assert result['priced_count'] == 23
+    assert result['priced_count'] == 24
     assert result['latest_level'] == pytest.approx(100)
 
 
 def test_observed_daily_inputs_reject_a_truncated_leading_window():
     facts, _, end = fixture(35)
-    result = calculate_we23_market_index(facts, as_of=end)
+    result = calculate_we24_market_index(facts, as_of=end)
     assert result['latest_level'] is None
     assert 'Incomplete turnover window' in result['reason']
 
@@ -218,3 +218,51 @@ def test_weekly_change_uses_exact_seven_day_baseline_even_for_short_display():
     )]
     result = calc(facts, coverage, end)
     assert result['change_7d_pct'] is None
+
+
+def test_new_item_admission_preserves_history_and_rebalance_level():
+    facts, coverage, end = fixture(60)
+    launch = BASE + pd.Timedelta(days=5)
+    facts = [f for f in facts if f['item_code'] != 'woodenCase' or f['day_epoch'] >= int(launch.timestamp())]
+    coverage['woodenCase'] = [(int(launch.timestamp()), int(end.timestamp()))]
+    result = calc(facts, coverage, end, display_days=90)
+    admission = pd.Timestamp(result['wooden_case_admitted_at'])
+    assert admission.weekday() == 0
+    assert admission >= launch + pd.Timedelta(days=28)
+    assert admission < launch + pd.Timedelta(days=35)
+    assert all(p['level'] == pytest.approx(100) for p in result['observations'])
+    assert result['observations'][0]['component_count'] == 23
+    assert result['observations'][-1]['component_count'] == 24
+    assert result['weights']['woodenCase'] > 0
+    assert result['membership_note'] is None
+    early = calc(facts, coverage, launch + pd.Timedelta(days=10))
+    assert early['latest_level'] == pytest.approx(100)
+    assert early['component_count'] == 23
+    assert early['membership_note']
+    assert early['wooden_case_admitted_at'] is None
+
+
+def test_unknown_membership_clears_changes_and_series(tmp_path, monkeypatch):
+    facts, _, end = fixture(35)
+    prior = int((BASE-pd.Timedelta(days=29)).timestamp())
+    facts.extend(dict(item_code=code, day_epoch=prior, quantity=10, turnover=100) for code in WE24_COMPONENTS)
+    with MarketStore(tmp_path/'market.db') as store:
+        monkeypatch.setattr(store, 'completed_daily_facts', lambda *args: facts)
+        monkeypatch.setattr(store, 'item_codes', lambda: [*WE24_COMPONENTS, 'unknown'])
+        result = build_we24_market_index(store, as_of=end.to_pydatetime())
+    assert result['latest_level'] is None
+    assert result['change_1d_pct'] is None
+    assert result['change_7d_pct'] is None
+    assert all(p['level'] is None for p in result['observations'])
+    assert 'unknown' in result['reason']
+
+
+def test_admitted_item_cannot_drop_out_when_its_price_is_missing():
+    facts, coverage, end = fixture(12)
+    missing = int((BASE + pd.Timedelta(days=1)).timestamp())
+    facts = [f for f in facts if not (f['item_code'] == 'woodenCase' and f['day_epoch'] == missing)]
+    result = calc(facts, coverage, end)
+    assert result['wooden_case_admitted_at'] == BASE.isoformat()
+    assert result['component_count'] == 24
+    assert result['latest_level'] is None
+    assert result['observations'][2]['priced_count'] == 23

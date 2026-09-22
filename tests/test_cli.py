@@ -14,8 +14,8 @@ from warera_quant.market_store import MarketStore
 def prevent_tests_from_loading_local_dotenv(monkeypatch):
     monkeypatch.setattr(cli_module, "load_dotenv", lambda: False)
     monkeypatch.setattr(cli_module, "export_report_assets", lambda *a, **k: [])
-    monkeypatch.setattr(cli_module, "render_we23_chart", lambda index, path, **k: path)
-    monkeypatch.setattr(cli_module, "build_we23_market_index", lambda *a, **k: {})
+    monkeypatch.setattr(cli_module, "render_we24_chart", lambda index, path, **k: path)
+    monkeypatch.setattr(cli_module, "build_we24_market_index", lambda *a, **k: {})
     monkeypatch.setattr(cli_module, "load_action_cost_results", lambda *a, **k: ())
 
 
@@ -188,7 +188,7 @@ def test_housekeeping_is_an_independent_command(tmp_path, monkeypatch):
 
 
 def test_display_settings_do_not_change_download_window():
-    args = build_parser().parse_args(["--item-chart-days", "14", "--we23-days", "60", "--research-days", "90", "--lookback-days", "180"])
-    assert (args.item_chart_days, args.we23_days, args.research_days, args.lookback_days) == (14, 60, 90, 180)
+    args = build_parser().parse_args(["--item-chart-days", "14", "--we24-days", "60", "--research-days", "90", "--lookback-days", "180"])
+    assert (args.item_chart_days, args.we24_days, args.research_days, args.lookback_days) == (14, 60, 90, 180)
     defaults = build_parser().parse_args([])
-    assert (defaults.item_chart_days, defaults.chart_interval, defaults.we23_days) == (30, "4h", 30)
+    assert (defaults.item_chart_days, defaults.chart_interval, defaults.we24_days) == (30, "4h", 30)

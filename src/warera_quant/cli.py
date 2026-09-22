@@ -10,14 +10,14 @@ from dotenv import load_dotenv
 
 from .api_client import WarEraApiClient
 from .charts import (
-    render_we23_chart,
+    render_we24_chart,
     render_highlight_price_action_chart,
 )
 from .config import ConfigError, load_config
 from .csv_loader import load_market_csv
 from .json_loader import market_json_to_dataframe
 from .market_data import (
-    build_we23_market_index,
+    build_we24_market_index,
     load_action_cost_results,
     load_price_action_history,
     load_market_rows,
@@ -187,8 +187,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Export every chart-capable item under OUTPUT/charts/all/ without embedding them.",
     )
     parser.add_argument("--item-chart-days", type=int, default=30, help="Primary item display days, independent of download and retention.")
-    parser.add_argument("--we23-days", type=int, default=30, help="WE23 overview display days.")
-    parser.add_argument("--research-days", type=int, help="Optional standalone longer-history item and WE23 exports, e.g. 90.")
+    parser.add_argument("--we24-days", "--we23-days", dest="we24_days", type=int, default=30, help="WE24 overview display days.")
+    parser.add_argument("--research-days", type=int, help="Optional standalone longer-history item and WE24 exports, e.g. 90.")
     parser.add_argument("--chart-interval", default="4h", choices=("1h", "2h", "4h", "1D"), help="Primary candle interval (UTC); no automatic coarsening.")
     parser.add_argument(
         "--chart-ma-window",
@@ -217,7 +217,7 @@ def main() -> None:
     args = build_parser().parse_args()
     output_dir = Path(args.output)
     data_sync_metadata = None
-    we23 = None
+    we24 = None
     action_cost_results = None
     try:
         config = load_config(args.config)
@@ -231,7 +231,7 @@ def main() -> None:
         raise SystemExit("Use only one of --live, --sync, --housekeeping, or --api-endpoint.")
     if args.transaction_backfill and not (args.live or args.sync):
         raise SystemExit("--transaction-backfill requires --live or --sync.")
-    if args.item_chart_days < 1 or args.we23_days < 1 or (args.research_days is not None and args.research_days < 1):
+    if args.item_chart_days < 1 or args.we24_days < 1 or (args.research_days is not None and args.research_days < 1):
         raise SystemExit("Display periods must be positive days.")
     if args.chart_ma_window < 1:
         raise SystemExit("--chart-ma-window must be at least 1.")
@@ -315,7 +315,7 @@ def main() -> None:
             )
             data_sync_metadata = store.market_sync_metadata()
             if args.live and not args.sync:
-                we23 = build_we23_market_index(store, as_of=datetime.now(timezone.utc), display_days=max(args.we23_days, args.research_days or 0))
+                we24 = build_we24_market_index(store, as_of=datetime.now(timezone.utc), display_days=max(args.we24_days, args.research_days or 0))
                 action_cost_results = load_action_cost_results(store, as_of=datetime.now(timezone.utc))
         if not args.quiet:
             print(
@@ -345,7 +345,7 @@ def main() -> None:
                 flip_assumptions=assumptions,
             )
             data_sync_metadata = store.market_sync_metadata()
-            we23 = build_we23_market_index(store, as_of=datetime.now(timezone.utc), display_days=max(args.we23_days, args.research_days or 0))
+            we24 = build_we24_market_index(store, as_of=datetime.now(timezone.utc), display_days=max(args.we24_days, args.research_days or 0))
             action_cost_results = load_action_cost_results(store, as_of=datetime.now(timezone.utc))
         df_in = pd.DataFrame(rows)
     elif args.api_endpoint:
@@ -497,9 +497,9 @@ def main() -> None:
                             print(f"Wrote all-item chart to {rendered}")
             if not args.quiet:
                 print(f"Wrote {rendered_count} all-item price-action chart(s).")
-    we23_chart_path = render_we23_chart(we23 or {}, output_dir / "charts" / "we23.png", display_days=args.we23_days)
+    we24_chart_path = render_we24_chart(we24 or {}, output_dir / "charts" / "we24.png", display_days=args.we24_days)
     if args.research_days:
-        optional_chart_paths.append(render_we23_chart(we23 or {}, output_dir / "charts" / "research-we23.png", display_days=args.research_days))
+        optional_chart_paths.append(render_we24_chart(we24 or {}, output_dir / "charts" / "research-we24.png", display_days=args.research_days))
     csv_path, report_path = write_outputs(
         df_out,
         output_dir,
@@ -510,15 +510,15 @@ def main() -> None:
         assumptions=assumptions,
         data_synced_at=data_sync_metadata.synced_at if data_sync_metadata else None,
         data_sync_status=data_sync_metadata.status if data_sync_metadata else None,
-        we23=we23,
-        we23_chart_path=we23_chart_path,
+        we24=we24,
+        we24_chart_path=we24_chart_path,
         action_cost_results=action_cost_results,
     )
     print(f"Wrote {csv_path}")
     if action_cost_results:
         print(f"Wrote {output_dir / 'market_action_costs.csv'}")
     print(f"Wrote {report_path}")
-    data_paths = [output_dir / name for name in ("market_scores.csv", "market_trends.csv", "we23_series.csv", "we23_weights.csv")]
+    data_paths = [output_dir / name for name in ("market_scores.csv", "market_trends.csv", "we24_series.csv", "we24_weights.csv")]
     if action_cost_results:
         data_paths.append(output_dir / "market_action_costs.csv")
     inventory = export_report_assets(report_path, output_dir, extra_paths=optional_chart_paths, data_paths=data_paths)

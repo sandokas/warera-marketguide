@@ -2,7 +2,7 @@
 
 ## Current publication
 
-The report presents the header and sync freshness, WE23 Market Index, historical watch items,
+The report presents the header and sync freshness, WE24 Market Index, historical watch items,
 Trading Guide, Current Order Book, Activity Comparison, Item Price Context, and a footer.
 Missing evidence remains unavailable. Completed transactions supply historical values; current
 orders supply execution context. The lagging game price endpoint supplies neither.
@@ -60,12 +60,12 @@ The published activity bars do not use this metric. Fetched orders are not guara
 
 Table prices generally use three decimals; percentage gaps use signed two-decimal values.
 Counts and quantities avoid a `.000` suffix, and large quantities may use compact notation.
-The primary item chart defaults to 30 days with 4h candles; WE23 defaults to 30 days.
+The primary item chart defaults to 30 days with 4h candles; WE24 defaults to 30 days.
 Their display settings are independent of download scope, retention, and 7D valuation semantics.
 
 The CLI automatically exports PNGs and an `asset_inventory.json` manifest. Tables are captured
 as complete, intrinsically sized elements without section headings or surrounding whitespace,
 and published HTML replaces them with static PNGs. No scrolling or clipped overflow is allowed.
 Section composites, individual cards, charts, and footer exports are separate assets. CSV outputs
-retain all calculated rows. The current CLI publishes market trends/scores, WE23 series/weights, and database-backed action-cost benchmarks;
+retain all calculated rows. The current CLI publishes market trends/scores, WE24 series/weights, and database-backed action-cost benchmarks;
 retired inflation exports are not part of the current publication.

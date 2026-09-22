@@ -133,7 +133,7 @@ Compose health dependencies establish startup order, but services must also hand
 - Python store/repository modules own database access. `market_data.py` builds read models; `metrics.py` owns market analytics; chart/report modules render domain data only.
 - API routes contain validation, dependency wiring, and HTTP serialization, not SQL or market formulas. Routes call shared application/read-model functions. The API must not call WarEra or spawn background operations on read requests.
 - Define market selection and aggregation once inside the shared Python package. API and report callers reuse the same canonical operations where their semantics match; different display intervals are parameters, not copied implementations. Database views/functions may optimize these operations but are not required as a cross-language sharing mechanism.
-- Do not move all existing Python calculations into SQL. Python remains authoritative for existing fair value, WE23, and guidance calculations.
+- Do not move all existing Python calculations into SQL. Python remains authoritative for existing fair value, WE24, and guidance calculations.
 - If a web feature needs advanced analytics, call the shared calculation when it fits the request budget, or serve versioned precomputed results when measurements justify them. Do not reimplement formulas in TypeScript. A separate analytics service or full derived-data pipeline is not a prerequisite for the explorer.
 - Browser indicators are exploratory presentation. Any future official signal must have an explicit, tested authoritative calculation.
 - Raw upstream responses must not be persisted as JSON or become cross-service domain contracts. JSON for normalized web responses, preferences, or future strategy parameters is a different concern.
@@ -233,9 +233,9 @@ ZIP packaging and a standalone HTML with embedded assets are optional follow-up 
 
 ## 9. Retention and historical evidence
 
-Current housekeeping retains 120 days while the active WE23 index depends on a fixed inception and a preceding 28-day weighting window. The older fixed-vintage inflation overview is retired from CLI publication. Do not port deletion behavior without protecting the evidence required to reconstruct active indices.
+Current housekeeping retains 120 days while the active WE24 index depends on a fixed inception and a preceding 28-day weighting window. The older fixed-vintage inflation overview is retired from CLI publication. Do not port deletion behavior without protecting the evidence required to reconstruct active indices.
 
-Before enabling PostgreSQL deletion, classify retention separately for completed transactions, order-book snapshots/levels, diagnostic prices, operational logs, and report files. Protect the source transactions required by active WE23 inception/weighting windows and any explicitly retained legacy research baselines. A later compact baseline representation requires a separate auditable design and parity validation.
+Before enabling PostgreSQL deletion, classify retention separately for completed transactions, order-book snapshots/levels, diagnostic prices, operational logs, and report files. Protect the source transactions required by active WE24 inception/weighting windows and any explicitly retained legacy research baselines. A later compact baseline representation requires a separate auditable design and parity validation.
 
 Measure daily storage growth. Order-book levels may dominate growth. Retention must support current report windows and warm-up needs while disclosing that deleted history cannot be recreated locally. A failed or missing retention configuration must not cause aggressive deletion.
 
@@ -371,7 +371,7 @@ No further user information is required to review this definition. The following
 | Local frontend entry point | Vite with `/api` proxy; no production proxy container |
 | Production serving, reverse proxy, and TLS | Deferred to future hosting selection; platform-provided facilities may suffice |
 | Exact versions and CI tooling | Record during M0/M1 without broadening scope |
-| Retention durations | Measure; preserve report and WE23 evidence before cleanup |
+| Retention durations | Measure; preserve report and WE24 evidence before cleanup |
 | Public load target and monthly budget | Establish before selecting hosting |
 
 Future implementation workers must work stage by stage, report validation evidence, and distinguish completed work from proposals. Reuse the existing `.venv` for host-side Python tests. Add meaningful PostgreSQL integration, concurrency/recovery, API contract, and browser interaction checks. Do not introduce tests that merely mirror implementation details. Do not implement future alerts, report web jobs, or new strategy formulas as incidental migration work.
