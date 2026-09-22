@@ -555,12 +555,25 @@ def build_price_action_candles(transactions: Sequence[dict], *, interval: str) -
     return candles.rename(columns={"open": "Open", "high": "High", "low": "Low", "close": "Close"})
 
 
+def _price_action_frequency(interval: str) -> str:
+    if interval not in dict(HIGHLIGHT_CANDLE_INTERVALS):
+        raise ValueError("Item candle interval must be 1h, 2h, 4h, or 1D.")
+    return dict(HIGHLIGHT_CANDLE_INTERVALS)[interval]
+
+
+def price_action_candle_start(timestamp: object, *, interval: str) -> pd.Timestamp:
+    """Round a chart cutoff down to its candle's UTC opening boundary."""
+    frequency = _price_action_frequency(interval)
+    value = pd.Timestamp(timestamp)
+    value = value.tz_localize("UTC") if value.tzinfo is None else value.tz_convert("UTC")
+    return value.floor(frequency)
+
+
 def select_price_action_interval(
     transactions: Sequence[dict], *, interval: str = "4h",
 ) -> tuple[str, pd.DataFrame] | None:
     """Use the configured UTC interval; never coarsen or fill sparse history."""
-    if interval not in dict(HIGHLIGHT_CANDLE_INTERVALS):
-        raise ValueError("Item candle interval must be 1h, 2h, 4h, or 1D.")
+    _price_action_frequency(interval)
     candles = build_price_action_candles(transactions, interval=interval)
     distinct_days = len({timestamp.date() for timestamp in candles.index})
     if len(candles) < HIGHLIGHT_MIN_POPULATED_CANDLES or distinct_days < HIGHLIGHT_MIN_DISTINCT_UTC_DAYS:

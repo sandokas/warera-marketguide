@@ -421,7 +421,10 @@ def main() -> None:
         ]
         with MarketStore(args.market_db) as store:
             histories = {
-                item_code.lower(): load_price_action_history(store, item_code=item_code, window_days=args.item_chart_days)
+                item_code.lower(): load_price_action_history(
+                    store, item_code=item_code, window_days=args.item_chart_days,
+                    interval=args.chart_interval,
+                )
                 for item_code in item_codes
             }
         chart_capable_highlights = select_highlighted_items(
@@ -469,7 +472,11 @@ def main() -> None:
             rendered_count = 0
             with MarketStore(args.market_db) as store:
                 for storage_code, row in rows_by_code.items():
-                    history = load_price_action_history(store, item_code=storage_code, window_days=args.research_days or args.item_chart_days)
+                    history = load_price_action_history(
+                        store, item_code=storage_code,
+                        window_days=args.research_days or args.item_chart_days,
+                        interval=args.chart_interval,
+                    )
                     chart_item = prepare_price_action_item(
                         row,
                         history,

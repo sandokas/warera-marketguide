@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from warera_quant.charts import render_featured_chart
+from warera_quant.charts import render_featured_chart, render_highlight_price_action_chart
 from warera_quant.market_data import (
     DISPLAY_HISTORY_DAYS,
     build_forecast_features,
@@ -19,6 +19,7 @@ from warera_quant.market_data import (
     parse_report_window,
 )
 from warera_quant.market_store import MarketStore
+from warera_quant.metrics import build_price_action_candles, prepare_price_action_item
 from warera_quant.warera_api import OrderLevel, TopOrders
 
 
@@ -65,6 +66,75 @@ def test_price_action_history_empty_coverage_is_explicit(tmp_path):
     assert result.coverage.first_observation_at is None
     assert result.coverage.last_observation_at is None
     assert result.coverage.observation_count == 0
+
+
+@pytest.mark.parametrize("interval,start_hour", [("1h", 21), ("2h", 20), ("4h", 20), ("1D", 0)])
+def test_price_action_history_loads_whole_first_candle(tmp_path, interval, start_hour):
+    # Local time must not change the chart's UTC candle boundaries.
+    now = datetime(2026, 9, 22, 22, 18, tzinfo=timezone(timedelta(hours=1)))
+    cutoff = now.astimezone(timezone.utc) - timedelta(days=30)
+    start = cutoff.replace(hour=start_hour, minute=0)
+    with _store(tmp_path) as store:
+        store.upsert_transactions("bread", [
+            _transaction("before", (start - timedelta(seconds=1)).isoformat(), money=999, quantity=1),
+            _transaction("open", start.isoformat(), money=14, quantity=2),
+            _transaction("high", (start + timedelta(minutes=1)).isoformat(), money=60, quantity=3),
+            _transaction("low", (cutoff + timedelta(seconds=1)).isoformat(), money=8, quantity=4),
+            _transaction("close", (cutoff + timedelta(seconds=2)).isoformat(), money=55, quantity=5),
+            _transaction("current", now.isoformat(), money=10, quantity=1),
+            _transaction("future", (now + timedelta(seconds=1)).isoformat(), money=999, quantity=1),
+        ], fetched_at=now)
+        history = load_price_action_history(
+            store, item_code="Bread", now=now, window_days=30, interval=interval,
+        )
+
+    assert history.window_start == start
+    assert history.window_end == now
+    assert history.coverage.observation_count == 5
+    candles = build_price_action_candles(history.trades, interval=interval)
+    assert candles.iloc[0].to_dict() == {
+        "Open": 7, "High": 20, "Low": 2, "Close": 11, "Volume": 14,
+    }
+    assert candles.iloc[-1]["Close"] == 10
+
+
+@pytest.mark.parametrize("interval", ["1h", "2h", "4h", "1D"])
+def test_price_action_history_preserves_exact_candle_boundary(tmp_path, interval):
+    now = datetime(2026, 9, 22, tzinfo=timezone.utc)
+    with _store(tmp_path) as store:
+        history = load_price_action_history(store, item_code="bread", now=now, interval=interval)
+    assert history.window_start == now - timedelta(days=30)
+    assert history.trades == ()
+
+
+@pytest.mark.parametrize("interval", ["1h", "2h", "4h", "1D"])
+def test_price_action_chart_marks_only_current_boundary_candle_partial(tmp_path, monkeypatch, interval):
+    from matplotlib.figure import Figure
+
+    now = datetime(2026, 9, 22, 21, 18, tzinfo=timezone.utc)
+    with _store(tmp_path) as store:
+        store.upsert_transactions("bread", [
+            _transaction(str(day), (now - timedelta(days=day)).isoformat(), money=10, quantity=1)
+            for day in range(31)
+        ], fetched_at=now)
+        history = load_price_action_history(store, item_code="bread", now=now, interval=interval)
+    item = prepare_price_action_item({
+        "item_code": "bread", "item_name": "Bread",
+        "last_trade_price": 10, "stable_fair_price_7d": 10,
+    }, history, interval=interval)
+    assert item is not None
+    captured = []
+
+    def check_volume_bars(figure, *args, **kwargs):
+        hatches = [bar.get_hatch() for bar in figure.axes[1].patches]
+        assert hatches[0] is None
+        assert hatches[-1] == "//"
+        assert hatches.count("//") == 1
+        captured.append(True)
+
+    monkeypatch.setattr(Figure, "savefig", check_volume_bars)
+    render_highlight_price_action_chart(item, tmp_path / "candles.png")
+    assert captured == [True]
 
 
 def _store(tmp_path: Path) -> MarketStore:

@@ -190,6 +190,10 @@ warera-marketguide --from-db --item-chart-days 30 --chart-interval 4h --we24-day
 
 Item charts default to 30 days and 4-hour UTC candles. Supported primary intervals are `1h`, `2h`,
 `4h`, and `1D`; they are not automatically coarsened. WE24 defaults to 30 display days.
+The chart start rounds down to the opening of the selected UTC candle, including all
+available trades in that first candle. For example, a 21:18 cutoff starts at 21:00
+for `1h`, 20:00 for `2h` or `4h`, and midnight for `1D`. The end stays at the current
+time, so the newest candle can still be partial. Missing history is never filled in.
 Use `--chart-min-range-pct 5` to control the minimum visible price range. Sparse history remains
 visible, and partial candles are marked. Database read models calculate 1D, 7D, and 30D statistics;
 guidance, valuation dislocations, activity, and Item Price Context use 7D evidence.

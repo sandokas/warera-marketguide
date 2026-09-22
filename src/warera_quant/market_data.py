@@ -33,6 +33,7 @@ from .metrics import (
     calculate_matched_index_change,
     traded_value_weights,
     total_upstream_production_points,
+    price_action_candle_start,
     calculate_fixed_action_cost,
     calculate_we24_market_index,
     calculate_short_term_guidance,
@@ -1236,12 +1237,15 @@ def load_price_action_history(
     item_code: str,
     now: datetime | None = None,
     window_days: int = 30,
+    interval: str = "4h",
 ) -> PriceActionHistory:
-    """Load chart history independently of download and retention settings."""
+    """Load available trades from the first candle's opening through now."""
     if window_days <= 0:
         raise ValueError("Item chart window_days must be positive.")
     window_end = _as_utc(now or datetime.now(timezone.utc))
-    window_start = window_end - timedelta(days=window_days)
+    window_start = price_action_candle_start(
+        window_end - timedelta(days=window_days), interval=interval,
+    ).to_pydatetime()
     end_epoch = int(window_end.timestamp())
     rows = store.transactions_for_window(item_code, int(window_start.timestamp()))
     if not rows and item_code != item_code.lower():
