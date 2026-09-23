@@ -426,6 +426,103 @@ class MarketStore:
             result[key] = [dict(r) for r in c.execute(f"select * from {table} where transaction_id=?", (transaction_id,))]
         return result
 
+    def participant_history_query(self, start: datetime, end: datetime) -> tuple[str, tuple]:
+        """Source query shared by streaming and EXPLAIN; no ownership rules in SQL.
+
+        Window references select candidates, including ambiguous references. UNION
+        deduplicates history IDs before child joins. Existing reference indexes
+        avoid one history scan per entity. Epoch bounds are coarse index bounds;
+        microsecond predicates enforce the exact half-open window.
+        """
+        if start.tzinfo is None or end.tzinfo is None or start >= end:
+            raise ValueError("Expected aware increasing participant window")
+        epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        def us(value):
+            delta = value - epoch
+            return (delta.days * 86400 + delta.seconds) * 1000000 + delta.microseconds
+        columns = ("user_id", "mu_id", "country_id", "party_id")
+        candidates = " union ".join(
+            f"select p.transaction_id from transaction_participants p join "
+            f"(select distinct {column} from active where {column} is not null) a "
+            f"on p.{column}=a.{column}" for column in columns)
+        query = f"""
+            with window_ids as materialized (
+                select id from transactions
+                where transaction_type in ('trading','itemMarket')
+                  and created_at_epoch >= ? and created_at_epoch <= ?
+                  and coalesce(created_at_us,created_at_epoch*1000000) >= ?
+                  and coalesce(created_at_us,created_at_epoch*1000000) < ?
+            ), active as materialized (
+                select p.* from transaction_participants p join window_ids w
+                on w.id=p.transaction_id
+            ), history_ids as ({candidates} union select id from window_ids)
+            select t.* from history_ids h cross join transactions t on t.id=h.transaction_id
+            where t.transaction_type in ('trading','itemMarket')
+              and coalesce(t.created_at_us,t.created_at_epoch*1000000) < ?
+            order by coalesce(t.created_at_us,t.created_at_epoch*1000000),t.id
+        """
+        return query, (math.floor(start.timestamp()), math.floor(end.timestamp()), us(start), us(end), us(end))
+
+    def participant_query_plan(self, start: datetime, end: datetime) -> list[str]:
+        query, parameters = self.participant_history_query(start, end)
+        return [row[3] for row in self._connect().execute("explain query plan " + query, parameters)]
+
+    def iter_participant_history(self, start: datetime, end: datetime, *, batch_size: int = 500):
+        """Yield chronological normalized source batches, bounded to 500 parents.
+
+        One ordered history cursor plus four child reads per batch, never per row.
+        SQLite may spill its candidate deduplication/order to temporary storage.
+        Callers should finish iteration before writing through this connection.
+        """
+        if not 1 <= batch_size <= 500:
+            raise ValueError("batch_size must be between 1 and 500")
+        query, parameters = self.participant_history_query(start, end)
+        yield from self._iter_source_query(query, parameters, batch_size)
+
+    def iter_equipment_sales(self, start: datetime, end: datetime, *, batch_size: int = 500):
+        """Window-only equipment export, independent of commodity report discovery."""
+        _, parameters = self.participant_history_query(start, end)
+        if not 1 <= batch_size <= 500:
+            raise ValueError("batch_size must be between 1 and 500")
+        query = """select * from transactions where transaction_type='itemMarket'
+            and created_at_epoch >= ? and created_at_epoch <= ?
+            and coalesce(created_at_us,created_at_epoch*1000000) >= ?
+            and coalesce(created_at_us,created_at_epoch*1000000) < ?
+            order by coalesce(created_at_us,created_at_epoch*1000000),id"""
+        yield from self._iter_source_query(query, parameters[:4], batch_size)
+
+    def _iter_source_query(self, query, parameters, batch_size):
+        cursor = self._connect().execute(query, parameters)
+        try:
+            while rows := cursor.fetchmany(batch_size):
+                batch = {row["id"]: dict(row) for row in rows}
+                placeholders = ",".join("?" for _ in batch)
+                for key, table in (("participants", "transaction_participants"),
+                                   ("equipment", "transaction_equipment"),
+                                   ("stats", "transaction_equipment_stats"),
+                                   ("presence", "transaction_field_state")):
+                    for row in batch.values():
+                        row[key] = []
+                    for child in self._connect().execute(
+                            f"select * from {table} where transaction_id in ({placeholders})", tuple(batch)):
+                        batch[child["transaction_id"]][key].append(dict(child))
+                yield from batch.values()
+        finally:
+            cursor.close()
+
+    def participant_names(self, keys: Iterable[tuple[str, str]]) -> dict[tuple[str, str], dict]:
+        """Bounded cache lookups; missing names never trigger a network request."""
+        keys = iter(keys)
+        result = {}
+        from itertools import islice
+        while batch := list(islice(keys, 250)):
+            predicate = " or ".join("(entity_kind=? and entity_id=?)" for _ in batch)
+            for row in self._connect().execute(
+                    "select * from market_entities where " + predicate,
+                    tuple(value for key in batch for value in key)):
+                result[(row["entity_kind"], row["entity_id"])] = dict(row)
+        return result
+
     def _write_progress(self, progress: StreamProgress) -> None:
         if progress.pages == 0:
             self._connect().execute("delete from schema_meta where key in (?,?)",

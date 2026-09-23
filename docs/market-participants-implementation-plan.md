@@ -4,8 +4,10 @@ Status: phases 1-3 normalized storage, migration, global ingestion, full/recent
 resync, offline status, retries and independent retention implemented, 2026-09-23; see [schema v5](market-schema-v5.md),
 [verified contracts](market-api-contracts.md) and the
 [implementation log](market-participants-implementation-log.md).
-Global two-stream collection and resync/status commands are implemented and tested
-offline. Participant reports and the phase 6 operational import remain future work. The offline `--migrate-db` command is implemented and tested on
+Phase 4 offline source/read models, evidence-gated costing, attribution, rankings
+and explanations are implemented and tested. Global two-stream collection and
+resync/status commands are implemented and tested offline. Phase 5 participant
+rendering/exports and the phase 6 operational import remain future work. The offline `--migrate-db` command is implemented and tested on
 temporary fixtures only. Companion:
 [implementation prompts](market-participants-implementation-prompts.md).
 

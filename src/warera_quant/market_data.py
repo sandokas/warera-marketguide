@@ -1636,3 +1636,63 @@ def _positive_float(value: object) -> float | None:
     if number is None or not math.isfinite(number) or number <= 0:
         return None
     return number
+
+
+def _participant_trade_input(source: dict) -> dict:
+    """Shape normalized facts only; current contracts verify no money or lineage.
+
+    Legacy REAL projections are intentionally not promoted to exact source money.
+    Field presence is kept on exports, including structural equipment nulls.
+    """
+    presence = {field["field_path"]: bool(field["is_null"]) for field in source["presence"]}
+    equipment = dict(source["equipment"][0]) if source["equipment"] else None
+    if equipment is not None:
+        equipment.pop("transaction_id", None)
+        equipment["stats"] = ({stat["skill_code"]: stat["value_decimal"] for stat in source["stats"]}
+            if source["stats"] or presence.get("equipment.skills") is False else None)
+    return {"id": source["id"], "created_at": source["created_at"],
+        "transaction_type": source["transaction_type"], "item_code": source["item_code"],
+        "money": source["money_decimal"], "quantity": source["quantity_decimal"],
+        "money_precision": source["money_precision"], "quantity_precision": source["quantity_precision"],
+        "normalization_status": source["normalization_status"],
+        "participants": {p["side"]: {kind + "_id": p[kind + "_id"]
+            for kind in ("user", "mu", "country", "party")} for p in source["participants"]},
+        "equipment": equipment, "presence": presence}
+
+
+def load_participant_report(store: MarketStore, *, as_of: datetime, batch_size: int = 500) -> dict:
+    """Offline phase-4 read model; phase 5 renders/exports this domain result."""
+    from .metrics import calculate_participant_rankings, participant_utc
+    as_of = participant_utc(as_of)
+    start = as_of - timedelta(days=7)
+    sources = store.market_sync_status()
+    trades = (_participant_trade_input(row)
+              for row in store.iter_participant_history(start, as_of, batch_size=batch_size))
+    result = calculate_participant_rankings(trades, as_of=as_of, sources=sources)
+    names = store.participant_names((row["entity_kind"], row["entity_id"]) for row in result["entities"])
+    # Decimal output projection copies ranking rows; attach the same dated cache
+    # metadata to both aggregates and rankings, with no profile/network lookup.
+    rows = list(result["entities"])
+    rows.extend(row for boards in result["rankings"].values() for board in boards.values() for row in board)
+    for row in rows:
+        cached = names.get((row["entity_kind"], row["entity_id"]), {})
+        row["name"] = cached.get("name") or row["entity_id"]
+        row["name_observed_at"] = cached.get("name_observed_at")
+    return result
+
+
+def iter_equipment_sale_details(store: MarketStore, *, as_of: datetime, batch_size: int = 500):
+    """Separate streamed sale-detail export input, with no commodity signals.
+
+    Each row includes its own condition/full stats and actor/source references.
+    Flatten stats into a companion normalized export in the rendering layer.
+    No identity, fee or acquisition evidence is invented by this adapter.
+    """
+    from .metrics import participant_utc
+    as_of = participant_utc(as_of)
+    for source in store.iter_equipment_sales(as_of - timedelta(days=7), as_of, batch_size=batch_size):
+        result = _participant_trade_input(source)
+        result.update(as_of=as_of, window_start=as_of - timedelta(days=7),
+                      net_realized_pnl=None, basis_status="unverified_equipment_lineage",
+                      fee_status="unverified", money_basis="source-money")
+        yield result

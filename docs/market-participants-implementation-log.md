@@ -582,3 +582,177 @@ No production database was opened, migrated, pruned or restored. No live API
 request, production report, pending equipment-listing collection or full production
 import was run. Operational completeness and profit/basis completeness are not
 claimed.
+
+## Phase 4 - 2026-09-23
+
+Implemented offline participant source queries, read models, pure attribution,
+FIFO/specific-item costing, independent rankings and trade explanations. Read
+AGENTS.md, the full plan/metrics contract, API-contract findings and prior log.
+No production database, API calls, ingestion, report displays or CLI formulas
+were changed. Pre-existing deleted `.pytest-tmp` artifacts remain untouched.
+
+### Entry points and architecture
+
+- `MarketStore.iter_participant_history(start, end, batch_size=500)` selects raw
+  references active in the window, retrieves their earlier buys AND sells, and
+  includes every window transaction (including missing participants). A single
+  ordered cursor plus four child queries per batch provides normalized parents,
+  participants, equipment, stats and presence. No source history DataFrame,
+  per-entity history query, or persisted leaderboard facts. Candidate raw actor
+  references can conservatively over-select history; only resolved economic
+  accounts with window activity become result rows.
+- `load_participant_report(store, as_of=...)` shapes domain facts, supplies
+  independent ingestion status, invokes metrics and joins dated cached names
+  in batches of at most 250 keys. ID fallback needs no network. It returns common
+  UTC boundaries, source status, global attribution coverage, entity aggregates,
+  all category breakdowns and nine independent up-to-ten rankings.
+- `calculate_participant_rankings` owns all economic resolution, costing,
+  coverage arithmetic, category selection and deterministic ranking. No SQL,
+  network, store imports or CLI calculations were added to this layer.
+- `iter_equipment_sale_details` is a separate window-only streamed export read
+  model: original sale condition, all stats, source references/actors, numeric
+  precision, field presence and explicit unavailable P&L. It contains no commodity
+  signals, executable asks, cards or new shared item-list entries.
+
+### Calculation conventions and evidence gates
+
+The common window is `[as_of - 7 days, as_of)` in aware UTC. Local history order
+is full stored microseconds then opaque transaction ID. Naive timestamps and
+unsorted/duplicate reducer input are rejected. Equal-time ID ordering is not
+upstream causality: same-time purchases cannot cost a sale, and acquisition ties
+are propagated to affected sales as ambiguous/partial. Prior sales consume lots
+but do not contribute window P&L. A short sale cannot borrow future purchases.
+Self-account transactions remain source facts and global diagnostic counts, but
+neither side churns inventory or contributes ranked volume/P&L.
+
+Each economic side is resolved independently once during the reducer pass.
+Exactly one MU/country reference owns the side, with user retained as actor.
+No citizenship/membership inference or actor double credit. Multiple institutions,
+invalid/missing references and unsupported party accounts are excluded per side;
+reason counts, source-money value and missing-money counts are explicit. An
+unresolved counterparty does not suppress a resolved side. Actor IDs remain on
+entity results; detailed equipment exports retain all raw side references.
+
+FIFO uses exact decimal source inputs represented internally as rational numbers.
+Proportional allocation and remaining lot costs are exact even for thirds; there
+is no premature two-decimal or per-lot rounding. Public monetary/coverage fields
+are Decimal projections at 50 significant digits, round-half-even. Rankings sort
+exact internal values before projection. Unknown source values do not become zero
+costs. Unknown-size purchases form FIFO barriers; an unknown-size prior sale
+invalidates the remaining observed inventory for that owner/code. Unsold purchases
+never create realized losses. The plan fixture produces **36 profit, 144 turnover**.
+
+The pure metrics domain contract can accept explicit per-side `settlement`
+evidence: `verified=True`, `money_role=gross|settled`, and an exact fee or None.
+Gross money plus verified buyer fees establishes acquisition outlay; seller fees
+reduce gross proceeds. Settled money already includes fees and is never charged
+twice; a fee amount is needed to recover its gross value, not to subtract it again.
+This is a tested evidence interface, **not a new verified API claim**. Neither the
+DB read model nor unknown extension fields manufacture settlement evidence.
+Historical money/fees remain unverified under phase 0, so current DB results use
+**source-money turnover**, unavailable gross/net amounts and empty profit/loss
+boards where no verified result exists. Report delivery still has volume.
+
+Equipment costing additionally requires explicit `lineage_verified` evidence,
+an identical instance and a previous acquisition by the resolved seller. Every
+observed subsequent disposition invalidates the previous holding. Equal code,
+condition/stats, or even an unverified equal instance ID never establishes a
+match. The DB adapter never enables lineage. Verified equipment resale fixtures
+exercise the future evidence interface only; no profitable live equipment match
+was invented. Each export retains the sale's own stat/condition snapshot.
+
+Known zero profit differs from unavailable profit; zero and unavailable are absent
+from profit/loss boards. All entities participate in P&L selection regardless of
+volume. P&L ties use descending turnover then entity ID; volume ties use entity ID.
+No padding. One report-wide money basis avoids comparing gross and unidentified
+source money. Buy/sell top-three categories use that same basis and expose units,
+side-total shares, trade counts and monetary/count/share other totals. Equipment
+signatures are versioned, include the full sorted stats and exact condition, and
+preserve missing versus zero values. These signatures are descriptions only.
+
+Basis-matched, net-matched, uncosted and unknown-fee quantities/source sale values
+are separate; flags may overlap. Gross matched-sale coverage is only computed
+when gross denominator/numerator are verified and denominator is nonzero;
+source-money coverage is named separately. Missing source amounts label turnover
+partial. Ingestion intervals, gaps, errors and API exhaustion are reported
+independently from accounting coverage. Source gaps keep results partial even
+when observed sales have 100% matched basis. Observed API coverage/exhaustion is
+never a claim of full inventory provenance. Label results **observed market FIFO
+realized P&L on matched sales**, not complete wealth or full inventory accounting.
+Summing account-side turnover double-counts market trades; global diagnostic
+source transaction value counts each source row once (self-trades separately
+identified).
+
+### Measured queries and bounds
+
+The synthetic source test stores 2,420 normalized transactions: 1,200 relevant
+old trades, 1,200 old inactive trades, and 20 current trades. With batch size 100,
+1,220 rows are selected, inactive history is excluded, and exactly **53 source
+statements** execute: one history cursor plus 4 x 13 child queries. Measured
+stream iteration was **0.0280 seconds** on this Windows fixture, excluding fixture
+insertion, name/status queries and costing. This is a small-fixture measurement,
+not a production throughput or memory guarantee.
+
+EXPLAIN shows `idx_transactions_type_time` for the bounded activity window,
+all four covering `idx_participant_*` reference indexes, and parent primary-key
+lookups for selected history IDs. Initial inspection exposed a planner choice
+that scanned the market type for the final join; `CROSS JOIN` now fixes candidate
+IDs as the outer loop, and a test guards the parent ID lookup. SQLite uses temporary
+B-trees for reference distinctness, ID union and chronological order. Python holds
+at most 500 source parents plus their children per batch; stats count per sale is
+not capped. Costing retains open lots, ordering metadata and window aggregates.
+Candidate deduplication/sorting and output categories are not constant-memory;
+large historical activity still requires proportional work. No speculative index
+or schema migration was added. Callers must finish streams before writing through
+the same store connection.
+
+### Tests actually run
+
+Existing `.venv` used; no environment recreation, credential use or network tests.
+Added `tests/test_participant_metrics.py` (30 cases) and
+`tests/test_participant_market_data.py` (7 cases). They cover the hand calculation,
+partial/multiple lots, prior dispositions, unknown basis and size, no future costs,
+known-zero costs, explicit fees and included fees, mixed institutional ownership,
+conflicts/self-trades/parties, no volume prefilter, all account kinds, ties,
+UTC microsecond boundaries, unknown equipment lineage, verified synthetic resale,
+intervening dispositions, per-sale stats/condition, unseen codes, category shares,
+names, gaps, streaming query counts and query plans.
+
+| Command | Result |
+| --- | --- |
+| `.venv\Scripts\pytest tests/test_participant_metrics.py tests/test_participant_market_data.py tests/test_market_data.py tests/test_inflation_market_data.py` | **88 passed**, 2.25s on final code |
+| `.venv\Scripts\pytest` | **537 passed**, 9.42s; run before the final parent-lookup query-plan improvement |
+| `.venv\Scripts\pytest -s tests/test_participant_market_data.py::test_batched_stream_query_plan_and_synthetic_volume` | **1 passed**, 0.84s; measured source iteration 0.0280s |
+
+Initial focused tests found two fixture errors: a shared counterparty legitimately
+realized profit in the ranking fixture, and a parser fixture omitted required
+itemCode. Fixed those fixtures, then all focused tests passed. Subsequent review
+added unknown-size FIFO barriers, independent fee/basis coverage and institutional
+board tests. Full regression passed before the final query-plan adjustment; the
+requested focused regressions and measured query test passed after that adjustment.
+Final small refinements fix output rounding to half-even, omit meaningless mixed
+unit sums from other totals, discard exhausted inventory keys, and retain ordering
+metadata only for the current timestamp. The requested 88 tests passed again on
+that final code. `git diff --check -- src tests docs` passed (only Windows line
+ending notices).
+
+### Phase 5 handoff and limits
+
+Wire `load_participant_report` through orchestration to the existing report/output
+pipeline with one reproducible `as_of`. Render its nine boards, top categories,
+partial/result/source labels, and unavailable values without replacing None by
+zero. Current DB-backed profit/loss boards may honestly be empty. Participant
+source-money labels must persist until money/fee evidence changes. Add the planned
+ranking/breakdown CSVs and flatten `iter_equipment_sale_details` into sale and
+normalized skill CSVs; protect spreadsheet exports and escape names at rendering.
+Decimal values require explicit export formatting; do not route them through float
+for accounting. Report rows include raw names intentionally, not pre-escaped text.
+
+Publish participant tables through table-element-only PNG capture, dedicated
+participant footers, stable assets and geometry validation. Do not attach commodity
+fee/quote footers. Equipment remains excluded from shared item discovery and its
+dedicated visual design remains deferred. No phase 5 display/PNG/export integration
+or phase 6 production migration/import/rehearsal is claimed here. Existing source
+precision, ingestion gaps, nonmarket acquisition/disposition, historical fee
+semantics and equipment continuity limits remain visible, rather than inferred
+away from source totals or API pagination exhaustion.
