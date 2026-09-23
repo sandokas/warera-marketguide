@@ -1,0 +1,77 @@
+{
+  "result": {
+    "data": {
+      "items": [
+        {
+          "_id": "000000000000000000000001",
+          "money": 0.804,
+          "itemCode": "lightAmmo",
+          "quantity": 4,
+          "sellerId": "000000000000000000000002",
+          "buyerId": "000000000000000000000003",
+          "transactionType": "trading",
+          "offerCreatedAt": "2026-09-22T20:34:04.646Z",
+          "createdAt": "2026-09-22T20:35:42.095Z",
+          "updatedAt": "2026-09-22T20:35:42.095Z",
+          "__v": 0
+        },
+        {
+          "_id": "000000000000000000000004",
+          "money": 1.907,
+          "itemCode": "bread",
+          "quantity": 1,
+          "sellerId": "000000000000000000000005",
+          "buyerId": "000000000000000000000006",
+          "sellerMuId": "000000000000000000000007",
+          "transactionType": "trading",
+          "offerCreatedAt": "2026-09-22T11:09:55.717Z",
+          "createdAt": "2026-09-22T20:35:40.708Z",
+          "updatedAt": "2026-09-22T20:35:40.708Z",
+          "__v": 0
+        },
+        {
+          "_id": "000000000000000000000008",
+          "money": 79.184,
+          "itemCode": "oil",
+          "quantity": 404,
+          "sellerId": "000000000000000000000009",
+          "buyerId": "00000000000000000000000a",
+          "buyerMuId": "00000000000000000000000b",
+          "transactionType": "trading",
+          "offerCreatedAt": "2026-09-19T22:11:05.340Z",
+          "createdAt": "2026-09-22T20:35:36.583Z",
+          "updatedAt": "2026-09-22T20:35:36.583Z",
+          "__v": 0
+        },
+        {
+          "_id": "00000000000000000000000c",
+          "money": 36.480000000000004,
+          "itemCode": "scraps",
+          "quantity": 160,
+          "sellerId": "00000000000000000000000d",
+          "buyerId": "00000000000000000000000e",
+          "sellerCountryId": "00000000000000000000000f",
+          "transactionType": "trading",
+          "offerCreatedAt": "2026-09-22T20:19:10.129Z",
+          "createdAt": "2026-09-22T20:35:34.439Z",
+          "updatedAt": "2026-09-22T20:35:34.439Z",
+          "__v": 0
+        },
+        {
+          "_id": "000000000000000000000010",
+          "money": 4.12,
+          "itemCode": "wood",
+          "quantity": 40,
+          "sellerId": "000000000000000000000011",
+          "buyerId": "000000000000000000000012",
+          "buyerCountryId": "000000000000000000000013",
+          "transactionType": "trading",
+          "offerCreatedAt": "2026-09-22T19:26:59.959Z",
+          "createdAt": "2026-09-22T20:35:32.858Z",
+          "updatedAt": "2026-09-22T20:35:32.858Z",
+          "__v": 0
+        }
+      ]
+    }
+  }
+}

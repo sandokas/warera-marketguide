@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -67,6 +68,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="TOML configuration path (default: marketguide.toml).",
     )
     parser.add_argument("--live", action="store_true", help="Fetch live WarEra market data from the API.")
+    parser.add_argument("--migrate-db", action="store_true", help="Back up and migrate an existing database offline, then exit.")
+    parser.add_argument("--market-sync-status", action="store_true", help="Show offline market ingestion progress and coverage, then exit.")
+    parser.add_argument("--resync-market", action="store_true", help="Enrich both global market streams; requires --sync --history-scope 7d or all.")
+    parser.add_argument("--history-scope", choices=("7d", "all"), help="Download scope for recent enrichment, independent of report windows.")
     parser.add_argument("--sync", action="store_true", help="Sync live WarEra market data into SQLite, then exit.")
     parser.add_argument(
         "--housekeeping",
@@ -114,9 +119,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--history-pages",
         type=int,
         default=0,
-        help="Maximum transaction pages per item in --live mode. Use 0 to fetch until records are older than --lookback-days.",
+        help="Maximum transaction pages per global stream. 0 means no page cap; normal sync stops at verified overlap or exhaustion.",
     )
-    parser.add_argument("--lookback-days", type=float, default=7.0, help="Transaction lookback window for --live mode.")
+    parser.add_argument("--lookback-days", type=float, default=7.0, help="Legacy --transaction-backfill download window (default: 7 days), independent of report windows and --history-scope.")
     parser.add_argument(
         "--min-tick",
         type=float,
@@ -207,7 +212,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--verbose",
         action="store_true",
-        help="Print detailed importer progress for each item and transaction page.",
+        help="Print detailed importer progress for each global stream and transaction page.",
     )
     return parser
 
@@ -215,6 +220,25 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     load_dotenv()
     args = build_parser().parse_args()
+    if args.market_sync_status:
+        if any((args.live, args.sync, args.housekeeping, args.api_endpoint, args.from_db, args.transaction_backfill, args.resync_market, args.history_scope, args.migrate_db, args.history_pages, args.exclude_item_code)):
+            raise SystemExit("--market-sync-status cannot be combined with another action or scope.")
+        if not Path(args.market_db).exists():
+            raise SystemExit("Market database does not exist.")
+        with MarketStore(args.market_db) as store:
+            print(json.dumps(store.market_sync_status(), indent=2))
+        return
+    if args.migrate_db:
+        if any((args.live, args.sync, args.housekeeping, args.api_endpoint, args.from_db, args.transaction_backfill, args.resync_market, args.history_scope)):
+            raise SystemExit("--migrate-db cannot be combined with another database/input action.")
+        store = MarketStore(args.market_db)
+        try:
+            backup = store.migrate_with_backup()
+            print(f"Backup: {backup}", flush=True)
+            print(f"Migrated {args.market_db} to schema v{store.schema_version()}.", flush=True)
+        finally:
+            store.close()
+        return
     output_dir = Path(args.output)
     data_sync_metadata = None
     we24 = None
@@ -229,6 +253,13 @@ def main() -> None:
     )
     if selected_sources > 1:
         raise SystemExit("Use only one of --live, --sync, --housekeeping, or --api-endpoint.")
+    if args.resync_market or args.history_scope:
+        if not (args.sync and args.resync_market and args.history_scope in ("7d", "all")):
+            raise SystemExit("Market enrichment requires --sync --resync-market --history-scope 7d or all.")
+        if args.history_pages or args.transaction_backfill or args.exclude_item_code or args.from_db or args.migrate_db:
+            raise SystemExit("Recent enrichment cannot be combined with caps, backfill, exclusions or offline modes.")
+    if args.history_pages < 0 or not 1 <= args.order_limit <= 100 or not math.isfinite(args.lookback_days) or args.lookback_days < 0 or not math.isfinite(args.min_interval) or args.min_interval < 0:
+        raise SystemExit("Invalid pagination, lookback or pacing option.")
     if args.transaction_backfill and not (args.live or args.sync):
         raise SystemExit("--transaction-backfill requires --live or --sync.")
     if args.item_chart_days < 1 or args.we24_days < 1 or (args.research_days is not None and args.research_days < 1):
@@ -266,6 +297,7 @@ def main() -> None:
         with MarketStore(args.market_db) as store:
             housekeeping_result = store.run_housekeeping(
                 retention_days=config.housekeeping.retention_days,
+                transaction_retention_days=config.housekeeping.transaction_retention_days,
                 vacuum_interval_days=config.housekeeping.vacuum_interval_days,
             )
         if not args.quiet:
@@ -303,6 +335,7 @@ def main() -> None:
                 exclude_item_codes=set(args.exclude_item_code),
                 progress=None if args.quiet else lambda message: print(message, flush=True),
                 verbose=args.verbose,
+                **({"resync_market": True, "history_scope": args.history_scope} if args.resync_market else {}),
             )
             rows = load_market_rows(
                 store,
@@ -323,7 +356,10 @@ def main() -> None:
                 f"{sync_result.order_books_observed} order book(s), "
                 f"{sync_result.pages_fetched} transaction page(s), "
                 f"{sync_result.transactions_inserted} new transaction(s), "
-                f"{sync_result.transactions_skipped} duplicate transaction(s) "
+                f"{sync_result.transactions_enriched} enriched, "
+                f"{sync_result.transactions_unchanged} unchanged, "
+                f"{sync_result.transactions_rejected} rejected, "
+                f"{sync_result.error_count} error(s) "
                 f"to {args.market_db}.",
                 flush=True,
             )

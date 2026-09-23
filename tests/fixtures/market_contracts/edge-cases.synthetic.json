@@ -1,0 +1,251 @@
+{
+  "provenance": "SYNTHETIC: altered observed shapes; not live evidence",
+  "cases": [
+    {
+      "name": "simultaneous_institutional_references",
+      "response": {
+        "result": {
+          "data": {
+            "items": [
+              {
+                "_id": "000000000000000000000001",
+                "money": 0.804,
+                "itemCode": "lightAmmo",
+                "quantity": 4,
+                "sellerId": "000000000000000000000002",
+                "buyerId": "000000000000000000000003",
+                "transactionType": "trading",
+                "offerCreatedAt": "2026-09-22T20:34:04.646Z",
+                "createdAt": "2026-09-22T20:35:42.095Z",
+                "updatedAt": "2026-09-22T20:35:42.095Z",
+                "__v": 0,
+                "buyerMuId": "synthetic-mu",
+                "buyerCountryId": "synthetic-country"
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "buyer_owner": "unresolved",
+        "rank_buyer": false
+      }
+    },
+    {
+      "name": "null_user_and_unsupported_party",
+      "response": {
+        "result": {
+          "data": {
+            "items": [
+              {
+                "_id": "000000000000000000000001",
+                "money": 0.804,
+                "itemCode": "lightAmmo",
+                "quantity": 4,
+                "sellerId": "000000000000000000000002",
+                "buyerId": null,
+                "transactionType": "trading",
+                "offerCreatedAt": "2026-09-22T20:34:04.646Z",
+                "createdAt": "2026-09-22T20:35:42.095Z",
+                "updatedAt": "2026-09-22T20:35:42.095Z",
+                "__v": 0,
+                "sellerPartyId": "synthetic-party"
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "buyer_owner": "unresolved",
+        "seller_owner": "party",
+        "rank_either": false
+      }
+    },
+    {
+      "name": "unknown_scalar_paths_null_and_zero",
+      "response": {
+        "result": {
+          "data": {
+            "items": [
+              {
+                "_id": "00000000000000000000001c",
+                "money": 39.9,
+                "itemCode": "sniper",
+                "quantity": 1,
+                "sellerId": "00000000000000000000001d",
+                "buyerId": "00000000000000000000001e",
+                "transactionType": "itemMarket",
+                "item": {
+                  "_id": "00000000000000000000001f",
+                  "code": "sniper",
+                  "skills": {
+                    "attack": 0,
+                    "futureSkill": 1.125
+                  },
+                  "state": null,
+                  "maxState": 100,
+                  "quantity": 1,
+                  "lastAcquisitionAt": "2026-09-22T20:20:21.105Z",
+                  "__v": 7
+                },
+                "offerCreatedAt": "2026-09-22T20:21:53.438Z",
+                "createdAt": "2026-09-22T20:35:19.900Z",
+                "updatedAt": "2026-09-22T20:35:19.900Z",
+                "__v": 0,
+                "future": {
+                  "a.b": [
+                    false,
+                    null,
+                    {
+                      "x/y": "value"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "preserve_unknown_scalars": true,
+        "exclude_nested_version": true,
+        "net_pnl": null
+      }
+    },
+    {
+      "name": "missing_acquisition_and_skills",
+      "response": {
+        "result": {
+          "data": {
+            "items": [
+              {
+                "_id": "00000000000000000000001c",
+                "money": 39.9,
+                "itemCode": "sniper",
+                "quantity": 1,
+                "sellerId": "00000000000000000000001d",
+                "buyerId": "00000000000000000000001e",
+                "transactionType": "itemMarket",
+                "item": {
+                  "_id": "00000000000000000000001f",
+                  "code": "sniper",
+                  "state": 100,
+                  "maxState": 100,
+                  "quantity": 1
+                },
+                "offerCreatedAt": "2026-09-22T20:21:53.438Z",
+                "createdAt": "2026-09-22T20:35:19.900Z",
+                "updatedAt": "2026-09-22T20:35:19.900Z",
+                "__v": 0
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "basis": "unknown",
+        "net_pnl": null
+      }
+    },
+    {
+      "name": "identical_stats_distinct_instance",
+      "response": {
+        "result": {
+          "data": {
+            "items": [
+              {
+                "_id": "00000000000000000000001c",
+                "money": 39.9,
+                "itemCode": "sniper",
+                "quantity": 1,
+                "sellerId": "00000000000000000000001d",
+                "buyerId": "00000000000000000000001e",
+                "transactionType": "itemMarket",
+                "item": {
+                  "_id": "synthetic-distinct-instance",
+                  "code": "sniper",
+                  "skills": {
+                    "attack": 108,
+                    "criticalChance": 16
+                  },
+                  "state": 100,
+                  "maxState": 100,
+                  "quantity": 1,
+                  "lastAcquisitionAt": "2026-09-22T20:20:21.105Z"
+                },
+                "offerCreatedAt": "2026-09-22T20:21:53.438Z",
+                "createdAt": "2026-09-22T20:35:19.900Z",
+                "updatedAt": "2026-09-22T20:35:19.900Z",
+                "__v": 0
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "same_physical_item_as_observed": false,
+        "basis": "unknown"
+      }
+    },
+    {
+      "name": "same_id_without_verified_lineage_contract",
+      "response": {
+        "result": {
+          "data": {
+            "items": [
+              {
+                "_id": "synthetic-resale",
+                "money": 39.9,
+                "itemCode": "sniper",
+                "quantity": 1,
+                "sellerId": "00000000000000000000001e",
+                "buyerId": "00000000000000000000001e",
+                "transactionType": "itemMarket",
+                "item": {
+                  "_id": "00000000000000000000001f",
+                  "code": "sniper",
+                  "skills": {
+                    "attack": 108,
+                    "criticalChance": 16
+                  },
+                  "state": 95,
+                  "maxState": 100,
+                  "quantity": 1,
+                  "lastAcquisitionAt": "2026-09-22T20:20:21.105Z"
+                },
+                "offerCreatedAt": "2026-09-22T20:21:53.438Z",
+                "createdAt": "2026-09-23T00:00:00.000Z",
+                "updatedAt": "2026-09-22T20:35:19.900Z",
+                "__v": 0
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "basis": "unknown",
+        "net_pnl": null
+      }
+    }
+  ],
+  "orders": {
+    "result": {
+      "data": {
+        "buyOrders": [
+          {
+            "_id": "synthetic-zero-order",
+            "user": null,
+            "country": "synthetic-country",
+            "itemCode": "steel",
+            "quantity": 0,
+            "price": 0,
+            "type": "buy",
+            "offerAt": null,
+            "futureFlag": true
+          }
+        ],
+        "sellOrders": []
+      }
+    }
+  }
+}

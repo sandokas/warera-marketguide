@@ -1,8 +1,12 @@
 # Market participants, equipment, and realized trading results
 
-Status: implementation plan only, 2026-09-22. No migration, importer, command, or
-report change in this document is implemented yet. The user explicitly requested
-the plan and copy-paste prompt library first. Companion:
+Status: phases 1-3 normalized storage, migration, global ingestion, full/recent
+resync, offline status, retries and independent retention implemented, 2026-09-23; see [schema v5](market-schema-v5.md),
+[verified contracts](market-api-contracts.md) and the
+[implementation log](market-participants-implementation-log.md).
+Global two-stream collection and resync/status commands are implemented and tested
+offline. Participant reports and the phase 6 operational import remain future work. The offline `--migrate-db` command is implemented and tested on
+temporary fixtures only. Companion:
 [implementation prompts](market-participants-implementation-prompts.md).
 
 This plan supersedes implementation recommendations in the
@@ -41,6 +45,29 @@ historical/delisted item codes. It does not expand collection to wages, donation
 crafting, or dismantling. Full configuration archiving is outside this change.
 
 ## 2. Evidence and unresolved API contracts
+
+Phase 0 evidence changes the following decisions: frontend account rendering
+supports single-institution attribution while retaining the user actor, but no
+priority for conflicting institutional references. Party side field names are
+confirmed by frontend usage (not live market samples). Both stream limits are
+documented as 100 and work live; the type-array filter also works, while separate
+streams remain preferable. Equipment purchase UI includes current viewer-country
+market tax. Historical money gross/net meaning, fee settlement/rounding and
+equipment identity continuity remain unavailable. Until monetary semantics are
+verified, publish **source-money turnover**, not verified gross turnover, and
+leave gross/net P&L unavailable where unsupported. This qualifies the target
+formulas and export labels below; it must not block collection. Full evidence
+and fallback rules are in the phase 0 contracts.
+
+Subsequent user clarification explicitly confirms commodity MU/country source
+IDs as the economic account, with the player retained as actor. Institutional
+equipment access is still unverified; do not impose a user-only equipment schema
+or discard institutional references if returned.
+
+Resolve the buyer and seller separately. Personal-to-MU, MU-to-country and other
+mixed-account trades are valid; conflicting references mean multiple institution
+kinds on the same side, never different kinds across buyer and seller. An
+unresolved side does not exclude its otherwise resolved counterparty.
 
 ### Verified
 
@@ -191,8 +218,8 @@ available in the detailed export; small categories retain their trade count.
 
 ## 4. Database migration design
 
-Current `LATEST_SCHEMA_VERSION` is 4. Implement the next migration as v5 if still
-available; inspect the current branch before assigning its number. Only
+The phase 1 branch inspection found `LATEST_SCHEMA_VERSION` 4. The additive
+migration is now v5; actual columns and constraints are in [schema v5](market-schema-v5.md). Only
 `market_store.py` imports SQLite or executes schema/data SQL.
 
 ### Additive schema contract
@@ -276,7 +303,9 @@ indexes; do not store precomputed leaderboards as source facts.
 
 ## 5. Sync strategy and proposed commands
 
-These are **proposed CLI contracts**, not executable functionality today.
+The offline `--migrate-db`, normal two-stream sync, both resync scopes and
+`--market-sync-status` commands below are implemented and tested offline.
+Ranking cutoff options remain **proposed CLI contracts**.
 
 ```powershell
 # Offline additive migration and consistent backup (new command).
@@ -339,7 +368,15 @@ decision; it is not promised by this plan.
 
 The status command reports elapsed time, pages/rows, insertion/enrichment counts,
 oldest/newest committed event, per-stream errors and gaps, normalization coverage,
-and whether exhaustion was observed. "API history exhausted" is distinct from
+and whether exhaustion was observed. Elapsed timing is the measured transaction
+scan plus catch-up duration (excluding current-state reads); interrupted running
+scans may have no completed timing. Counts include repeated observations during
+head replay/catch-up. Rejected counts cover known malformed rows, not unreadable
+transport pages. Exact replay does not update transaction fetch timestamps.
+The initial scan remains running until catch-up finishes, and exhaustion can
+coexist with a later catch-up error. Status keeps latest-invocation exhaustion
+separate from retained coverage, which optional pruning can shrink.
+"API history exhausted" is distinct from
 "all game history known". Rate and ETA estimates use measured progress and remain
 unknown if remaining page count is unavailable. Rerunning a completed resync
 command intentionally rechecks history; normal daily collection uses `--sync`.

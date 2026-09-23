@@ -52,6 +52,10 @@ data/warera_market.sqlite3
 
 Use `--market-db PATH` to select another file. `MarketStore.initialize()` creates the parent directory, initializes `schema_meta`, and applies ordered migrations through `LATEST_SCHEMA_VERSION`.
 
+Schema v5 additions, constraints, merge rules, and offline migration/restore are
+documented in [Market schema v5](market-schema-v5.md). The definitions below show
+the retained compatibility baseline.
+
 ### `transactions`
 
 Stores normalized executions:
@@ -70,7 +74,7 @@ create table transactions (
 );
 ```
 
-`unit_price` is `money / quantity` when quantity is positive. The upstream transaction ID is preferred. If it is absent, the store hashes the normalized item code, timestamp, transaction type, money, and quantity. `insert or ignore` makes repeated and overlapping fetches safe.
+`unit_price` is `money / quantity` when quantity is positive. The upstream transaction ID is preferred. If it is absent, API-boundary normalization retains the historical fallback hash of item code, timestamp, transaction type, money, and quantity. Presence-aware enrichment now replaces duplicate-ignore-only behavior; newer source revisions can correct supplied fields without deleting omitted facts.
 
 ### `price_observations`
 

@@ -120,3 +120,26 @@ def test_load_config_rejects_invalid_inflation_settings(tmp_path, setting):
 
     with pytest.raises(ConfigError):
         load_config(path)
+
+@pytest.mark.parametrize("value,expected", [('"all"', "all"), ('14', 14)])
+def test_independent_transaction_retention(tmp_path, value, expected):
+    path = tmp_path / "config.toml"
+    path.write_text(f'[housekeeping]\nretention_days = 90\ntransaction_retention_days = {value}\n')
+    config = load_config(path).housekeeping
+    assert config.retention_days == 90
+    assert config.transaction_retention_days == expected
+
+
+@pytest.mark.parametrize("value", ['0', '-1', 'true', '1.5', '"7"', '"ALL"'])
+def test_invalid_transaction_retention(tmp_path, value):
+    path = tmp_path / "config.toml"
+    path.write_text(f'[housekeeping]\ntransaction_retention_days = {value}\n')
+    with pytest.raises(ConfigError):
+        load_config(path)
+
+
+def test_transaction_retention_old_config_and_project_policy(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('[housekeeping]\nretention_days = 45\n')
+    assert load_config(path).housekeeping.transaction_retention_days == 45
+    assert load_config("marketguide.toml").housekeeping.transaction_retention_days == "all"

@@ -681,3 +681,34 @@ def test_guidance_read_model_preserves_size_slippage_and_rejects_future_quotes(t
         assert future['flip_quote_age_minutes'] == -1
         assert future['short_term_quote_fresh'] is False
         assert future['short_term_reference_return_pct'] is None
+
+
+def test_mixed_database_keeps_item_cards_tables_and_metrics_commodity_only(tmp_path):
+    import pandas as pd
+    from warera_quant.warera_api import normalize_transaction
+    from warera_quant.report import generate_html_report
+    from warera_quant.market_data import build_we24_market_index
+    with _store(tmp_path) as store:
+        store.upsert_transactions("bread", [_transaction("bread-sale", "2026-06-30T11:00:00Z", money=12, quantity=4)])
+        store.upsert_transactions("delistedCode", [_transaction("historic", "2026-06-30T11:00:00Z", money=2, quantity=1)])
+        store.insert_price_observations({"priceOnly": 1}, NOW)
+        store.insert_order_book_observations({"orderOnly": TopOrders([OrderLevel(1, 3)], [])}, NOW)
+        before = load_market_rows(store, now=NOW)
+        index_before = build_we24_market_index(store, as_of=NOW)
+        for code in ("bread", "rareWeapon"):
+            store.ingest_transactions([normalize_transaction({"_id": "equipment-" + code,
+                "transactionType": "itemMarket", "itemCode": code, "createdAt": "2026-06-30T11:01:00Z",
+                "money": 999999, "quantity": 1,
+                "item": {"code": code, "skills": {"attack": 999}, "state": 10}})])
+        after = load_market_rows(store, now=NOW)
+        assert after == before  # Includes VWAP, guidance, forecasts and the entire shared item list.
+        assert build_we24_market_index(store, as_of=NOW) == index_before
+        assert {r["item_code"] for r in after} == {"bread", "delistedCode", "priceOnly", "orderOnly"}
+        assert next(r for r in after if r["item_code"] == "delistedCode")["item_name"] == "delistedCode"
+        assert len(load_chart_trades(store, item_code="bread", window="7D", now=NOW)) == 1
+        html = generate_html_report(pd.DataFrame(after))
+        assert "rareWeapon" not in html and "Rare Weapon" not in html
+        assert "Bread" in html
+        assert store.item_codes(transaction_type="itemMarket") == ["bread", "rareWeapon"]
+        assert len(store.transactions_for_window("rareWeapon", 0, transaction_type="itemMarket")) == 1
+        assert store.transaction_details("equipment-rareWeapon")["stats"][0]["value_decimal"] == "999"

@@ -290,7 +290,7 @@ def build_we24_market_index(
         facts, as_of=end, inception=inception,
         display_days=display_days, weighting_days=weighting_days,
     )
-    unexpected = sorted(set(store.item_codes()) - set(WE24_COMPONENTS))
+    unexpected = sorted(set(store.item_codes(transaction_type="trading")) - set(WE24_COMPONENTS))
     if unexpected:
         reason = "Membership review required for additional item codes: " + ", ".join(unexpected)
         result.update(latest_level=None, change_1d_pct=None, change_7d_pct=None, first_calculated_at=None, coverage_status="unavailable", reason=reason,
@@ -390,7 +390,7 @@ def build_inflation_index_results(
     last = _require_utc_day_boundary(last_as_of, "last_as_of")
     if last < first:
         raise ValueError("last_as_of cannot be before first_as_of.")
-    all_codes = tuple(store.item_codes())
+    all_codes = tuple(store.item_codes(transaction_type="trading"))
     earliest = min(
         definitions[0].base_period_start,
         first - timedelta(days=definitions[0].price_window_days),
@@ -973,7 +973,7 @@ def load_market_rows(
     production_points = store.item_production_points()
 
     rows: list[dict[str, Any]] = []
-    for item_code in store.item_codes():
+    for item_code in store.item_codes(transaction_type="trading"):
         trades = store.transactions_for_window(item_code, earliest_since_epoch)
         price_observations = store.price_observations_for_window(item_code, earliest_since_epoch)
         order_observations = store.order_book_observations_for_window(item_code, earliest_since_epoch)
@@ -1518,6 +1518,8 @@ def _daily_last_trade_prices(trades: list[dict[str, Any]]) -> list[dict[str, flo
 
 
 def _display_name(item_code: str) -> str:
+    if item_code not in WE24_COMPONENTS:
+        return item_code
     spaced = re.sub(r"(?<!^)(?=[A-Z])", " ", item_code).replace("_", " ").replace("-", " ")
     return spaced.title()
 

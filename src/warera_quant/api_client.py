@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from decimal import Decimal
 import time
 from typing import Any
 
@@ -44,12 +45,29 @@ class WarEraApiClient:
         params: dict[str, Any] | None = None,
         json_body: dict[str, Any] | None = None,
     ) -> Any:
-        elapsed = time.monotonic() - self._last_request
-        if elapsed < self.min_interval_seconds:
-            time.sleep(self.min_interval_seconds - elapsed)
-
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
-        response = self.session.request(method, url, params=params, json=json_body, timeout=30)
-        self._last_request = time.monotonic()
-        response.raise_for_status()
-        return response.json()
+        # Only retry reads; writes must never be replayed implicitly.
+        attempts = 4 if method.upper() == "GET" else 1
+        for attempt in range(attempts):
+            elapsed = time.monotonic() - self._last_request
+            if elapsed < self.min_interval_seconds:
+                time.sleep(self.min_interval_seconds - elapsed)
+            response = None
+            try:
+                response = self.session.request(method, url, params=params, json=json_body, timeout=30)
+                response.raise_for_status()
+                return response.json(parse_float=Decimal)
+            except (requests.Timeout, requests.ConnectionError, requests.HTTPError) as exc:
+                status = response.status_code if response is not None else None
+                transient = isinstance(exc, (requests.Timeout, requests.ConnectionError)) or status in (429, 500, 502, 503, 504)
+                if not transient or attempt + 1 == attempts:
+                    raise
+                delay = min(30.0, 2.0 ** attempt)
+                if response is not None:
+                    try:
+                        delay = min(30.0, max(delay, float(response.headers.get("Retry-After", 0))))
+                    except (TypeError, ValueError):
+                        pass
+                time.sleep(delay)
+            finally:
+                self._last_request = time.monotonic()

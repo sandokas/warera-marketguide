@@ -65,9 +65,73 @@ warera-marketguide \
   --output output
 ```
 
-On incremental runs, transaction pagination stops at stored transactions or the per-item high-water mark. On a new database it continues until the API returns no cursor unless `--history-pages` sets a page cap.
+Sync collects two globally filtered streams, `trading` and `itemMarket`, without
+an item filter or a current-price catalog restriction. Historical/new codes are
+retained; unknown display names fall back to their source codes. Incremental runs
+stop at verified normalized stream overlap, not an arbitrary duplicate or legacy
+per-item high-water mark. On a new database, pagination continues until the API
+returns no cursor unless `--history-pages` sets a per-stream cap.
 
-Use an explicit backfill to ignore high-water marks and stop at the lookback boundary:
+For bounded recent enrichment, use:
+
+```powershell
+.venv\Scripts\warera-marketguide --sync --resync-market --history-scope 7d --market-db data/warera_market.sqlite3
+```
+
+This replays both streams from the head, enriching existing IDs and inserting
+missing sales until each crosses a fixed seven-day boundary or exhausts available
+history. The crossing page is retained atomically, so a few older records may be
+stored. Cursors exist only in memory; restart replays from the head. This command
+rejects page caps, item exclusions and the legacy backfill flag before API calls.
+
+For all history still offered by both market streams, or offline status:
+
+```powershell
+.venv\Scripts\warera-marketguide --sync --resync-market --history-scope all --market-db data/warera_market.sqlite3
+.venv\Scripts\warera-marketguide --market-sync-status --market-db data/warera_market.sqlite3
+```
+
+Full resync never truncates the database and never stops at retained duplicates,
+legacy high-water marks, report windows or `--lookback-days`. It uses 100-row
+pages with no page cap. Both resync scopes finish with a catch-up pass for both
+streams after the history scans, using fixed anchors and crossing equal-time
+boundaries before stopping. Current prices/config/orders are fetched once per
+sync, outside transaction pagination. Normal `--sync` remains incremental.
+
+Requests are sequential and paced (`--min-interval`, default one second). GET
+requests retry timeout/connection failures and HTTP 429/500/502/503/504 at most
+three times, with bounded backoff (numeric Retry-After respected up to 30 seconds).
+403 and other permanent errors are not retried. Failed pages remain incomplete;
+the other stream can continue. Rows, children, counters and coverage commit as
+one page. Progress shows inserted/enriched/unchanged/rejected counts and exact
+timestamp/ID bounds. Status emits JSON with per-stream progress, retained versus
+normalized counts, verified intervals, sanitized errors, elapsed scan time and
+observed exhaustion. Counts describe committed pages (including replay and
+catch-up observations); rejected counts describe known invalid rows, not
+unreadable network pages. Remaining page count and ETA are unknown.
+
+Cursors are never persisted or constructed from IDs. There is no verified date/ID
+seek: restarting **repeats network requests from the head**, even over normalized
+rows. Exact replay avoids transaction/child rewrites; durable progress is evidence
+of commits, not directly resumable opaque pagination. A rerun of full resync
+intentionally rechecks all history. A `running` status after process exit indicates
+an interrupted job. Exhaustion records what the API returned; it does not prove
+complete game history or known inventory basis. A failed catch-up can coexist
+with earlier observed exhaustion. Concurrent pagination is not a verified server
+snapshot; late historical corrections require reconciliation and activity after
+the catch-up anchor is collected by the next normal sync.
+
+No production import is performed by installation/tests. Phase 6 owns the
+operational rollout; these commands are implemented and tested offline.
+
+Completed equipment sales retain participant references, instance details and all
+stats, but stay out of commodity cards, tables, charts, VWAP and WE24. Current
+commodity snapshots preserve individual orders and compatible aggregate depth;
+pending equipment listings are not collected. Unknown scalar fields are retained
+with warning diagnostics. Participant names currently use IDs: supported lookup
+response contracts remain unverified. `--from-db` performs no network lookups.
+
+The legacy backfill route also uses both global streams, ignoring overlap and stopping at its independent lookback boundary:
 
 ```bash
 warera-marketguide \
@@ -83,9 +147,9 @@ history from before its fixed inception; see the index section below.
 Useful sync options:
 
 - `--sync` updates SQLite without generating report files.
-- `--history-pages N` caps transaction pages per item; `0` means no page cap.
-- `--exclude-item-code CODE` excludes an item and may be repeated.
-- `--quiet` suppresses progress; `--verbose` shows page-level import details.
+- `--history-pages N` caps transaction pages per global stream; `0` means no page cap.
+- `--exclude-item-code CODE` excludes current commodity price/order collection and may be repeated; it never restricts global transaction ingestion. It is incompatible with `--resync-market`.
+- `--quiet` suppresses sync progress; committed page details are shown by default.
 - `--min-tick` changes the price increment removed from the raw spread when calculating trading attractiveness. It defaults to `0.001`.
 
 ## Database housekeeping
@@ -97,25 +161,30 @@ whenever desired, or schedule this command separately:
 warera-marketguide --housekeeping
 ```
 
-The routine prunes expired transactions, price observations, and order-book observations. The
-default configuration in `marketguide.toml` retains 120 days, which leaves headroom for
-90-day static chart history and delayed or missed synchronizations:
+The project keeps all transactions and retains price/order observations for 120 days.
+Transaction retention is independent of quote/order retention:
 
 ```toml
 [housekeeping]
 enabled = true
 retention_days = 120
+transaction_retention_days = "all"
 vacuum_interval_days = 30
 ```
 
-SQLite reuses pages released by pruning, bounding normal database growth. When free pages exist,
+Set `transaction_retention_days` to `"all"` or a positive integer of days. Old
+configurations without this setting retain their previous behavior: transactions
+use `retention_days`. Optional transaction pruning cascades to child rows, trims
+enrichment coverage and marks affected progress partial. The project setting
+`"all"` prevents housekeeping from undoing the historical import; transaction
+storage can grow without a retention bound. SQLite reuses pages released by pruning. When free pages exist,
 the database is compacted no more often than `vacuum_interval_days`; set that value to `0` to
 disable compaction. Set `enabled = false` to make the housekeeping command a no-op. A different
 configuration file can be selected with `--config PATH`, and a different database with
 `--market-db PATH`.
 
 Increasing `retention_days` affects future pruning only. Data already removed by housekeeping
-cannot be recovered unless the database was backed up separately.
+requires a backup or another API replay to recover, if the source still offers it.
 
 ## Reports from an existing database
 
@@ -132,7 +201,7 @@ warera-marketguide \
 When no input option is supplied, the CLI uses the default market database if it exists; otherwise it uses `data/sample_market.csv`. Prefer `--from-db` or an explicit CSV path in scripts so the input is clear.
 
 DB-backed reports persist and display the latest completed market-sync timestamp separately from
-the time the report itself was generated. A sync with item-level errors is marked as partial, and a
+the time the report itself was generated. A sync with stream or current-order errors is marked as partial, and a
 failed sync does not advance the stored freshness timestamp. Existing databases infer their initial
 timestamp from the newest stored market observation.
 
@@ -167,8 +236,8 @@ compares index levels seven calendar days apart, unlike the item chart's referen
 
 The weighting history starts 28 days before inception (2026-07-04), and the normal observed-coverage
 rule excludes each item's first observed day. Collect earlier history where available. Housekeeping
-can eventually remove evidence needed to reconstruct the chain; the current 120-day retention does
-not permanently protect inception history. Increasing retention cannot restore deleted data.
+can remove that evidence if finite transaction retention is configured. The project
+now retains transactions indefinitely; increasing retention cannot restore already deleted data.
 
 Exports include `we24_series.csv`, `we24_weights.csv`, and `charts/we24.png`.
 Legacy inflation calculations remain in the package, but the current CLI does not
@@ -197,7 +266,7 @@ time, so the newest candle can still be partial. Missing history is never filled
 Use `--chart-min-range-pct 5` to control the minimum visible price range. Sparse history remains
 visible, and partial candles are marked. Database read models calculate 1D, 7D, and 30D statistics;
 guidance, valuation dislocations, activity, and Item Price Context use 7D evidence.
-`--lookback-days` controls download/backfill scope, not these report horizons.
+`--lookback-days` controls only legacy `--transaction-backfill` download scope, not these report horizons. `--history-scope 7d` independently fixes recent enrichment to seven days; normal sync ignores report/display windows.
 
 ```bash
 warera-marketguide --from-db --all-price-action-charts --research-days 90 --output output
