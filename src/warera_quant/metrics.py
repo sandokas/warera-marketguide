@@ -2331,6 +2331,11 @@ def calculate_participant_rankings(trades, *, as_of, sources=None):
         for side, categories in row.pop("_categories").items():
             for category in categories.values():
                 category["money"] = category["gross_money"] if verified_gross else category["source_money"]
+                # Calculate average price: total money / total quantity
+                if category["quantity"] > 0:
+                    category["average_price"] = float(category["money"]) / float(category["quantity"])
+                else:
+                    category["average_price"] = None
             ordered = sorted(categories.values(), key=lambda c: (-c["money"], repr(c["category"])))
             total = row[("gross_" if verified_gross else "source_") + side + "_value"]
             for category in ordered:

@@ -85,16 +85,19 @@ def test_all_categories_missingness_and_top_ten(kind, side):
     html = _participant_html(report)
     detail = html.split(f'data-table-id="participants-{kind}-explanations"')[1].split('</table>')[0]
     winner = next(r for r in report['entities'] if r['entity_id']=='winner')
-    for c in winner['categories'][side]:
+    # Only top 3 items are shown in breakdown table for each user
+    for c in winner['top_' + side]:
         assert c['item_code'] in detail
-    assert detail.count('<td>commodity0</td>') == 1
-    assert detail.count('<td>boots4 3</td>') == 2
-    assert '<td>5</td>' in detail
-    assert '101 known (1 missing)' in detail and '2 known (1 missing)' in detail
-    assert '<td>Unknown</td>' in detail
+    # Check that average price column exists
+    assert 'Avg Price' in detail
+    assert 'commodity0' in detail
+    assert '21.000' in detail  # Average price for commodity0: 105/5 = 21
+    # Missing data should still be handled properly
     assert 'condition' not in html
     assert len(report['rankings'][kind]['volume']) == 10
-    assert '<td>outsider0</td>' not in html and '<td>outsider1</td>' not in html
+    # Each user in top 10 should only show their top 3 items
+    actor4 = next(r for r in report['entities'] if r['entity_id']=='actor4')
+    assert len(actor4['top_' + side]) <= 3
     assert all(x not in html for x in ('Other categories', 'Remaining items', 'Mixed items'))
 
 

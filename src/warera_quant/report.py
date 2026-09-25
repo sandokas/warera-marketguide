@@ -1415,7 +1415,7 @@ def _is_number_column(column: str) -> bool:
             "now", "latest", "min", "max", "fair", "buy", "sell", "buy ≤", "sell ≥",
             "max entry", "rich ≥", "max buy", "rich sell",
             "volume", "liquidity", "spread %", "units", "trades", "rank",
-            "range", "activity",
+            "range", "activity", "avg price", "average price",
         }
         or label.endswith("trades")
         or label.endswith("momentum %")
@@ -1430,6 +1430,7 @@ def _is_number_column(column: str) -> bool:
         or "%" in label
         or "ask" in label
         or "bid" in label
+        or "price" in label
         or label in {"last", "last trade", "samples"}
     )
 
@@ -2347,16 +2348,19 @@ def _participant_html(report):
     prefix = "gross" if report["turnover_basis"] == "gross" else "source"
 
     def table(identifier, title, headers, rows):
-        body = ''.join('<tr>' + ''.join(f'<td>{c if isinstance(c, _DisplayHtml) else escape(str(c))}</td>' for c in row) + '</tr>' for row in rows)
+        header_cells = ''.join(f'<th class="{_column_classes(str(h))}">{escape(h)}</th>' for h in headers)
+        body = ''.join('<tr>' + ''.join(f'<td class="{_column_classes(str(headers[i]))}">{c if isinstance(c, _DisplayHtml) else escape(str(c))}</td>' for i, c in enumerate(row)) + '</tr>' for row in rows)
         if not body:
             body = f'<tr><td colspan="{len(headers)}">No qualifying observed activity.</td></tr>'
         return (f'<section class="participant-section"><h2>{escape(title)}</h2><div class="table-wrap participant-table">'
                 f'<table class="report-table" data-table-id="{identifier}"><thead><tr>'
-                + ''.join(f'<th>{escape(h)}</th>' for h in headers) + '</tr></thead><tbody>' + body
+                + header_cells + '</tr></thead><tbody>' + body
                 + '</tbody></table></div></section>')
 
     blocks = ['<style>.participant-section {width:max-content;max-width:none} .participant-table table {width:max-content;table-layout:auto;font-size:16px} '
-              '.participant-table th,.participant-table td {white-space:normal;max-width:24ch;overflow-wrap:anywhere;text-align:left}'
+              '.participant-table th,.participant-table td {white-space:normal;max-width:24ch;overflow-wrap:anywhere}'
+              '.participant-table th.number,.participant-table td.number {text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}'
+              '.participant-table th:not(.number),.participant-table td:not(.number) {text-align:left}'
               '.identity-link{display:inline-flex;align-items:center;gap:10px;color:inherit;text-decoration:none}'
               '.identity-avatar{position:relative;display:inline-block;flex-shrink:0;width:44px;height:44px;margin:4px 0 6px 10px}'
               '.identity-image{width:44px;height:44px;object-fit:contain;vertical-align:middle;border-radius:4px}'
@@ -2376,16 +2380,17 @@ def _participant_html(report):
             rows.append([rank, name,
                          _participant_amount(row[prefix + '_turnover'], row['missing_money_count'], count), *tops])
             for side in ('buy', 'sell'):
-                for c in row['categories'][side]:
+                for c in row['top_' + side]:
                     share = 'Unknown' if c['share'] is None else f"{c['share'] * 100:.2f}%"
+                    avg_price = _fmt_report_value(c.get('average_price'), column='average price')
                     details.append([name, side.title(), _category_html(c),
                         _participant_amount(c['money'], c['missing_money_count'], c['trade_count']),
                         _participant_amount(c['quantity'], c['missing_quantity_count'], c['trade_count']),
-                        share, c['trade_count']])
+                        avg_price, share, c['trade_count']])
         blocks.append(table(f'participants-{kind}-volume', f'{label} - monetary turnover',
             ['Rank', {'user': 'User', 'mu': 'MU', 'country': 'Country'}[kind], '7D Turnover BTC', 'Bought', 'Sold'], rows))
         blocks.append(table(f'participants-{kind}-explanations', f'{label} - buy/sell breakdown',
-            [{'user': 'User', 'mu': 'MU', 'country': 'Country'}[kind], 'Side', 'Item / full stats', '7D Value BTC', 'Units', 'Side share', 'Trades'], details))
+            [{'user': 'User', 'mu': 'MU', 'country': 'Country'}[kind], 'Side', 'Item / full stats', '7D Value BTC', 'Units', 'Avg Price', 'Side share', 'Trades'], details))
     return ''.join(blocks)
 
 
@@ -2432,7 +2437,7 @@ def _write_participant_exports(out, report, equipment_details):
                 for index, c in enumerate(categories, 1):
                     key = {'entity_kind':row['entity_kind'], 'entity_id':row['entity_id'], 'side':side, 'category_index':index}
                     sig = c['category']
-                    breakdown.append({**common, **key, 'name':row.get('name') or row['entity_id'], **{k:v for k,v in c.items() if k not in ('category','display')}, 'signature_version':sig[0], 'state':sig[3] if len(sig)>2 else None, 'max_state':sig[4] if len(sig)>2 else None, 'description':_category_description(c, include_condition=True)})
+                    breakdown.append({**common, **key, 'name':row.get('name') or row['entity_id'], **{k:v for k,v in c.items() if k not in ('category','display')}, 'signature_version':sig[0], 'state':sig[3] if len(sig)>2 else None, 'max_state':sig[4] if len(sig)>2 else None, 'description':_category_description(c, include_condition=True), 'average_price':c.get('average_price')})
                     if sig[0] == 'equipment-v1' and sig[2] is not None:
                         stats.extend({**key,'skill_code':k,'value':v} for k,v in sig[2])
         write('participant_trade_breakdown_7d.csv', breakdown, ['entity_kind','entity_id','side','category_index','as_of'])
