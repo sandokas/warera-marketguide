@@ -17,7 +17,7 @@ from .warera_api import WarEraMarketApi, timestamp_us
 def refresh_display_cache(api: WarEraMarketApi, store: MarketStore, identities,
                           *, asset_dir: str | Path, max_profiles: int = 30,
                           max_assets: int = 35, max_age_hours: float = 24,
-                          now: datetime | None = None, equipment: bool = True, force_refresh: bool = False) -> dict:
+                          now: datetime | None = None, equipment: bool = True, force_refresh: bool = False, verbose: bool = False) -> dict:
     """Refresh only the explicit displayed population, never market history.
 
     Limits count attempts, including failures. Profile age uses last attempt to
@@ -33,6 +33,9 @@ def refresh_display_cache(api: WarEraMarketApi, store: MarketStore, identities,
     root.mkdir(parents=True, exist_ok=True)
     result = {"profiles_attempted": 0, "assets_attempted": 0, "errors": [], "deferred": 0}
     urls = set()
+    
+    if verbose:
+        print(f"[VERBOSE] refresh_display_cache: Starting with {len(identities)} identities, force_refresh={force_refresh}")
 
     def fresh(cached):
         return cached and now - datetime.fromisoformat(cached["attempted_at"].replace("Z", "+00:00")) < timedelta(hours=max_age_hours)
@@ -41,22 +44,34 @@ def refresh_display_cache(api: WarEraMarketApi, store: MarketStore, identities,
     queued = set(pending)
     for kind, entity_id in pending:
         cached = store.entity_name(kind, entity_id)
+        if verbose:
+            print(f"[VERBOSE] refresh_display_cache: Processing {kind} {entity_id}, cached={cached is not None}")
+            if cached:
+                print(f"[VERBOSE] refresh_display_cache: {kind} {entity_id} has citizenship_id={cached.get('citizenship_id')}")
         if force_refresh or not fresh({"attempted_at": cached["lookup_attempted_at"]} if cached else None):
             if result["profiles_attempted"] >= max_profiles:
                 result["deferred"] += 1
             else:
                 result["profiles_attempted"] += 1
                 try:
-                    store.cache_identity(api.get_identity(kind, entity_id), stamp, force_refresh=force_refresh)
+                    identity = api.get_identity(kind, entity_id)
+                    if verbose:
+                        citizenship_info = f"citizenship={identity.citizenship}" if kind in ("user", "mu") else "no citizenship"
+                        print(f"[VERBOSE] refresh_display_cache: Fetched identity for {kind} {entity_id}: {citizenship_info}")
+                    store.cache_identity(identity, stamp, force_refresh=force_refresh)
                 except Exception as exc:
                     store.cache_entity_name(kind, entity_id, None, stamp, "unavailable")
                     result["errors"].append(f"{kind} {entity_id}: {type(exc).__name__}")
+                    if verbose:
+                        print(f"[VERBOSE] refresh_display_cache: Failed to fetch {kind} {entity_id}: {exc}")
                 cached = store.entity_name(kind, entity_id)
         if cached and cached.get("citizenship_id"):
             country_key = ("country", cached["citizenship_id"])
             if country_key not in queued:
                 queued.add(country_key)
                 pending.append(country_key)
+                if verbose:
+                    print(f"[VERBOSE] refresh_display_cache: Added country {cached['citizenship_id']} to queue")
         if cached and cached.get("image_url"):
             urls.add(cached["image_url"])
     if equipment:

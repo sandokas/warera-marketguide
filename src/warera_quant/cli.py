@@ -251,11 +251,11 @@ def main() -> None:
         from .market_data import displayed_identity_keys
         from .sync import refresh_display_cache
         with MarketStore(args.market_db) as store:
-            population = displayed_identity_keys(load_participant_report(store, as_of=report_as_of))
+            population = displayed_identity_keys(load_participant_report(store, as_of=report_as_of, verbose=args.verbose))
             summary = refresh_display_cache(WarEraMarketApi(WarEraApiClient()), store, population,
                 asset_dir=Path(args.market_db).resolve().parent / "display-assets",
                 max_profiles=args.identity_limit, max_assets=args.asset_limit,
-                max_age_hours=args.identity_max_age_hours)
+                max_age_hours=args.identity_max_age_hours, verbose=args.verbose)
         print(json.dumps(summary, indent=2))
         return
     if args.market_sync_status:
@@ -392,7 +392,7 @@ def main() -> None:
             if args.live and not args.sync:
                 we24 = build_we24_market_index(store, as_of=report_as_of, display_days=max(args.we24_days, args.research_days or 0))
                 action_cost_results = load_action_cost_results(store, as_of=report_as_of)
-                participant_report = load_participant_report(store, as_of=report_as_of)
+                participant_report = load_participant_report(store, as_of=report_as_of, verbose=args.verbose)
                 equipment_details = list(iter_equipment_sale_details(store, as_of=report_as_of))
         if not args.quiet:
             print(
@@ -428,7 +428,7 @@ def main() -> None:
             data_sync_metadata = store.market_sync_metadata()
             we24 = build_we24_market_index(store, as_of=report_as_of, display_days=max(args.we24_days, args.research_days or 0))
             action_cost_results = load_action_cost_results(store, as_of=report_as_of)
-            participant_report = load_participant_report(store, as_of=report_as_of)
+            participant_report = load_participant_report(store, as_of=report_as_of, verbose=args.verbose)
             equipment_details = list(iter_equipment_sale_details(store, as_of=report_as_of))
         df_in = pd.DataFrame(rows)
     elif args.api_endpoint:
@@ -608,6 +608,7 @@ def main() -> None:
         participant_report=participant_report,
         equipment_details=equipment_details,
         as_of=report_as_of,
+        verbose=args.verbose,
     )
     print(f"Wrote {csv_path}")
     if action_cost_results:
@@ -616,7 +617,7 @@ def main() -> None:
     data_paths = [output_dir / name for name in ("market_scores.csv", "market_trends.csv", "we24_series.csv", "we24_weights.csv")]
     if action_cost_results:
         data_paths.append(output_dir / "market_action_costs.csv")
-    inventory = export_report_assets(report_path, output_dir, extra_paths=optional_chart_paths, data_paths=data_paths)
+    inventory = export_report_assets(report_path, output_dir, extra_paths=optional_chart_paths, data_paths=data_paths, verbose=args.verbose)
     print(f"Wrote {len(inventory)} current publication assets and asset_inventory.json")
 
 

@@ -1416,6 +1416,7 @@ def _is_number_column(column: str) -> bool:
             "max entry", "rich ≥", "max buy", "rich sell",
             "volume", "liquidity", "spread %", "units", "trades", "rank",
             "range", "activity", "avg price", "average price",
+            "7d turnover btc", "7d value btc",
         }
         or label.endswith("trades")
         or label.endswith("momentum %")
@@ -1882,9 +1883,15 @@ def generate_html_report(
     as_of: datetime | None = None,
     inflation_results: Sequence["InflationIndexResult"] | None = None,
     inflation_chart_paths: Mapping[str, str | Path] | None = None,
+    verbose: bool = False,
 ) -> str:
     assumptions = assumptions or FlipAssumptions()
     generated = (as_of or datetime.now(timezone.utc)).strftime("%Y-%m-%d %H:%M UTC")
+    
+    if verbose:
+        print(f"[VERBOSE] generate_html_report: Starting report generation with {len(df)} items")
+        print(f"[VERBOSE] generate_html_report: participant_report={participant_report is not None}")
+    
     sync_timestamp = _display_report_timestamp(data_synced_at)
     sync_status = (
         " (partial)"
@@ -1922,7 +1929,7 @@ def generate_html_report(
 
     blocks.append(_order_book_html(df, display_count))
     blocks.append(_activity_html(df, display_count))
-    blocks.append(_participant_html(participant_report))
+    blocks.append(_participant_html(participant_report, verbose=verbose))
 
     note_rows = df.head(display_count).copy()
     if not note_rows.empty:
@@ -2022,6 +2029,7 @@ def write_outputs(
     inflation_chart_paths: Mapping[str, str | Path] | None = None,
     equipment_details: Iterable[dict] | None = None,
     action_cost_results: Sequence["ActionCostResult"] | None = None,
+    verbose: bool = False,
 ) -> tuple[Path, Path]:
     assumptions = assumptions or FlipAssumptions()
     export_df = df.copy()
@@ -2078,6 +2086,7 @@ def write_outputs(
             as_of=as_of,
             we24=we24,
             we24_chart_path=we24_chart_path,
+            verbose=verbose,
         ), out),
         encoding="utf-8",
     )
@@ -2104,6 +2113,7 @@ def export_report_assets(
     report_path: str | Path, output_dir: str | Path, *, extra_paths: Sequence[Path] = (),
     data_paths: Sequence[Path] = (),
     browser_executable: str | Path | None = None,
+    verbose: bool = False,
 ) -> list[dict]:
     """Capture current DOM targets only, then publish tables as static PNGs.
 
@@ -2118,26 +2128,47 @@ def export_report_assets(
     report = Path(report_path).resolve()
     destination = Path(output_dir).resolve()
     inventory: list[dict] = []
+    
+    if verbose:
+        print(f"[VERBOSE] Starting report asset export from {report} to {destination}")
+    
     def record(path: Path, kind: str, selector: str | None = None):
         relative = path.resolve().relative_to(destination).as_posix()
         if not any(entry["path"] == relative for entry in inventory):
             inventory.append({"path": relative, "kind": kind, "selector": selector})
+            if verbose:
+                print(f"[VERBOSE] Recording asset: {relative} (kind: {kind})")
+    
     with sync_playwright() as playwright:
+        if verbose:
+            print("[VERBOSE] Launching Chromium browser")
         browser = playwright.chromium.launch(executable_path=_chrome_executable(browser_executable), headless=True,
                                                args=["--allow-file-access-from-files"])
         try:
+            if verbose:
+                print("[VERBOSE] Creating new page with viewport 1440x1080")
             page = browser.new_page(viewport={"width": 1440, "height": 1080}, device_scale_factor=2)
+            if verbose:
+                print(f"[VERBOSE] Navigating to {report.as_uri()}")
             page.goto(report.as_uri(), wait_until="load")
+            if verbose:
+                print("[VERBOSE] Waiting for fonts to load")
             page.evaluate("document.fonts.ready")
+            if verbose:
+                print("[VERBOSE] Decoding images")
             page.evaluate("""async () => { await Promise.all(Array.from(document.images).map(async image => {
                 try { await image.decode(); } catch (_) { image.removeAttribute('src'); }
             })); }""")
+            if verbose:
+                print("[VERBOSE] Scanning for chart images")
             for src in page.locator("img[src]").evaluate_all("els => els.map(e => e.getAttribute('src'))"):
                 if src.startswith("data:"):
                     continue
                 path = (report.parent / src).resolve()
                 if path.is_file():
                     record(path, "chart")
+            if verbose:
+                print("[VERBOSE] Scanning for data links")
             for href in page.locator("link[data-report-data]").evaluate_all("els => els.map(e => e.getAttribute('href'))"):
                 record(report.parent / href, "data")
             targets = [
@@ -2151,9 +2182,16 @@ def export_report_assets(
                 ('footer', 'sections', 'footer'),
             ]
             table_paths = []
+            if verbose:
+                print(f"[VERBOSE] Processing {len(targets)} target selectors")
             for selector, folder, kind in targets:
+                if verbose:
+                    print(f"[VERBOSE] Processing selector: {selector} (folder: {folder}, kind: {kind})")
                 elements = page.locator(selector)
-                for index in range(elements.count()):
+                count = elements.count()
+                if verbose:
+                    print(f"[VERBOSE] Found {count} elements for selector {selector}")
+                for index in range(count):
                     element = elements.nth(index)
                     table_id = element.get_attribute("data-table-id")
                     name = table_id or element.get_attribute("data-item-code")
@@ -2165,6 +2203,8 @@ def export_report_assets(
                     if kind == "table" and table_id:
                         path = destination / "participant_rankings_7d" / f"{table_id}.png"
                     path.parent.mkdir(parents=True, exist_ok=True)
+                    if verbose:
+                        print(f"[VERBOSE] Capturing screenshot to {path}")
                     element.screenshot(path=str(path), animations="disabled")
                     geometry = element.evaluate("""e => {
                         const r=e.getBoundingClientRect();
@@ -2174,6 +2214,8 @@ def export_report_assets(
                                 return b.left<r.left-1 || b.right>r.right+1 || b.top<r.top-1 || b.bottom>r.bottom+1;}).length,
                             minCellFont:cells.length ? Math.min(...cells.map(c => parseFloat(getComputedStyle(c).fontSize))) : null};
                     }""")
+                    if verbose:
+                        print(f"[VERBOSE] Element geometry: {geometry}")
                     if geometry["cellsOutside"] or geometry["scrollWidth"] > geometry["width"] + 2 or geometry["scrollHeight"] > geometry["height"] + 2:
                         raise RuntimeError(f"Incomplete capture: {selector} {index}: {geometry}")
                     record(path, kind, f"{selector} >> nth={index}")
@@ -2183,7 +2225,11 @@ def export_report_assets(
                     if kind == "table":
                         table_paths.append(path)
             # Replace only after capturing complete table elements and composites.
+            if verbose:
+                print(f"[VERBOSE] Replacing {len(table_paths)} tables with PNG versions")
             for index, path in enumerate(table_paths):
+                if verbose:
+                    print(f"[VERBOSE] Processing table {index + 1}/{len(table_paths)}: {path}")
                 table = page.locator("table.report-table").first
                 table.evaluate("""(e, src) => {
                     const rect=e.getBoundingClientRect();
@@ -2207,21 +2253,35 @@ def export_report_assets(
                     }
                     e.parentElement.style.cssText='width:auto;max-width:100%'; e.replaceWith(wrapper);
                 }""", path.relative_to(destination).as_posix())
+            if verbose:
+                print("[VERBOSE] Writing updated HTML content")
             report.write_text(page.content(), encoding="utf-8")
         finally:
+            if verbose:
+                print("[VERBOSE] Closing browser")
             browser.close()
+    if verbose:
+        print(f"[VERBOSE] Processing {len(extra_paths)} extra chart paths")
     for path in extra_paths:
         record(Path(path), "research-chart")
     record(report, "html")
+    if verbose:
+        print(f"[VERBOSE] Processing {len(data_paths)} data paths")
     for path in data_paths:
         if Path(path).is_file():
             record(Path(path), "data")
+    if verbose:
+        print("[VERBOSE] Cleaning up obsolete participant ranking files")
     for entity_kind in ("user", "mu", "country"):
         for obsolete_board in ("losses", "profits", "coverage"):
             obsolete = destination / "participant_rankings_7d" / f"participants-{entity_kind}-{obsolete_board}.png"
             if obsolete.is_file() and not obsolete.is_symlink():
                 obsolete.unlink()
+    if verbose:
+        print(f"[VERBOSE] Writing asset inventory with {len(inventory)} items")
     (destination / "asset_inventory.json").write_text(json.dumps(inventory, indent=2), encoding="utf-8")
+    if verbose:
+        print(f"[VERBOSE] Export complete. Total assets: {len(inventory)}")
     return inventory
 
 def _spreadsheet_value(value):
@@ -2295,12 +2355,18 @@ def _display_image(src, alt, css_class):
     return f'<img class="{css_class}" src="{escape(src, quote=True)}" alt="{escape(alt, quote=True)}">'
 
 
-def _identity_html(row):
+def _identity_html(row, verbose: bool = False):
     identity = row.get("identity", {})
     label = {"user": "User", "mu": "Military unit", "country": "Country"}.get(row.get("entity_kind"), "Entity")
     name = identity.get("display_name") or row.get("name") or f"{label} {row['entity_id']}"
     if name == row['entity_id']:
         name = f"{label} {name}"
+    
+    if verbose:
+        print(f"[VERBOSE] _identity_html: entity_kind={row.get('entity_kind')}, entity_id={row.get('entity_id')}, name={name}")
+        print(f"[VERBOSE] _identity_html: identity keys={list(identity.keys())}")
+        print(f"[VERBOSE] _identity_html: citizenship_name={identity.get('citizenship_name')}")
+        print(f"[VERBOSE] _identity_html: citizenship_image_src={identity.get('citizenship_image_src')[:50] if identity.get('citizenship_image_src') else None}")
     
     # Add prestige indicator (skull symbol) before name for prestiged users
     prestige = identity.get("prestige", False)
@@ -2310,6 +2376,8 @@ def _identity_html(row):
     icon = _display_image(identity.get("image_src"), f"{label} image", "identity-image")
     if not icon:
         icon = '<span class="identity-placeholder">' + escape(label) + '</span>'
+        if verbose:
+            print(f"[VERBOSE] _identity_html: Using placeholder for {label} image")
     badges = ""
     if row.get("entity_kind") == "user":
         level = identity.get("level")
@@ -2317,8 +2385,13 @@ def _identity_html(row):
             badges += f'<span class="identity-level" aria-label="Level {level}">{level}</span>'
     # Display citizenship flag for both users and MUs
     if row.get("entity_kind") in {"user", "mu"}:
-        badges += _display_image(identity.get("citizenship_image_src"),
+        if verbose:
+            print(f"[VERBOSE] _identity_html: Adding citizenship flag for {row.get('entity_kind')}")
+        citizenship_image = _display_image(identity.get("citizenship_image_src"),
             identity.get("citizenship_name") or "Citizenship", "identity-citizenship")
+        if verbose:
+            print(f"[VERBOSE] _identity_html: Citizenship image result: {bool(citizenship_image)}")
+        badges += citizenship_image
     from urllib.parse import quote
     kind = row.get("entity_kind")
     content = '<span class="identity-avatar">' + icon + badges + '</span><span>' + escape(name) + '</span>'
@@ -2345,7 +2418,7 @@ def _category_html(category):
 
 
 
-def _participant_html(report):
+def _participant_html(report, verbose: bool = False):
     """Shared presentation: volume top ten and their complete ordered categories.
 
     Identity enrichment may add display fields to entity rows; ownership, ranking,
@@ -2354,6 +2427,9 @@ def _participant_html(report):
     if report is None:
         return ""
     prefix = "gross" if report["turnover_basis"] == "gross" else "source"
+    
+    if verbose:
+        print(f"[VERBOSE] _participant_html: Processing participant report with turnover_basis={report['turnover_basis']}")
 
     def table(identifier, title, headers, rows):
         header_cells = ''.join(f'<th class="{_column_classes(str(h))}">{escape(h)}</th>' for h in headers)
@@ -2381,8 +2457,10 @@ def _participant_html(report):
     for kind, label in (("user", "Users"), ("mu", "Military Units"), ("country", "Countries")):
         entries = report['rankings'][kind]['volume']
         rows, details = [], []
+        if verbose:
+            print(f"[VERBOSE] _participant_html: Processing {len(entries)} {label}")
         for rank, row in enumerate(entries, 1):
-            name = _identity_html(row)
+            name = _identity_html(row, verbose=verbose)
             count = sum(c['trade_count'] for cats in row['categories'].values() for c in cats)
             tops = [_DisplayHtml('<div class="horizontal-items">' + ' '.join(str(_category_html(c)) for c in row['top_' + side]) + '</div>' if row['top_' + side] else 'No observed activity') for side in ('buy', 'sell')]
             rows.append([rank, name,

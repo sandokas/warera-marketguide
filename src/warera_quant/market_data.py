@@ -1662,7 +1662,7 @@ def _participant_trade_input(source: dict) -> dict:
         "equipment": equipment, "presence": presence}
 
 
-def load_participant_report(store: MarketStore, *, as_of: datetime, batch_size: int = 500, force_refresh_identities: bool = True) -> dict:
+def load_participant_report(store: MarketStore, *, as_of: datetime, batch_size: int = 500, force_refresh_identities: bool = True, verbose: bool = False) -> dict:
     """Offline phase-4 read model; phase 5 renders/exports this domain result."""
     from .metrics import calculate_participant_rankings, participant_utc
     as_of = participant_utc(as_of)
@@ -1671,7 +1671,7 @@ def load_participant_report(store: MarketStore, *, as_of: datetime, batch_size: 
     with closing(store.iter_participant_history(start, as_of, batch_size=batch_size)) as history:
         trades = (_participant_trade_input(row) for row in history)
         result = calculate_participant_rankings(trades, as_of=as_of, sources=sources)
-    enrich_participant_display(store, result, force_refresh=force_refresh_identities)
+    enrich_participant_display(store, result, force_refresh=force_refresh_identities, verbose=verbose)
     return result
 
 
@@ -1681,51 +1681,107 @@ def displayed_identity_keys(report: dict) -> list[tuple[str, str]]:
         for boards in report["rankings"].values() for row in boards["volume"]))
 
 
-def enrich_participant_display(store: MarketStore, result: dict, *, force_refresh: bool = False) -> None:
+def enrich_participant_display(store: MarketStore, result: dict, *, force_refresh: bool = False, verbose: bool = False) -> None:
     from .display_assets import asset_data_uri, bundled_item_display
     from .warera_api import WarEraMarketApi
     from .api_client import WarEraApiClient
     from .sync import refresh_display_cache
     
+    if verbose:
+        print(f"[VERBOSE] enrich_participant_display: Starting with force_refresh={force_refresh}")
+    
     # Force refresh identities from API if requested
+    # Only refresh entities that will be displayed in rankings, not all trading entities
     if force_refresh:
         api = WarEraMarketApi(WarEraApiClient())
-        identities = [(row["entity_kind"], row["entity_id"]) for row in result["entities"]]
-        refresh_display_cache(api, store, identities, 
+        # Get only the entities that appear in the published rankings (top volume per category)
+        displayed_entities = [(row["entity_kind"], row["entity_id"]) 
+                            for boards in result["rankings"].values() 
+                            for row in boards["volume"]]
+        if verbose:
+            print(f"[VERBOSE] enrich_participant_display: Refreshing {len(displayed_entities)} displayed entities (from {len(result['entities'])} total trading entities)")
+        refresh_display_cache(api, store, displayed_entities, 
                             asset_dir=Path(__file__).parent.parent.parent / "display-assets",
-                            force_refresh=True, max_profiles=100, max_age_hours=0)
+                            force_refresh=True, max_profiles=100, max_age_hours=0, verbose=verbose)
     
     names = store.participant_names((row["entity_kind"], row["entity_id"]) for row in result["entities"])
+    
+    if verbose:
+        citizenship_ids = set(c["citizenship_id"] for c in names.values() if c.get("citizenship_id"))
+        print(f"[VERBOSE] enrich_participant_display: Found {len(citizenship_ids)} unique citizenship IDs: {citizenship_ids}")
+        for kind_entity_id, cached in names.items():
+            if cached.get("citizenship_id"):
+                print(f"[VERBOSE] enrich_participant_display: {kind_entity_id[0]} {kind_entity_id[1]} has citizenship_id={cached['citizenship_id']}")
+    
     countries = store.participant_names(("country", c["citizenship_id"])
         for c in names.values() if c.get("citizenship_id"))
+    
+    if verbose:
+        print(f"[VERBOSE] enrich_participant_display: Loaded {len(countries)} country records")
+        for country_key, country_data in countries.items():
+            print(f"[VERBOSE] enrich_participant_display: Country {country_key[1]}: name={country_data.get('name')}, image_url={country_data.get('image_url', 'None')[:50] if country_data.get('image_url') else 'None'}...")
+    
     equipment = bundled_item_display()
     assets = {}
 
-    def image(url):
+    def image(url, verbose: bool = False):
         if url not in assets:
             cached = store.cached_asset(url) if url else None
+            if verbose:
+                print(f"[VERBOSE] image lookup: url={url[:50] if url else None}... cached={cached is not None}, status={cached.get('status') if cached else None}")
             assets[url] = (asset_data_uri(cached), cached or {})
         return assets[url]
 
+    if verbose:
+        print(f"[VERBOSE] enrich_participant_display: Processing equipment display")
     for code, metadata in store.equipment_display().items():
-        src, cached = image(metadata["image_url"])
+        src, cached = image(metadata["image_url"], verbose=verbose)
         equipment[code] = {**metadata, "image_src": src or equipment.get(code, {}).get("image_src")}
     # Decimal output projection copies ranking rows; attach the same dated cache
     # metadata to both aggregates and rankings, with no profile/network lookup.
     rows = list(result["entities"])
     rows.extend(row for boards in result["rankings"].values() for board in boards.values() for row in board)
+    if verbose:
+        print(f"[VERBOSE] enrich_participant_display: Processing {len(rows)} participant rows")
     for row in rows:
         cached = names.get((row["entity_kind"], row["entity_id"]), {})
         row["name"] = cached.get("name") or row["entity_id"]
         row["name_observed_at"] = cached.get("name_observed_at")
-        src, asset = image(cached.get("image_url"))
+        src, asset = image(cached.get("image_url"), verbose=verbose)
         if not src and cached.get("image_cache_url"):
-            src, asset = image(cached["image_cache_url"])
+            src, asset = image(cached["image_cache_url"], verbose=verbose)
         label = {"user": "User", "mu": "Military unit", "country": "Country", "party": "Party"}.get(row["entity_kind"], "Entity")
-        citizenship = countries.get(("country", cached.get("citizenship_id")), {})
-        flag, _ = image(citizenship.get("image_url"))
-        if not flag:
-            flag, _ = image(citizenship.get("image_cache_url"))
+        
+        # Only process citizenship for users and MUs, not countries themselves
+        if row["entity_kind"] in {"user", "mu"}:
+            citizenship_id = cached.get("citizenship_id")
+            citizenship = countries.get(("country", citizenship_id), {})
+            
+            if verbose:
+                print(f"[VERBOSE] enrich_participant_display: {label} {row['entity_id']}: citizenship_id={citizenship_id}, citizenship_found={bool(citizenship)}")
+                if citizenship:
+                    print(f"[VERBOSE] enrich_participant_display: {label} {row['entity_id']}: citizenship data keys={list(citizenship.keys())}")
+                else:
+                    print(f"[VERBOSE] enrich_participant_display: {label} {row['entity_id']}: NO CITIZENSHIP DATA FOUND for citizenship_id={citizenship_id}")
+            
+            if citizenship:
+                if verbose:
+                    print(f"[VERBOSE] enrich_participant_display: Processing citizenship {citizenship.get('name')} for {label} {row['entity_id']}")
+                flag, _ = image(citizenship.get("image_url"), verbose=verbose)
+                if not flag:
+                    flag, _ = image(citizenship.get("image_cache_url"), verbose=verbose)
+                if verbose:
+                    print(f"[VERBOSE] enrich_participant_display: Citizenship flag result: {bool(flag)} for {citizenship.get('name')}")
+            else:
+                flag = None
+                if verbose:
+                    print(f"[VERBOSE] enrich_participant_display: No citizenship data, flag will be None for {label} {row['entity_id']}")
+        else:
+            # Countries and parties don't have citizenships
+            flag = None
+            citizenship = {}
+            if verbose and row["entity_kind"] == "country":
+                print(f"[VERBOSE] enrich_participant_display: {label} {row['entity_id']} - skipping citizenship (countries don't have citizenships)")
         row["identity"] = {"level": cached.get("level"),
             "citizenship_id": cached.get("citizenship_id"),
             "citizenship_name": citizenship.get("name"), "citizenship_image_src": flag,"entity_kind": row["entity_kind"], "entity_id": row["entity_id"],
