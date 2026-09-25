@@ -5,6 +5,36 @@ public frontend build `d88vhlzaJYP486NJ15SZf`. This is a bounded observation,
 not a backend specification or a historical completeness claim. No production
 parser, database, importer, or report behavior is changed by this phase.
 
+## Operational update - 2026-09-24
+
+See the [historical query-scope correction](market-history-query-scope-spec.md).
+Broad-query exhaustion does not establish all available history. A filtered
+commodity diagnostic reached September 16 with continuation; the server-default
+explanation remains unverified. Scope-aware acquisition, checkpoints and coverage
+are requirements for further work, not claims about the current implementation.
+
+
+Correction after the user challenged historical completeness: the global query's
+observed floor is NOT a market-wide availability floor. The previous downloader
+filtered by `itemCode`. A live `heavyAmmo` filtered query reached September 20 on
+page 29 with a next cursor, beyond the global query's September 21 floor. Scope
+must be included in acquisition/checkpoint and completeness reasoning. Historical
+rollout acceptance is reopened; 90-day reach remains to be reverified.
+
+The user explicitly authorized durable cursor storage, superseding the original
+in-memory-only requirement below. Opted-in `--resume-market` saves only the opaque
+continuation and scalar checkpoint metadata in SQLite, atomically with its page.
+Four bounded live requests (two per stream) in separate hard-exiting processes
+verified immediate cross-process continuation and 200 distinct retained rows per
+stream in temporary databases. No token was decoded, forged, exposed in logs or
+used as a source identity. Long-term token lifetime remains unverified; rejection
+is a visible failure, not proof of exhaustion or authorization for silent replay.
+
+Production pagination exhausted at `2026-09-21T00:31:11.575Z` for commodities and
+`2026-09-21T00:43:47.869Z` for equipment. This observation does not establish an
+official retention duration or recover discarded identities on older local rows.
+Coverage intervals start at observed event bounds, never an assumed 1970 floor.
+
 ## Evidence and reproducibility
 
 The checked-in [evidence ledger](market-api-evidence.json) records exact request
@@ -176,8 +206,9 @@ Retain two separate streams for coverage/status and failure isolation; no combin
 stream change is needed. L4 confirms limit three returned three orders per side,
 not three total; full market depth is not established. Do not probe unsupported
 date or seek arguments, construct cursors from IDs, or treat errors as exhaustion.
-Keep `nextCursor` only in memory. Restart replays from the head; durable event
-markers do not enable historical API seek. These fixture subsets omit the cursor
+Default scans keep `nextCursor` only in memory; opt-in durable checkpoints follow
+the September 24 authorization above. Without a checkpoint, restart replays from
+the head; durable event markers do not enable historical API seek. These fixture subsets omit the cursor
 envelope deliberately and must not be treated as exhausted live pages.
 
 D1 documents `user.getUserLite(userId)`, `mu.getById(muId)`, and
@@ -202,7 +233,7 @@ This is a mapping obligation, not a claim that the existing parser stores them.
 | Order `country` (prior audit candidate, not observed here) and future owner references | Preserve if present; no membership inference; unmapped fields use extensions |
 | `processedByModAt` (frontend only), all other unknown scalar leaves | Normalized extra-field rows plus visible diagnostic, not raw JSON |
 | Any record/nested `__v` | Intentionally excluded |
-| Response pagination `nextCursor` | Temporary in-memory state only; no DB/log/cursor fixture value |
+| Response pagination `nextCursor` | In memory by default; optional atomic operational checkpoint under September 24 authorization; never logs, published exports or cursor fixture values |
 
 Order observation time does not replace `offerAt`. Preserve distinct same-price
 orders and zero placeholders; only executable-depth calculations discard zero

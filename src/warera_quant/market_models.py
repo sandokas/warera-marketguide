@@ -4,6 +4,17 @@ from typing import Any
 
 
 @dataclass(frozen=True)
+class DisplayIdentity:
+    entity_kind: str
+    entity_id: str
+    name: str
+    image_url: str | None = None
+    country_code: str | None = None
+    level: int | None = None
+    citizenship_id: str | None = None
+
+
+@dataclass(frozen=True)
 class ScalarField:
     path: str
     value_type: str
@@ -50,6 +61,18 @@ class StreamProgress:
     unchanged: int = 0
     rejected: int = 0
     last_error: str | None = None
+
+
+@dataclass(frozen=True)
+class StreamCheckpoint:
+    stream: str
+    scan_anchor: str
+    phase: str
+    next_cursor: str | None
+    previous_oldest_us: int | None
+    pages: int
+    normalization_version: int = 1
+    page_size: int = 100
 
 
 @dataclass(frozen=True)

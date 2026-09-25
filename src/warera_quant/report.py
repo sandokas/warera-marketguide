@@ -4,6 +4,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
+import re
 from typing import Iterable, Mapping, Sequence, TYPE_CHECKING
 
 import pandas as pd
@@ -995,7 +996,7 @@ def _activity_html(df: pd.DataFrame, display_count: int) -> str:
     return (
         '<section><h2>Activity Comparison</h2>'
         f'<p class="muted">Completed {ACTIVITY_WINDOW} turnover in BTC; PP-equivalent volume estimates production effort, not executable capacity or exit time.</p>'
-        '<div class="table-wrap compact-table activity-table"><table class="report-table">'
+        '<div class="table-wrap compact-table activity-table"><table class="report-table" data-report-table="activity-comparison">'
         '<thead><tr><th class="activity-item text">Item</th>'
         '<th class="activity-volume number">7D completed turnover (BTC) / PP-equivalent volume</th>'
         '</tr></thead>'
@@ -1106,7 +1107,7 @@ def _order_book_html(df: pd.DataFrame, display_count: int) -> str:
     return (
         '<section><h2>Current Order Book</h2>'
         '<p class="muted">Visible bids and asks, depth, walls, spread, and market pressure.</p>'
-        '<div class="table-wrap compact-table book-summary"><table class="report-table">'
+        '<div class="table-wrap compact-table book-summary"><table class="report-table" data-report-table="current-order-book">'
         '<thead><tr><th class="book-item text">Item</th><th class="book-price number">Best Bid</th>'
         '<th class="book-wall number">Buy Wall</th><th class="book-profile-cell text">Buy orders vs sell orders</th>'
         '<th class="book-wall number">Sell Wall</th><th class="book-price number">Best Ask</th>'
@@ -1876,11 +1877,13 @@ def generate_html_report(
     data_sync_status: str | None = None,
     we24: dict | None = None,
     we24_chart_path: str | Path | None = None,
+    participant_report: dict | None = None,
+    as_of: datetime | None = None,
     inflation_results: Sequence["InflationIndexResult"] | None = None,
     inflation_chart_paths: Mapping[str, str | Path] | None = None,
 ) -> str:
     assumptions = assumptions or FlipAssumptions()
-    generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    generated = (as_of or datetime.now(timezone.utc)).strftime("%Y-%m-%d %H:%M UTC")
     sync_timestamp = _display_report_timestamp(data_synced_at)
     sync_status = (
         " (partial)"
@@ -1918,6 +1921,7 @@ def generate_html_report(
 
     blocks.append(_order_book_html(df, display_count))
     blocks.append(_activity_html(df, display_count))
+    blocks.append(_participant_html(participant_report))
 
     note_rows = df.head(display_count).copy()
     if not note_rows.empty:
@@ -1989,11 +1993,11 @@ def generate_html_report(
     import re
     def annotate_table(match):
         table = match.group(0)
-        if 'col-signal' in table and 'col-price-state' in table:
+        if 'data-report-table="current-order-book"' in table or 'data-report-table="activity-comparison"' in table or 'data-table-id="participants-' in table or '<tfoot>' in table or ('col-signal' in table and 'col-price-state' in table):
             return table
         columns = table.split("</thead>")[0].count("<th ")
         return table.replace("</table>", f'<tfoot><tr><td colspan="{max(columns, 1)}">{escape(table_note)}</td></tr></tfoot></table>')
-    body = re.sub(r'<table class="report-table">.*?</table>', annotate_table, body, flags=re.S)
+    body = re.sub(r'<table class="report-table"[^>]*>.*?</table>', annotate_table, body, flags=re.S)
     return _html_page("WarEra Market Guide", body)
 
 
@@ -2011,8 +2015,11 @@ def write_outputs(
     data_sync_status: str | None = None,
     we24: dict | None = None,
     we24_chart_path: str | Path | None = None,
+    participant_report: dict | None = None,
+    as_of: datetime | None = None,
     inflation_results: Sequence["InflationIndexResult"] | None = None,
     inflation_chart_paths: Mapping[str, str | Path] | None = None,
+    equipment_details: Iterable[dict] | None = None,
     action_cost_results: Sequence["ActionCostResult"] | None = None,
 ) -> tuple[Path, Path]:
     assumptions = assumptions or FlipAssumptions()
@@ -2046,14 +2053,16 @@ def write_outputs(
     trends_csv_path = out / "market_trends.csv"
     scores_csv_path = out / "market_scores.csv"
     html_path = out / "market_report.html"
-    export_df.to_csv(trends_csv_path, index=False)
-    export_df.to_csv(scores_csv_path, index=False)
+    participant_paths = _write_participant_exports(out, participant_report, equipment_details)
+    spreadsheet_df = export_df.apply(lambda column: column.map(_spreadsheet_value))
+    spreadsheet_df.to_csv(trends_csv_path, index=False)
+    spreadsheet_df.to_csv(scores_csv_path, index=False)
     if action_cost_results:
         write_action_costs_csv(action_cost_results, out)
     pd.DataFrame([{key: value for key, value in point.items() if key != "weights"} for point in (we24 or {}).get("observations", [])], columns=["as_of", "level", "priced_count", "component_count", "coverage_pct", "reason", "is_rebalance"]).to_csv(out / "we24_series.csv", index=False)
     pd.DataFrame((we24 or {}).get("weight_history", []), columns=["effective_at", "reference_start", "reference_end", "item_code", "weight"]).to_csv(out / "we24_weights.csv", index=False)
     html_path.write_text(
-        generate_html_report(
+        _materialize_display_assets(generate_html_report(
             export_df,
             top=top,
             metric_window=metric_window,
@@ -2064,11 +2073,17 @@ def write_outputs(
             assumptions=assumptions,
             data_synced_at=data_synced_at,
             data_sync_status=data_sync_status,
+            participant_report=participant_report,
+            as_of=as_of,
             we24=we24,
             we24_chart_path=we24_chart_path,
-        ),
+        ), out),
         encoding="utf-8",
     )
+    if participant_paths:
+        text = html_path.read_text(encoding="utf-8")
+        links = "".join(f'<link data-report-data href="{path.name}">' for path in participant_paths)
+        html_path.write_text(text.replace("</head>", links + "</head>"), encoding="utf-8")
     return trends_csv_path, html_path
 
 
@@ -2113,10 +2128,17 @@ def export_report_assets(
             page = browser.new_page(viewport={"width": 1440, "height": 1080}, device_scale_factor=2)
             page.goto(report.as_uri(), wait_until="load")
             page.evaluate("document.fonts.ready")
+            page.evaluate("""async () => { await Promise.all(Array.from(document.images).map(async image => {
+                try { await image.decode(); } catch (_) { image.removeAttribute('src'); }
+            })); }""")
             for src in page.locator("img[src]").evaluate_all("els => els.map(e => e.getAttribute('src'))"):
+                if src.startswith("data:"):
+                    continue
                 path = (report.parent / src).resolve()
                 if path.is_file():
                     record(path, "chart")
+            for href in page.locator("link[data-report-data]").evaluate_all("els => els.map(e => e.getAttribute('href'))"):
+                record(report.parent / href, "data")
             targets = [
                 ('table.report-table', 'tables', 'table'),
                 ('header', 'sections', 'header'),
@@ -2132,25 +2154,58 @@ def export_report_assets(
                 elements = page.locator(selector)
                 for index in range(elements.count()):
                     element = elements.nth(index)
-                    name = element.get_attribute("data-item-code")
+                    table_id = element.get_attribute("data-table-id")
+                    name = table_id or element.get_attribute("data-item-code")
                     if not name:
                         heading = element.locator("h2, h3")
                         name = heading.first.inner_text() if heading.count() else f"{index + 1:02d}"
                     slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
                     path = destination / folder / f"{kind}-{index + 1:02d}-{slug}.png"
+                    if kind == "table" and table_id:
+                        path = destination / "participant_rankings_7d" / f"{table_id}.png"
                     path.parent.mkdir(parents=True, exist_ok=True)
                     element.screenshot(path=str(path), animations="disabled")
-                    geometry = element.evaluate("e => ({width:e.getBoundingClientRect().width,height:e.getBoundingClientRect().height,scrollWidth:e.scrollWidth,scrollHeight:e.scrollHeight})")
-                    if geometry["scrollWidth"] > geometry["width"] + 2 or geometry["scrollHeight"] > geometry["height"] + 2:
+                    geometry = element.evaluate("""e => {
+                        const r=e.getBoundingClientRect();
+                        const cells=[...e.querySelectorAll('th,td')];
+                        return {width:r.width,height:r.height,scrollWidth:e.scrollWidth,scrollHeight:e.scrollHeight,
+                            cellsOutside:cells.filter(c => {const b=c.getBoundingClientRect();
+                                return b.left<r.left-1 || b.right>r.right+1 || b.top<r.top-1 || b.bottom>r.bottom+1;}).length,
+                            minCellFont:cells.length ? Math.min(...cells.map(c => parseFloat(getComputedStyle(c).fontSize))) : null};
+                    }""")
+                    if geometry["cellsOutside"] or geometry["scrollWidth"] > geometry["width"] + 2 or geometry["scrollHeight"] > geometry["height"] + 2:
                         raise RuntimeError(f"Incomplete capture: {selector} {index}: {geometry}")
                     record(path, kind, f"{selector} >> nth={index}")
                     inventory[-1]["css_size"] = geometry
+                    if table_id:
+                        inventory[-1]["table_id"] = table_id
                     if kind == "table":
                         table_paths.append(path)
             # Replace only after capturing complete table elements and composites.
             for index, path in enumerate(table_paths):
                 table = page.locator("table.report-table").first
-                table.evaluate("(e, src) => { const img=document.createElement('img'); img.src=src; img.alt=e.innerText; img.className='published-table'; img.style.cssText='display:block;max-width:100%;height:auto'; e.parentElement.style.cssText='width:auto;max-width:100%'; e.replaceWith(img); }", path.relative_to(destination).as_posix())
+                table.evaluate("""(e, src) => {
+                    const rect=e.getBoundingClientRect();
+                    const links=[...e.querySelectorAll('a[href]')].map(a => {
+                        const r=a.getBoundingClientRect();
+                        return {href:a.href,label:a.innerText,left:100*(r.left-rect.left)/rect.width,
+                            top:100*(r.top-rect.top)/rect.height,width:100*r.width/rect.width,height:100*r.height/rect.height};
+                    });
+                    const wrapper=document.createElement('div');
+                    wrapper.className='published-table-container';
+                    wrapper.style.cssText=`position:relative;width:${rect.width}px;max-width:100%`;
+                    const img=document.createElement('img'); img.src=src; img.alt=e.innerText;
+                    img.className='published-table'; img.style.cssText='display:block;width:100%;height:auto';
+                    wrapper.append(img);
+                    for(const link of links){
+                        const a=document.createElement('a'); a.href=link.href;
+                        a.target='_blank'; a.rel='noopener noreferrer'; a.title=link.label;
+                        a.setAttribute('aria-label',link.label); a.className='published-identity-link';
+                        a.style.cssText=`position:absolute;left:${link.left}%;top:${link.top}%;width:${link.width}%;height:${link.height}%`;
+                        wrapper.append(a);
+                    }
+                    e.parentElement.style.cssText='width:auto;max-width:100%'; e.replaceWith(wrapper);
+                }""", path.relative_to(destination).as_posix())
             report.write_text(page.content(), encoding="utf-8")
         finally:
             browser.close()
@@ -2160,5 +2215,227 @@ def export_report_assets(
     for path in data_paths:
         if Path(path).is_file():
             record(Path(path), "data")
+    for entity_kind in ("user", "mu", "country"):
+        for obsolete_board in ("losses", "profits", "coverage"):
+            obsolete = destination / "participant_rankings_7d" / f"participants-{entity_kind}-{obsolete_board}.png"
+            if obsolete.is_file() and not obsolete.is_symlink():
+                obsolete.unlink()
     (destination / "asset_inventory.json").write_text(json.dumps(inventory, indent=2), encoding="utf-8")
     return inventory
+
+def _spreadsheet_value(value):
+    """Escape formula-leading source text only; leave numeric values numeric."""
+    if isinstance(value, str) and (value.startswith(("\t", "\r", "\n")) or value.lstrip().startswith(("=", "+", "-", "@"))):
+        return "'" + value
+    return value
+
+
+def _participant_value(value):
+    """Format accounting decimals without a float conversion."""
+    if value is None:
+        return "N/A"
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
+
+
+def _category_description(category, *, include_condition=False):
+    signature = category["category"]
+    text = str(category["item_code"])
+    if signature[0] == "equipment-v1":
+        stats = signature[2]
+        text += "; stats: " + ("unknown" if stats is None else ", ".join(f"{k}={v}" for k, v in stats) or "none")
+        if include_condition:
+            text += f"; condition {_participant_value(signature[3])}/{_participant_value(signature[4])}"
+    return text
+
+
+def _participant_amount(amount, missing, count):
+    """Display known subtotals without presenting absent observations as zero."""
+    if amount is None or (missing and missing == count):
+        return "Unknown"
+    text = format(amount, ",.6f").rstrip("0").rstrip(".") or "0"
+    return f"{text} known ({missing} missing)" if missing else text
+
+
+def _materialize_display_assets(html: str, output_dir: Path) -> str:
+    """Write each supplied image once; keep large breakdowns portable and compact."""
+    import base64
+    import hashlib
+    cache = {}
+    def replace(match):
+        src = match.group(1)
+        if src not in cache:
+            header, encoded = src.split(",", 1)
+            content = base64.b64decode(encoded, validate=True)
+            suffix = ".svg" if "svg+xml" in header else ".png"
+            relative = Path("display-assets") / (hashlib.sha256(content).hexdigest() + suffix)
+            path = output_dir / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+            cache[src] = relative.as_posix()
+        return 'src="' + cache[src] + '"'
+    return re.sub(r'src="(data:image/(?:png|svg\+xml);base64,[A-Za-z0-9+/=]+)"', replace, html)
+
+
+class _DisplayHtml(str):
+    """Only constructed from escaped display data by helpers below."""
+
+
+def _display_image(src, alt, css_class):
+    if not isinstance(src, str) or not src.startswith(("data:image/png;base64,", "data:image/svg+xml;base64,")):
+        return ""
+    return f'<img class="{css_class}" src="{escape(src, quote=True)}" alt="{escape(alt, quote=True)}">'
+
+
+def _identity_html(row):
+    identity = row.get("identity", {})
+    label = {"user": "User", "mu": "Military unit", "country": "Country"}.get(row.get("entity_kind"), "Entity")
+    name = identity.get("display_name") or row.get("name") or f"{label} {row['entity_id']}"
+    if name == row['entity_id']:
+        name = f"{label} {name}"
+    icon = _display_image(identity.get("image_src"), f"{label} image", "identity-image")
+    if not icon:
+        icon = '<span class="identity-placeholder">' + escape(label) + '</span>'
+    badges = ""
+    if row.get("entity_kind") == "user":
+        level = identity.get("level")
+        if type(level) is int and level >= 0:
+            badges += f'<span class="identity-level" aria-label="Level {level}">{level}</span>'
+        badges += _display_image(identity.get("citizenship_image_src"),
+            identity.get("citizenship_name") or "Citizenship", "identity-citizenship")
+    from urllib.parse import quote
+    kind = row.get("entity_kind")
+    content = '<span class="identity-avatar">' + icon + badges + '</span><span>' + escape(name) + '</span>'
+    if kind in {"user", "mu", "country"}:
+        href = f"https://app.warera.io/{kind}/{quote(str(row['entity_id']), safe='')}"
+        content = f'<a class="identity-link" href="{escape(href, quote=True)}" target="_blank" rel="noopener noreferrer">{content}</a>'
+    return _DisplayHtml(content)
+
+
+def _category_html(category):
+    metadata = category.get("display") or {}
+    signature = category["category"]
+    equipment = signature[0] == "equipment-v1"
+    stats = signature[2] if equipment else ()
+    values = "Unknown" if stats is None else "/".join(_participant_value(v) for _, v in stats)
+    icon = _display_image(metadata.get("image_src"), category["item_code"], "equipment-image")
+    if icon:
+        colors = [metadata.get(key, "") for key in ("frame_color", "frame_end")]
+        if all(re.fullmatch(r"#[0-9a-fA-F]{6}", color) for color in colors):
+            icon = (f'<span class="equipment-frame" style="border-color:{colors[0]};'
+                    f'background:linear-gradient(45deg,{colors[0]},{colors[1]})">{icon}</span>')
+        return _DisplayHtml(icon + (" " + escape(values) if values else ""))
+    return _DisplayHtml(escape(str(category["item_code"])) + (" " + escape(values) if values else ""))
+
+
+
+def _participant_html(report):
+    """Shared presentation: volume top ten and their complete ordered categories.
+
+    Identity enrichment may add display fields to entity rows; ownership, ranking,
+    category signatures and diagnostics remain supplied domain data.
+    """
+    if report is None:
+        return ""
+    prefix = "gross" if report["turnover_basis"] == "gross" else "source"
+
+    def table(identifier, title, headers, rows):
+        body = ''.join('<tr>' + ''.join(f'<td>{c if isinstance(c, _DisplayHtml) else escape(str(c))}</td>' for c in row) + '</tr>' for row in rows)
+        if not body:
+            body = f'<tr><td colspan="{len(headers)}">No qualifying observed activity.</td></tr>'
+        return (f'<section class="participant-section"><h2>{escape(title)}</h2><div class="table-wrap participant-table">'
+                f'<table class="report-table" data-table-id="{identifier}"><thead><tr>'
+                + ''.join(f'<th>{escape(h)}</th>' for h in headers) + '</tr></thead><tbody>' + body
+                + '</tbody></table></div></section>')
+
+    blocks = ['<style>.participant-section {width:max-content;max-width:none} .participant-table table {width:max-content;table-layout:auto;font-size:16px} '
+              '.participant-table th,.participant-table td {white-space:normal;max-width:24ch;overflow-wrap:anywhere;text-align:left}'
+              '.identity-link{display:inline-flex;align-items:center;gap:10px;color:inherit;text-decoration:none}'
+              '.identity-avatar{position:relative;display:inline-block;flex-shrink:0;width:44px;height:44px;margin:4px 0 6px 10px}'
+              '.identity-image{width:44px;height:44px;object-fit:contain;vertical-align:middle;border-radius:4px}'
+              '.identity-level{position:absolute;left:-10px;top:50%;transform:translateY(-50%);background:#203539;color:#eff4f8;border:1px solid #68838a;border-radius:3px;padding:0 3px;font-size:12px;font-weight:bold;line-height:17px}'
+              '.identity-citizenship{position:absolute;left:-4px;bottom:-4px;width:20px;height:15px;object-fit:contain;border-radius:2px;box-shadow:0 0 0 1px #101820}'
+              '.identity-placeholder{display:inline-block;font-size:11px;padding:3px;border:1px solid #8899aa;margin-right:6px}'
+              '.equipment-frame{display:inline-block;width:42px;height:42px;border:1px solid;border-bottom-width:2px;border-radius:5px;vertical-align:middle;margin:3px 7px 3px 0}'
+              '.equipment-image{width:42px;height:42px;object-fit:contain;vertical-align:middle}</style>']
+    for kind, label in (("user", "Users"), ("mu", "Military Units"), ("country", "Countries")):
+        entries = report['rankings'][kind]['volume']
+        rows, details = [], []
+        for rank, row in enumerate(entries, 1):
+            name = _identity_html(row)
+            count = sum(c['trade_count'] for cats in row['categories'].values() for c in cats)
+            tops = [_DisplayHtml('<br>'.join(_category_html(c) for c in row['top_' + side]) or 'No observed activity') for side in ('buy', 'sell')]
+            rows.append([rank, name,
+                         _participant_amount(row[prefix + '_turnover'], row['missing_money_count'], count), *tops])
+            for side in ('buy', 'sell'):
+                for c in row['categories'][side]:
+                    share = 'Unknown' if c['share'] is None else f"{c['share'] * 100:.2f}%"
+                    details.append([name, side.title(), _category_html(c),
+                        _participant_amount(c['money'], c['missing_money_count'], c['trade_count']),
+                        _participant_amount(c['quantity'], c['missing_quantity_count'], c['trade_count']),
+                        share, c['trade_count']])
+        blocks.append(table(f'participants-{kind}-volume', f'{label} - monetary turnover',
+            ['Rank', {'user': 'User', 'mu': 'MU', 'country': 'Country'}[kind], '7D Turnover BTC', 'Mostly bought (details below)', 'Mostly sold (details below)'], rows))
+        blocks.append(table(f'participants-{kind}-explanations', f'{label} - buy/sell breakdown',
+            [{'user': 'User', 'mu': 'MU', 'country': 'Country'}[kind], 'Side', 'Item / full stats', '7D Value BTC', 'Units', 'Side share', 'Trades'], details))
+    return ''.join(blocks)
+
+
+def _write_participant_exports(out, report, equipment_details):
+    """Flatten domain results; spreadsheet protection only at the output boundary."""
+    import csv
+    def flat(value, prefix=''):
+        result = {}
+        for key, item in value.items():
+            name = prefix + key
+            if isinstance(item, dict):
+                result.update(flat(item, name + '_'))
+            elif isinstance(item, (list, tuple, set)):
+                result[name] = repr(item)
+            else:
+                result[name] = item
+        return result
+    def safe(value):
+        if value is None:
+            return ''
+        return _participant_value(_spreadsheet_value(value))
+    paths = []
+    def write(name, rows, required):
+        path = out / name
+        columns = list(dict.fromkeys(required + [key for row in rows for key in row]))
+        with path.open('w', newline='', encoding='utf-8') as file:
+            writer = csv.DictWriter(file, fieldnames=columns)
+            writer.writeheader()
+            writer.writerows({k: safe(v) for k, v in row.items()} for row in rows)
+        paths.append(path)
+    if report is not None:
+        common = {k: report[k] for k in ('as_of', 'window_start', 'method', 'turnover_basis', 'limitations')}
+        common.update(flat({'source_coverage': report['source_coverage'], 'attribution': report['coverage']}))
+        rankings = []
+        for kind, boards in report['rankings'].items():
+            for board, rows in boards.items():
+                for rank, row in enumerate(rows, 1):
+                    rankings.append({**common, 'ranking_kind': board, 'rank': rank, **flat({k:v for k,v in row.items() if k not in ('categories','top_buy','top_sell','other_buy','other_sell','identity')}), 'name':row.get('name') or row['entity_id']})
+        write('participant_rankings_7d.csv', rankings, ['entity_kind','entity_id','name','ranking_kind','rank','as_of','matched_net_pnl'])
+        breakdown = []
+        stats = []
+        for row in report['entities']:
+            for side, categories in row['categories'].items():
+                for index, c in enumerate(categories, 1):
+                    key = {'entity_kind':row['entity_kind'], 'entity_id':row['entity_id'], 'side':side, 'category_index':index}
+                    sig = c['category']
+                    breakdown.append({**common, **key, 'name':row.get('name') or row['entity_id'], **{k:v for k,v in c.items() if k not in ('category','display')}, 'signature_version':sig[0], 'state':sig[3] if len(sig)>2 else None, 'max_state':sig[4] if len(sig)>2 else None, 'description':_category_description(c, include_condition=True)})
+                    if sig[0] == 'equipment-v1' and sig[2] is not None:
+                        stats.extend({**key,'skill_code':k,'value':v} for k,v in sig[2])
+        write('participant_trade_breakdown_7d.csv', breakdown, ['entity_kind','entity_id','side','category_index','as_of'])
+        write('participant_trade_stats_7d.csv', stats, ['entity_kind','entity_id','side','category_index','skill_code','value'])
+    if equipment_details is not None:
+        sales, stats = [], []
+        for sale in equipment_details:
+            equipment = sale.get('equipment') or {}
+            sales.append(flat({**sale, 'equipment':{k:v for k,v in equipment.items() if k != 'stats'}, 'equipment_stats_status':'unknown' if equipment.get('stats') is None else 'observed'}))
+            stats.extend({'transaction_id':sale['id'], 'skill_code':k, 'value':v} for k,v in (equipment.get('stats') or {}).items())
+        write('equipment_sales_7d.csv', sales, ['id','as_of','window_start','net_realized_pnl','basis_status','fee_status'])
+        write('equipment_sale_stats_7d.csv', stats, ['transaction_id','skill_code','value'])
+    return paths

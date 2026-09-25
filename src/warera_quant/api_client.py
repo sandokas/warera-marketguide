@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 import requests
+from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 
@@ -36,6 +37,27 @@ class WarEraApiClient:
 
     def get_json(self, endpoint: str, *, params: dict[str, Any] | None = None) -> Any:
         return self.request_json("GET", endpoint, params=params)
+
+    @staticmethod
+    def get_public_bytes(url: str, *, max_bytes: int = 5_000_000) -> tuple[bytes, str]:
+        """Bounded, credential-free official asset download; never follow redirects."""
+        parsed = urlparse(url)
+        allowed = parsed.hostname == "media.warera.io" or (
+            parsed.hostname == "cdn.discordapp.com" and parsed.path.startswith("/avatars/"))
+        if (parsed.scheme != "https" or not allowed
+                or parsed.username or parsed.password or parsed.port not in (None, 443)):
+            raise ValueError("Unsupported official asset origin")
+        with requests.get(url, headers={"User-Agent": "Mozilla/5.0"},
+                          timeout=(10, 30), stream=True, allow_redirects=False) as response:
+            response.raise_for_status()
+            if response.status_code != 200:
+                raise ValueError("Asset response must be HTTP 200")
+            content = bytearray()
+            for chunk in response.iter_content(65536):
+                content.extend(chunk)
+                if len(content) > max_bytes:
+                    raise ValueError("Official asset exceeds byte limit")
+            return bytes(content), response.headers.get("Content-Type", "").split(";")[0]
 
     def request_json(
         self,

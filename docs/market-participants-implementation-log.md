@@ -756,3 +756,468 @@ or phase 6 production migration/import/rehearsal is claimed here. Existing sourc
 precision, ingestion gaps, nonmarket acquisition/disposition, historical fee
 semantics and equipment continuity limits remain visible, rather than inferred
 away from source totals or API pagination exhaustion.
+
+## Phase 5 - 2026-09-23
+
+Implemented participant publication in the existing report/export pipeline after
+reading AGENTS.md, the report/read-model contracts and this log. No separate app,
+production download, live API request, production migration or equipment display
+was added. Existing commodity discovery scope, cards, charts and WE24 remain.
+
+### Wiring and outputs
+
+- CLI supplies one aware UTC `--as-of` boundary (or one invocation timestamp) to
+  participant/equipment models and the existing commodity/WE24/chart read-model
+  clocks. Naive or invalid timestamps fail argument parsing. Offline rendering
+  needs no credentials/API client. Participant and equipment windows are exactly
+  `[as_of - 7 days, as_of)`; earlier costing history remains in the read model.
+- `load_participant_report` flows into `generate_html_report` / `write_outputs`.
+  `iter_equipment_sale_details` feeds data exports only. Cached names are used
+  with ID fallback. CSV-only input omits the new section and its inventory assets.
+- Nine independent up-to-ten boards retain the model's ordering and matched P&L
+  semantics. Coverage companions show purchases/sales, unknown basis/fees and
+  source status; explanation companions show top buys/sells, full equipment stats
+  and condition, quantities, money, shares, counts and other totals. Repeated IDs
+  across entity kinds remain distinct. No padding or unavailable-as-zero P&L.
+- Each table owns a method/window/units/coverage footer. Existing footers are not
+  overwritten or supplemented by the generic commodity quote/fee note. Tables
+  use intrinsic sizing, wrapped text, 16px cells and 14px footers. No scrolling,
+  clipped columns, hover-only facts or equipment item tables were introduced.
+- Stable identifiers and paths are
+  `participant_rankings_7d/participants-{user|mu|country}-{losses|profits|volume}.png`,
+  plus `{coverage|explanations}` companions where populated. Table screenshots
+  include only the table and its footer; section composites remain separate.
+- CSV paths: `participant_rankings_7d.csv`,
+  `participant_trade_breakdown_7d.csv`, `participant_trade_stats_7d.csv`,
+  `equipment_sales_7d.csv`, `equipment_sale_stats_7d.csv`. Normalized stat rows
+  retain every skill, including stats too long for compact summaries. Breakdown
+  joins use entity kind/ID, side and category index; equipment joins use sale ID.
+  Ranking exports retain gross/matched net amounts, quantities and accounting
+  coverage, plus source/attribution metadata and exact decimal projections.
+- Current report metadata explicitly registers the five CSVs with the existing
+  `asset_inventory.json` exporter; table assets include stable `table_id` values.
+  There is no file glob that could accidentally publish stale participant files.
+- HTML escapes external text; formula-leading CSV strings receive an apostrophe
+  only in exported copies. Existing commodity CSV strings receive the same
+  protection. Stored source facts and exact decimal accounting values are not
+  rewritten. Empty datasets produce header-only files, not invented rows.
+
+### Tests and visual verification actually performed
+
+Used the existing `.venv`, temporary fixture databases and local headless Chrome.
+Added `tests/test_participant_report.py` and extended both requested export tests
+and CLI tests. Covered all nine populated boards, empty/partial results, fewer
+than ten, independent loss/profit ordering and ties, repeated entity IDs across
+kinds, missing names, malicious labels, 30-stat explanation vectors, 50-stat exact
+exports, table-specific method footers, missing values and legacy CSV mode.
+The real offline CLI test runs twice at the same offset-normalized cutoff,
+compares participant CSV bytes, excludes transactions exactly at the boundary,
+and rejects any attempted API construction. Equipment remains out of item cards.
+
+Real browser tests export 15 participant tables (nine boards plus six companions),
+check table scroll bounds and every cell rectangle, enforce minimum 14px text,
+and compare each PNG's IHDR dimensions against 2x CSS bounds (outward-rounding
+tolerance only). Published HTML contains images rather than table elements.
+
+Visually opened user profit, coverage and explanation PNGs. Verified long names
+wrap, full stats and exact condition remain visible, footers are readable and
+complete, and no surrounding headings/whitespace enter the crop. Visual review
+prompted removal of redundant matched-value columns from the coverage companion
+(they remain in CSV), reducing its width while keeping displayed basis/fee values.
+Final representative images in the temporary test output were:
+
+| Image | PNG pixels | CSS minimum font / outside cells |
+| --- | --- | --- |
+| User profits | 2562 x 582 | 14px / 0 |
+| User coverage | 2648 x 692 | 14px / 0 |
+| User explanations (30 stats) | 2074 x 2014 | 14px / 0 |
+
+| Command | Result |
+| --- | --- |
+| `.venv\Scripts\pytest tests/test_participant_report.py tests/test_report.py tests/test_report_exports.py tests/test_cli.py -q` | **60 passed**, 8.82s on final code |
+| `.venv\Scripts\pytest -q` | **545 passed**, 14.91s before the final coverage-column visual refinement; requested 60 tests passed afterward |
+| `git diff --check -- src tests docs README.md` | Passed before this log append; final check repeated below in the implementation session |
+
+Initial checks caught an append-encoding issue, an outdated fake-store fixture,
+and a containing section narrower than its intrinsically sized table. Fixed all
+three; browser section/table captures now pass complete-geometry checks.
+
+### Limits and phase 6 handoff
+
+Historical money/fee semantics and equipment lineage remain unverified. Current
+DB-backed profit/loss boards can be empty, while source-money volume remains
+available. Synthetic verified settlement fixtures exercise populated P&L displays;
+they are not live evidence. Partial results never claim total account net profit.
+Unknown basis/fee flags overlap and source ingestion coverage is not inventory
+provenance. Nonmarket acquisition/disposition remains outside this accounting.
+
+`--as-of` fixes participant/export boundaries and report clocks; it does not
+rewind current commodity order snapshots, cached names, or later database
+corrections. This phase preserves current commodity execution context rather than
+adding historical snapshot replay. Seven-day equipment details are materialized
+for export after the DB context closes; large windows and long explanation tables
+still use proportional memory/image height. No production-scale memory guarantee.
+
+Phase 6 still owns the production backup/restore rehearsal, bounded live smoke
+test, operational full-history import and measured throughput/coverage review.
+Validate the new CSVs, stable PNG assets and honest empty profit/loss boards after
+that import. Do not enable fee or lineage evidence without verification. Equipment
+summary/cards/table design remains deferred pending the user's choice. No full
+production download or claim of operational/history completeness was made here.
+
+## Phase 6 rollout - 2026-09-23 (in progress)
+
+User explicitly authorized production migration and all available history import.
+Read AGENTS.md, the complete plan/contracts and every previous phase handoff.
+Existing worktree changes and deleted test artifacts were preserved. Verified the
+installed CLI options and the implementation before invoking the commands.
+
+### Validation and production migration
+
+- Existing `.venv\Scripts\pytest`: **545 passed in 14.16s**, full offline suite
+  run once before production mutation. It includes real browser crop tests.
+- Additional combined legacy-v4 rehearsal under
+  `output/phase6-rollout/rehearsal`: installed migration CLI, exact original-table
+  restore comparison, injected second-page interruption/rollback, head replay,
+  observed exhaustion for both synthetic streams, idempotent replay, retained
+  equipment stats, commodity isolation, offline report with nine board PNGs and
+  complete geometry. Common fixture cutoff `2026-09-23T12:00:00Z`. Visually opened
+  the user-volume table crop. Synthetic exhaustion is not production evidence.
+- Process inspection required sandbox escalation. No Python/market application
+  writer was present; no process was stopped. Disk free: 568,636,612,608 bytes.
+  Project transaction retention is `all`, independent of 120-day observations.
+  No housekeeping or aggregate-history cleanup was run.
+- Production before: schema/user version **4/4**, integrity **ok**, **9,112,962**
+  trading rows, source dates `2026-06-06T17:30:03.242000Z` through
+  `2026-09-22T18:58:58.893000Z`. No equipment history in the legacy database.
+- Executed implemented `--migrate-db --market-db data/warera_market.sqlite3`.
+  Consistent backup:
+  `data/warera_market.sqlite3.backup-20260923T175846714697Z` (2,008,023,040 bytes).
+  Result **5/5**, integrity **ok**, same **9,112,962** transactions. All old table
+  counts preserved: 109,550 order levels, 1,744 order observations, 1,855 price
+  observations, 843 legacy coverage rows, 24 production configs, 24 item states,
+  three schema metadata entries. Normalized child tables initially empty.
+- Restored that production backup through `MarketStore.restore()` into separate
+  `output/phase6-rollout/production-restore-check.sqlite3`. Original schema,
+  integrity, table counts and stream dates match the pre-migration inventory.
+  Production was not replaced or rolled back. Both backup and restore copy kept.
+- Added read-only `MarketStore.database_inventory()` for reusable pre/post
+  inspection without incidental migration. Focused migration tests after this
+  addition: **7 passed in 1.37s**, including no creation/mutation during inspection.
+
+### Bounded live smoke and import launch
+
+Initial sandbox networking failed with four bounded ConnectionError attempts
+(Windows socket permission denial); no HTTP response or database write followed.
+Escalated live access succeeded. Two bounded probes each requested five commodity
+transactions, five equipment transactions and three steel orders per side:
+**six HTTP 200 responses**, no pending-listing calls. First helper invocation
+stopped after commodity verification because of a list-call typo; second verified
+source decimals, independent participant references, six equipment stats on five
+sales, six individual orders and unchanged exact replay. It then hit a helper-only
+missing timestamp field in the temporary legacy fixture. Fixed that fixture and
+completed legacy enrichment/replay verification offline from the stored live
+sample, with one existing ID enriched and zero duplicates. No extra network
+request was needed. Production smoke inserted ten commodity rows and five
+equipment sales in total; exact replay added none. Evidence:
+`output/phase6-rollout/smoke-verified.json` plus prior-attempt summaries.
+
+Started the exact implemented full-history command with escalated network access:
+
+```powershell
+.venv\Scripts\warera-marketguide --sync --resync-market --history-scope all --market-db data/warera_market.sqlite3
+```
+
+Progress is redirected to `output/phase6-rollout/full-import.log`. The printed
+`lookback=7` startup default is a legacy report/backfill setting, not an all-history
+cap; this invocation's history boundary and page cap are absent. Cursors remain
+in process memory only. Launch is not completion; production exhaustion, final
+catch-up, coverage reconciliation and final publication remain pending.
+
+### Continuation - 2026-09-23 23:23 UTC (September 24 local)
+
+The original process was absent on continuation. Its log ended at page 1,574
+without a success/error footer; database progress still said running. Cause of
+termination is not established. Committed trading progress: **118,224 inserted,
+39,166 enriched, 10 unchanged, zero rejected**, oldest recovered timestamp
+`2026-09-22T12:46:46.931Z`, newest `2026-09-23T18:02:45.762Z`.
+Retained trading rows **9,231,196**, normalized **157,400**, legacy/unverified
+**9,073,796**. Equipment still contains the five normalized smoke sales; its
+full scan had not started. Neither stream exhausted; no contiguous enrichment
+coverage interval was certified. Saved `output/phase6-rollout/interrupted-status.json`.
+
+Original-run successful requests include 1,574 transaction pages plus the 26
+current-state requests (prices, configuration, 24 order books); retries/failed
+attempts were not instrumented and their total is unknown. No completed scan
+duration was recorded. Restart must repeat pagination from the current head,
+including new arrivals and the previously traversed history; the old 1,574 pages
+are not a saved seek point or an exact future replay count.
+
+With no conflicting writer present and 558,297,350,144 bytes free, restarted via
+`Start-Process -WindowStyle Hidden` using the existing virtual environment. The
+operational wrapper `output/phase6-rollout/run_import.py` delegates unchanged
+full-resync arguments to `cli.main`, records HTTP attempt/status counts without
+URLs or cursors, and permits normal catch-up only if both streams exhausted and
+sync metadata reports success. Logs, transport counters and completion/failure
+markers are under `output/phase6-rollout/restart-20260923/`. A running process
+marker alone is not completion. No backup or history was deleted.
+
+A separate consistent snapshot is being used for a partial interim report;
+this does not replace the required final report or claim import acceptance.
+
+The first production-snapshot report exposed a legacy precision bug: participant
+SQL ordered unenriched rows by whole-second epoch plus opaque ID, while metrics
+correctly required full source timestamp order. It failed closed with
+`History must be unique and ordered by UTC timestamp and ID`; no incorrect report
+was published. Store participant/equipment queries now use preserved timestamp
+text when `created_at_us` is absent, through a deterministic connection-local
+SQLite function. Indexed coarse window bounds remain unchanged; no production
+row/schema rewrite is needed. Read-model iteration now explicitly closes its
+source cursor on reducer failure before the database context exits.
+
+Added mixed legacy/normalized same-second ordering and microsecond half-open
+export regression. Focused participant read-model/metrics/store/migration tests:
+**78 passed in 2.78s**. Retrying the same consistent snapshot and cutoff; import
+continues independently. This fix neither changes ingestion nor assumes recovered
+money/identity evidence for legacy rows.
+
+### Verified partial publication - 2026-09-23 23:37 UTC
+
+The fixed report succeeded from the consistent snapshot at common cutoff
+**2026-09-23T23:24:19.555171+00:00**. Output:
+`output/phase6-rollout/partial-preview/report/market_report.html`, five participant/
+equipment CSVs, commodity CSVs/charts and `asset_inventory.json`. This snapshot
+contains the original attempt's committed transaction state, before restarted
+transaction collection; it is explicitly **partial**, not final rollout acceptance.
+
+- **82** registered assets, **18** complete table crops including **15** participant
+  tables (nine boards plus six coverage/explanation companions). Every table's
+  cells/scroll bounds and PNG dimensions checked; participant text at least 14px.
+  Visually inspected user-volume and country-coverage PNGs with complete footers.
+- All nine boards exist. Each user/MU/country volume board has ten rows; all six
+  profit/loss boards are honestly empty because settlement/basis evidence is
+  unavailable. Unsupported P&L remains N/A, not zero.
+- Equipment detail exports exactly match **5 sales / 6 skill rows** in the snapshot,
+  including precise stat values. Shared CSV items and HTML item cards contain
+  **24 commodity codes**; equipment assets are data CSVs only. No dedicated
+  equipment presentation or pending listings were introduced.
+- Common cutoff checked across ranking/breakdown/sale exports. Asset paths are
+  unique, present and explicitly inventoried. Published HTML has static table
+  images. Detailed results: `output/phase6-rollout/partial-preview/reconciliation.json`.
+- Seven-day snapshot population: **862,463** stored transactions, **12,624**
+  resolved active entities. Exact source money remains unavailable for **705,058**
+  legacy transactions. Known global source value is **6,348,271.65000000002327971**,
+  not complete seven-day market turnover.
+- Unassigned sides: **1,410,133**, including **1,410,116** legacy missing-reference/
+  missing-source-money sides and **17** unsupported-party sides. Known unassigned
+  source value: **799.860999999999995**; the legacy missing-money value is unknown.
+- Attributed source sale value **6,347,927.94800000002327971** is both uncosted and
+  unknown-fee value; these flags overlap and must not be added. Matched source-sale
+  value is zero under current evidence gates, not evidence of zero account profit.
+  Both streams' history/window coverage remain partial/unverified.
+
+Full import still running. This interim publication does not satisfy production
+exhaustion, final catch-up or final publication acceptance.
+
+An offline finalization helper was started hidden to wait for the import wrapper's
+verified exhaustion/catch-up success. It then records offline status, creates a
+consistent final snapshot, chooses one common UTC cutoff, renders and checks the
+publication through the existing CLI/read models and verification helper. Its
+status is `output/phase6-rollout/finalization.json`; logs are
+`finalization-stdout.log` / `finalization-stderr.log`. It fails closed if import or
+verification fails and leaves final visual review pending. Starting this waiting
+helper is not evidence that any final publication exists or passed acceptance.
+
+### Replay boundary crossed - 2026-09-23 23:59 UTC
+
+Restart reached older, previously unenriched history on transaction request/page
+**1,847**: 68 unchanged rows plus 32 enriched rows, oldest
+`2026-09-22T12:46:25.001Z`. This required 1,847 transaction requests plus 26
+current-state requests (**1,873 HTTP attempts, all 200**) before new older-history
+enrichment resumed. The traversal included **27,268 newly visible transactions**
+ahead of the old scan and replayed **157,400** prior normalized transactions.
+The earlier 1,574-page position could not be used as a cursor/seek point.
+
+At page **2,019**, restart totals were **27,268 inserted, 17,232 enriched,
+157,400 unchanged, zero rejected**; oldest reached `2026-09-22T09:42:27.336Z`.
+Saved `restart-20260923/replay-summary.json`. These are a progress checkpoint,
+not final import totals; both-stream exhaustion remains pending.
+
+### Available-history import completed - 2026-09-24
+
+The hidden import wrapper completed at **00:52:22 UTC**, including normal catch-up.
+Both full scans exhausted the actual available API history; none of the following
+figures means all retained/game history or account inventory is known.
+
+| Completed invocation | Trading | Equipment |
+| --- | --- | --- |
+| Full resync pages, including built-in catch-up | 3,857 | 706 |
+| Inserted | 33,210 | 69,814 |
+| Enriched | 194,942 | 0 |
+| Unchanged observations | 157,458 | 759 |
+| Rejected / errors | 0 / 0 | 0 / 0 |
+| Oldest returned event | 2026-09-21T00:31:11.575Z | 2026-09-21T00:43:47.869Z |
+| Normal catch-up pages | 5 | 2 |
+| Normal catch-up inserted / unchanged | 391 / 109 | 12 / 188 |
+| Latest catch-up event | 2026-09-24T00:48:44.093Z | 2026-09-24T00:48:48.672Z |
+| Retained rows after catch-up | 9,264,797 | 69,831 |
+| Normalization version 1 rows | 385,943 | 69,831 |
+| Remaining legacy rows | 8,878,854 | 0 |
+
+Metered HTTP totals: **4,589** for full resync and **33** for normal catch-up,
+**4,622 total**, all HTTP 200; no transport retries needed in this completed run.
+These include prices/configuration/orders. Full-resync transaction pages total
+4,563; normal catch-up adds seven. Earlier interrupted requests and bounded smoke
+probes are separately recorded above; do not add their replay rows as unique data.
+
+Database total **9,334,628**, a net **221,666** new rows over pre-rollout. Across
+attempts, **234,108** original commodity rows were enriched. Original commodity
+history still reaches June 6. The API's September 21 floor prevented recovering
+identities/source decimals on 8,878,854 retained legacy rows; no deletion or reset
+was used to hide this. The observed floor is not an official retention-policy claim.
+There are **69,831** equipment snapshots, **89,770** equipment skill rows,
+**911,548** participant-side rows and **13,935** current-order entries. Original
+aggregate history remains: order levels grew to 114,623, order observations to
+1,817, price observations to 1,927. Integrity check is **ok**. Backup remains at
+`data/warera_market.sqlite3.backup-20260923T175846714697Z`.
+
+Full/catch-up status and counters are in `output/phase6-rollout/restart-20260923/`.
+The first final publication completed at 00:59:43 UTC with common cutoff
+**2026-09-24T00:52:32.648353+00:00**, at
+`output/phase6-rollout/final-publication/report/`. Verification found 82 assets,
+18 complete table crops (15 participant tables), all nine boards, 24 commodity
+items/cards and exact equipment CSV matches (69,831 sales / 89,770 skill rows).
+Six profit/loss boards remain empty; three volume boards have ten rows each.
+
+At that cutoff: **959,457** stored window trades, **503,683** legacy rows with
+unknown exact source money, **14,256** resolved entities. Known global source
+value **18,825,748.6200000000862691** is partial, not complete window turnover.
+Unassigned sides **1,007,433**: 1,007,366 missing-reference/missing-money sides and
+67 unsupported-party sides. Known unassigned source value is
+**4,418.4129999999999517**. Attributed source sales
+**18,824,376.11800000008626910** are both uncosted and unknown-fee value; flags
+overlap. Matched source-sale value is zero under the evidence gates, while net/
+gross account P&L remains unavailable. Equipment lineage, historical settlement/
+fees, nonmarket acquisitions/dispositions and older identities remain unknown.
+
+### Authorized durable resume and unattended handoff - September 24
+
+The user changed the earlier requirement: "make it so that you don't have to
+actively monitor, and that the process can be resumed if killed" and requested
+a next-agent monitoring prompt. This explicitly authorizes cursor persistence.
+The previous import had already completed; it was not stopped or needlessly
+replayed to install the new capability.
+
+- Added opt-in `--resume-market` for all-history resync. Scalar metadata in the
+  existing v5 `schema_meta` stores stream, fixed anchor, history phase, opaque next
+  cursor, prior timestamp bound, page count, normalization version and page size.
+  Page rows/children/progress/coverage and checkpoint share one transaction.
+  Default scans retain original in-memory behavior. No raw response JSON is stored.
+- Restart validates the checkpoint against progress, resumes the next page and
+  skips completed historical streams. Catch-up replays its head safely. Cursor
+  expiry/invalidity is an explicit failure retaining the checkpoint, never silent
+  exhaustion or automatic head fallback. Status redacts token values. No long-term
+  cursor-lifetime guarantee is made.
+- `scripts/market_rollout.py` saves stage, snapshot, cutoff, PID and terminal
+  result, with a per-database OS lock preventing duplicate runner writers. It runs
+  full import, normal catch-up, snapshot, report and verification without active
+  agent monitoring. Re-running the same job after process death resumes its stage;
+  it is not a Windows service or automatic reboot restarter. Failed jobs stop for
+  inspection; transport attempts/results are counted without credentials/URLs.
+- `scripts/verify_market_publication.py` checks stable assets, nine boards, table
+  dimensions/bounds/fonts, common cutoff, all equipment/stat rows and commodity-only
+  cards against read models. No SQL, endpoints or accounting logic was copied into
+  the runner. The offline fixture runner completed end to end; invoking its completed
+  job again correctly performed no work.
+- Four bounded live HTTP 200 requests, **two pages per stream**, tested immediate
+  continuation across separate processes that hard-exited after each atomic page
+  commit. Each temporary stream database retained **200 distinct rows** after page
+  two. Evidence: `output/phase6-rollout/live-resume-rehearsal/`. Production was not
+  mutated by this cursor probe; no pending equipment listings were requested.
+- Added hard-process-exit, checkpoint/page rollback, completed-stream and catch-up
+  restart, invalid-cursor/no-fallback, argument validation and OS-lock-release tests.
+  Final relevant suite: **148 passed in 4.06s**. Initial runner-lock test killed the
+  Windows venv launcher rather than its actual Python child; corrected the fixture
+  to hard-exit the child and verify lock release. No application-lock defect remained.
+- A later installed `.exe` migration-command retest was blocked by Windows
+  application control (WinError 4551), including outside the sandbox. An escalated
+  default temp directory also had access restrictions; a fresh workspace temp path
+  confirmed the executable policy block. The initial full suite/production migration
+  had already passed. This later launcher retest is **blocked, not passed**. No OS
+  policy was disabled. A `.ps1` launcher was also blocked by host execution policy
+  and removed; direct `Start-Process -WindowStyle Hidden` of the existing Python
+  runner works and is the documented command.
+
+### Coverage correction and current publication job
+
+Production exhaustion exposed overbroad metadata: old code marked an exhausted
+stream from 1970 even when the API returned only a September 21 floor. Fixed future
+ingestion to start coverage at the oldest returned event; an empty exhausted stream
+records exhaustion without inventing a historical interval. A tested store method
+corrected the two production epoch-wide intervals and corresponding newly generated
+commodity coverage metadata, preserving all source data/aggregates. Evidence:
+`output/phase6-rollout/coverage-floor-repair.json` and `post-repair-status.json`.
+The existing final snapshot preserves the pre-correction state as evidence.
+
+Participant coverage now retains historical exhaustion observations after a later
+incremental scan resets the latest-invocation flag. Neither that observation nor
+the corrected interval can establish the missing part of the seven-day window.
+
+Launched a **publication-only** unattended job with the completed-import evidence,
+corrected metadata and the same common cutoff:
+`output/phase6-rollout/resumable-publication/`. Its `job.json` is authoritative for
+current stage/result, with `stdout.log`/`stderr.log`. No second full import was run.
+Restarted only its identified worker after the last coverage-label fix; it resumed
+the saved `report` stage, same snapshot and cutoff. Last observed worker PID 15684;
+verify the current state/process rather than trusting an old PID.
+
+Final refreshed export verification/visual review is delegated by the user's new
+instruction, not claimed from launch. The ready-to-use monitoring/resume prompt is
+[market-participants-next-agent-prompt.md](market-participants-next-agent-prompt.md).
+Backups, original data, older reports/snapshots and unrelated worktree edits remain.
+
+Final checkpoint consistency refinement also verifies the saved normalization
+version and previous timestamp against committed progress. The focused resume/
+runner tests passed again: **12 passed in 1.99s**. The Python module CLI help
+confirms `--resume-market`; scoped `git diff --check` passed (line-ending notices
+only). The refreshed production report rendered all **82** assets at 10:41 UTC
+and advanced autonomously to stage **verify**; its terminal verification and
+visual review remain for the handoff agent. No active polling is required to run
+the remaining stages.
+
+The unattended job subsequently finished at **10:42:57 UTC**:
+`stage=done`, `status=complete_pending_visual_review`, no error. Refreshed output
+is `output/phase6-rollout/resumable-publication/report/market_report.html`.
+Final reconciliation confirms all nine boards, 82 assets, 18 complete table crops,
+15 participant tables, 24 commodity items/cards and 69,831 equipment sale rows /
+89,770 exact skill rows. Both streams now correctly show historical API exhaustion
+while seven-day window coverage remains partial; coverage floors are the actual
+September 21 timestamps. The next-agent prompt records this terminal result and
+reserves final visual review/closeout, not another import or continuous monitoring.
+
+
+### 2026-09-24: historical completeness claim withdrawn; documentation handoff
+
+The user challenged the reported September 21 history floor and reported a prior
+successful 90-day download. Comparing the former downloader with current code
+identified the omitted per-commodity `itemCode` filter. A bounded read-only probe
+using that filter reached September 20 on page 29; a second bounded probe reached
+`2026-09-16T21:31:53.370Z` on page 71 with 100 rows and a nonempty next cursor.
+The second probe had finished when the user requested stopping. No diagnostic
+transaction was written to production. Logs are in
+`output/phase6-rollout/filtered-history-evidence.log`.
+
+This disproves the broad inference that the completed global scan retrieved all
+available history. It does not establish a parser/mapping bug or a specific
+server retention/default window. The user's protective-default hypothesis is
+plausible and unverified; 90-day reach and equipment historical scopes still need
+verification. The global job did finish, but historical rollout acceptance is
+reopened. Prior visual-only/completion handoffs are superseded accordingly.
+
+At the user's request, documented exact commands/API inputs, evidence, unresolved
+questions, investigation prerequisites, scoped checkpoint/coverage requirements,
+validation and corrected rollout acceptance in
+[market-history-query-scope-spec.md](market-history-query-scope-spec.md). Updated
+contracts, plan, schema/data-model notes, README and next-agent prompt. This turn
+changed documentation only: no importer change, new network probe, database
+mutation or job launch. No tests rerun for these documentation changes.

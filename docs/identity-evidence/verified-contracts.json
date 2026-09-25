@@ -1,0 +1,670 @@
+{
+  "verified_date": "2026-09-24",
+  "frontend": {
+    "url": "https://app.warera.io/_next/static/chunks/pages/_app-a1535bfe9f68148d.js",
+    "sha256": "c7a315828efda85e450cbdd340d314baf3759b2e4c58599cb8e66eb057325977",
+    "build": "d88vhlzaJYP486NJ15SZf",
+    "modules": {
+      "media_base": 25562,
+      "country_flag": 2683,
+      "rarity_enum": 78492,
+      "rarity_color": 16125,
+      "item_artwork": 55860,
+      "item_frame": 66656,
+      "item_rendering": 68923,
+      "item_config": 77622
+    }
+  },
+  "documentation": {
+    "url": "https://api2.warera.io/docs/swagger-ui-init.js",
+    "sha256": "ee8880748b318e170f1b83ac0dae871a1579816252891fa6ee4b818670e5d292"
+  },
+  "representative_scalar_observations": {
+    "user": {
+      "_id": "69e783b87f69424e5988cf8c",
+      "username": "Ramoncin",
+      "avatarUrl": "https://media.warera.io/avatars/69e783b87f69424e5988cf8c-1788659608428-xxtkdhup-static.gif",
+      "animatedAvatarUrl": "https://media.warera.io/avatars/69e783b87f69424e5988cf8c-1788659608428-xxtkdhup.gif"
+    },
+    "mu": {
+      "_id": "69df984fbd0b3c077278195a",
+      "name": "Tercio de la Dama",
+      "avatarUrl": "https://media.warera.io/avatars/mu/mu-69df984fbd0b3c077278195a-1783402661214-0jz10xtt-static.gif",
+      "animatedAvatarUrl": "https://media.warera.io/avatars/mu/mu-69df984fbd0b3c077278195a-1783402661214-0jz10xtt.gif"
+    },
+    "country": {
+      "_id": "6813b6d546e731854c7ac85c",
+      "name": "Bolivia",
+      "code": "bo"
+    }
+  },
+  "publication_cutoff": "2026-09-24T00:52:32.648353+00:00",
+  "population": [
+    {
+      "kind": "user",
+      "id": "6a313b0f3d6e994376625505",
+      "name": "Porkzzila",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://cdn.discordapp.com/avatars/97139768399245312/99b7f97b1aac55ba61a31317c7584971.png?size=256",
+      "image": {
+        "sha256": "5ebb38564ed4c41ca06c4fa583872413b303672f9ad1c4eff5dff3fd9baf58fb",
+        "mime_type": "image/png",
+        "width": 256,
+        "height": 256,
+        "byte_count": 57735,
+        "observed_at": "2026-09-24T16:23:24.319718+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "user",
+      "id": "6980baba164c1577a1bc18a1",
+      "name": "Benesum",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/avatars/6980baba164c1577a1bc18a1-1770045846871-su1thenw.png",
+      "image": {
+        "sha256": "0b23d1fe847c3a1e2a45e372603c1a140468306a7055e5e078f8659039fcc7ab",
+        "mime_type": "image/png",
+        "width": 156,
+        "height": 156,
+        "byte_count": 47784,
+        "observed_at": "2026-09-24T16:20:45.929439+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "user",
+      "id": "699ca979d41f12e373807747",
+      "name": "Kanae",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/avatars/699ca979d41f12e373807747-1788554336258-n7irbaf4-static.gif",
+      "image": {
+        "sha256": "655c3ebde07f5eaf82f914efaee9a9eed8b224b541ea5f90ab63faf139e66f33",
+        "mime_type": "image/png",
+        "width": 400,
+        "height": 400,
+        "byte_count": 196062,
+        "observed_at": "2026-09-24T16:20:45.929439+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "user",
+      "id": "6993b905cd957d3e93bc35a6",
+      "name": "LordVukasin",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/avatars/6993b905cd957d3e93bc35a6-1780488064672-ex6t4dmc-static.gif",
+      "image": {
+        "sha256": "337d40342a12439bae90d45a32b39933992006607d1e21636f9550822903cd64",
+        "mime_type": "image/png",
+        "width": 400,
+        "height": 400,
+        "byte_count": 228031,
+        "observed_at": "2026-09-24T16:20:45.929439+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "user",
+      "id": "69e7e2c35f9c121f5a3304fe",
+      "name": "Pavlaka",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/avatars/69e7e2c35f9c121f5a3304fe-1787656032549-rma1hty8.png",
+      "image": {
+        "sha256": "dfd94882065d7486bd4603b8aa0ed530e58b8d02d662c0b06878852777bfb00f",
+        "mime_type": "image/png",
+        "width": 156,
+        "height": 156,
+        "byte_count": 59602,
+        "observed_at": "2026-09-24T16:20:45.929439+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "user",
+      "id": "69b9e0f13e4761e61b9e6567",
+      "name": "KoesnoSosrodihardjo",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/avatars/69b9e0f13e4761e61b9e6567-1788399673891-q8iloqei-static.gif",
+      "image": {
+        "sha256": "c56eed5f4247477559d474ccf6c1c91c0a01bdc2516947cceb210997882405f5",
+        "mime_type": "image/png",
+        "width": 220,
+        "height": 165,
+        "byte_count": 3001,
+        "observed_at": "2026-09-24T16:20:45.929439+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "user",
+      "id": "6988ac7d55246862b2dbffd7",
+      "name": "Tetka",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/avatars/6988ac7d55246862b2dbffd7-1774188320165-0hqmjeko-static.gif",
+      "image": {
+        "sha256": "8e3e59854520c735d2ba16939580403bfb2ade62dfa17b4a3315f0c25c8df7be",
+        "mime_type": "image/png",
+        "width": 400,
+        "height": 400,
+        "byte_count": 137177,
+        "observed_at": "2026-09-24T16:20:45.929439+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "user",
+      "id": "69cd6a09bafacf0f989e3127",
+      "name": "Spartanovski",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/avatars/69cd6a09bafacf0f989e3127-1784284682336-n8suy7yw.png",
+      "image": {
+        "sha256": "7eb8ea249de8ef0cb107fe311aa51ad8071269fc7c301bb44beb2345cc03c152",
+        "mime_type": "image/png",
+        "width": 156,
+        "height": 156,
+        "byte_count": 49206,
+        "observed_at": "2026-09-24T16:20:45.929439+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "user",
+      "id": "69fd96a6fa11244709b23bd9",
+      "name": "PartyBanana",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/avatars/69fd96a6fa11244709b23bd9-1779543174358-xiyo1gm1-static.gif",
+      "image": {
+        "sha256": "6b8df0fa81652bfc5ed5f9079645a012b952e7da9e64cb391db19ef79603b3c9",
+        "mime_type": "image/png",
+        "width": 400,
+        "height": 400,
+        "byte_count": 90565,
+        "observed_at": "2026-09-24T16:20:45.929439+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "user",
+      "id": "68281a5f491190d6327e2819",
+      "name": "Minecraft",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/avatars/68281a5f491190d6327e2819-1790093912938-qnr60z1v-static.gif",
+      "image": {
+        "sha256": "b6393af38f2eeb48692dda1946664c5b512bf473078d2cf624326b396f0f0487",
+        "mime_type": "image/png",
+        "width": 400,
+        "height": 266,
+        "byte_count": 20171,
+        "observed_at": "2026-09-24T16:20:45.929439+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "mu",
+      "id": "69d206fc97650a3fb98a8520",
+      "name": "SPECTRE",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/avatars/mu/mu-69d206fc97650a3fb98a8520-1788429171695-xngmje5z.png",
+      "image": {
+        "sha256": "fb8591f4e5e4af8b0f4bf4bb1b596c46a54ce16952e12f5816ddde2a1dc0488b",
+        "mime_type": "image/png",
+        "width": 156,
+        "height": 156,
+        "byte_count": 41780,
+        "observed_at": "2026-09-24T16:20:45.929439+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "mu",
+      "id": "69843f617cf831a523014e15",
+      "name": "Reg. Genietroepen",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/avatars/mu/mu-69843f617cf831a523014e15-1772439217531-wpl0xk8z.png",
+      "image": {
+        "sha256": "c1329d72a5d8f8ebf159842ff3aab741e1a26e94b0ceaa037c76ae0052b05765",
+        "mime_type": "image/png",
+        "width": 156,
+        "height": 156,
+        "byte_count": 34965,
+        "observed_at": "2026-09-24T16:20:45.929439+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "mu",
+      "id": "6919436a9317706a741d016e",
+      "name": "Parachute Battalion",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/avatars/mu/mu-6919436a9317706a741d016e-1775848206442-8n8lxz3m.png",
+      "image": {
+        "sha256": "1417d05bade26ef3962a74c12d6e6cd8b0beee3d2f19df320891a272e3261eb1",
+        "mime_type": "image/png",
+        "width": 156,
+        "height": 156,
+        "byte_count": 38414,
+        "observed_at": "2026-09-24T16:20:45.929439+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "mu",
+      "id": "698c150574831a9507811709",
+      "name": "Band of the Hawk",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/avatars/mu/mu-698c150574831a9507811709-1777056661507-aaeouw7l.png",
+      "image": {
+        "sha256": "f39f447078030faef6e40cc7404f50b371bcbac63092b37fbe22c8d1313fd701",
+        "mime_type": "image/png",
+        "width": 156,
+        "height": 156,
+        "byte_count": 13591,
+        "observed_at": "2026-09-24T16:20:45.929439+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "mu",
+      "id": "6a627d5dcd5bf37adb93df85",
+      "name": "Cie Nouvelle France",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/avatars/mu/mu-6a627d5dcd5bf37adb93df85-1785329878244-2evprcsl.png",
+      "image": {
+        "sha256": "6bb1cf2126738dfa034f6790b642ce1c46c98e1f6f061815c837d189d1bbc097",
+        "mime_type": "image/png",
+        "width": 156,
+        "height": 156,
+        "byte_count": 54816,
+        "observed_at": "2026-09-24T16:20:45.929439+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "mu",
+      "id": "69bb39bbd079dc7ca5d47276",
+      "name": "Legio VI Ferrata",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/avatars/mu/mu-69bb39bbd079dc7ca5d47276-1783925365955-a9pfi2cg.png",
+      "image": {
+        "sha256": "784e0ab5d943766b533ebebb56b0ce72cb1d4f3ca15cc7f0e1b59a1e5e37ea0e",
+        "mime_type": "image/png",
+        "width": 156,
+        "height": 156,
+        "byte_count": 45598,
+        "observed_at": "2026-09-24T16:20:45.929439+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "mu",
+      "id": "697636e86fe3abaeb1a1c4a6",
+      "name": "Panzergrenadier",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/avatars/mu/mu-697636e86fe3abaeb1a1c4a6-1770148342719-ii3s3fnt.png",
+      "image": {
+        "sha256": "f1529ed289b0049a068b3090275371c2966bd7a19fd35af0a1003b009de4d6ee",
+        "mime_type": "image/png",
+        "width": 156,
+        "height": 156,
+        "byte_count": 23010,
+        "observed_at": "2026-09-24T16:20:45.929439+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "mu",
+      "id": "69dc0565e6e5835822fc177e",
+      "name": "Pionierakademie",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/avatars/mu/mu-69dc0565e6e5835822fc177e-1776046967210-10r4pcq1.webp",
+      "image": {
+        "sha256": "90289860cf77909efdb315bd8cfb32884790c8e73c1355f9619854afea9a69cf",
+        "mime_type": "image/png",
+        "width": 156,
+        "height": 156,
+        "byte_count": 33465,
+        "observed_at": "2026-09-24T16:20:45.929439+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "mu",
+      "id": "6a69ab2a4164aa9994315086",
+      "name": "Syrian Forces",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/avatars/mu/mu-6a69ab2a4164aa9994315086-1785310799263-stezolr0.jpg",
+      "image": {
+        "sha256": "91a59a021d9134880575435e18e7fe18b7dd39254e1dabe165419ce0459708ff",
+        "mime_type": "image/png",
+        "width": 156,
+        "height": 156,
+        "byte_count": 35006,
+        "observed_at": "2026-09-24T16:20:45.929439+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "mu",
+      "id": "6a3a1b2f2dd2d5a978a3859c",
+      "name": "Potkukelkkapatl",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/avatars/mu/mu-6a3a1b2f2dd2d5a978a3859c-1787479395779-z7vc7rkh.png",
+      "image": {
+        "sha256": "d39286308630c6e60e99bbdbdacb6530ad43ff739fd06fdc090b84f6a09da4cd",
+        "mime_type": "image/png",
+        "width": 156,
+        "height": 156,
+        "byte_count": 39690,
+        "observed_at": "2026-09-24T16:20:45.929439+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "country",
+      "id": "683ddd2c24b5a2e114af15cd",
+      "name": "Laos",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/images/flags/la.svg?v=16",
+      "image": {
+        "sha256": "9239756af17dec3371735d06489fb603aeab53097c0a09f49e21a8dc11a7f004",
+        "mime_type": "image/svg+xml",
+        "width": 32,
+        "height": 24,
+        "byte_count": 933,
+        "observed_at": "2026-09-24T16:23:24.319718+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "country",
+      "id": "6873d0ea1758b40e712b5f3d",
+      "name": "Malta",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/images/flags/mt.svg?v=16",
+      "image": {
+        "sha256": "4fed8893766cd7adff39e99f977421a511b0c5502a2a3cfeb6b4ffe94f5f6bc0",
+        "mime_type": "image/svg+xml",
+        "width": 32,
+        "height": 24,
+        "byte_count": 4599,
+        "observed_at": "2026-09-24T16:23:24.319718+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "country",
+      "id": "6813b6d446e731854c7ac79c",
+      "name": "Germany",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/images/flags/de.svg?v=16",
+      "image": {
+        "sha256": "c474e39222bf688611aca1676133097ab00e1854c6f2ee6c355b637961c6894b",
+        "mime_type": "image/svg+xml",
+        "width": 32,
+        "height": 24,
+        "byte_count": 695,
+        "observed_at": "2026-09-24T16:23:24.319718+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "country",
+      "id": "6813b6d546e731854c7ac832",
+      "name": "Argentina",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/images/flags/ar.svg?v=16",
+      "image": {
+        "sha256": "7e867ab703b6bfb7576a85433e93f13673429e24f545ac05166b0fc8b7a806e8",
+        "mime_type": "image/svg+xml",
+        "width": 32,
+        "height": 24,
+        "byte_count": 188063,
+        "observed_at": "2026-09-24T16:23:24.319718+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "country",
+      "id": "6813b6d446e731854c7ac7a2",
+      "name": "Italy",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/images/flags/it.svg?v=16",
+      "image": {
+        "sha256": "2956f331c0954a94fcceb50f3b7c1e2c825c784dc665122c22044c59f369421a",
+        "mime_type": "image/svg+xml",
+        "width": 32,
+        "height": 24,
+        "byte_count": 698,
+        "observed_at": "2026-09-24T16:23:24.319718+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "country",
+      "id": "6813b6d446e731854c7ac7fb",
+      "name": "Luxembourg",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/images/flags/lu.svg?v=16",
+      "image": {
+        "sha256": "9e388a865360ccb24eafbfe81c274a97d6715329055bff9aac740d4a68fbe112",
+        "mime_type": "image/svg+xml",
+        "width": 32,
+        "height": 24,
+        "byte_count": 934,
+        "observed_at": "2026-09-24T16:23:24.319718+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "country",
+      "id": "6813b6d546e731854c7ac829",
+      "name": "Indonesia",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/images/flags/id.svg?v=16",
+      "image": {
+        "sha256": "bf6ab363eecf60cf96fc56adc88eff5147f0ce2263ad78d11786669c4845218e",
+        "mime_type": "image/svg+xml",
+        "width": 32,
+        "height": 24,
+        "byte_count": 850,
+        "observed_at": "2026-09-24T16:23:24.319718+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "country",
+      "id": "6813b6d446e731854c7ac7f2",
+      "name": "Sweden",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/images/flags/se.svg?v=16",
+      "image": {
+        "sha256": "aede3ccdefffaf66a87d83d8eec2a60efcd18469027420b1125fc8c9723dfdfc",
+        "mime_type": "image/svg+xml",
+        "width": 32,
+        "height": 24,
+        "byte_count": 875,
+        "observed_at": "2026-09-24T16:23:24.319718+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "country",
+      "id": "6813b6d446e731854c7ac7aa",
+      "name": "Portugal",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/images/flags/pt.svg?v=16",
+      "image": {
+        "sha256": "9449c8a972b0dfc381567b927307fd3ff551647505629417127524dc82666867",
+        "mime_type": "image/svg+xml",
+        "width": 32,
+        "height": 24,
+        "byte_count": 20705,
+        "observed_at": "2026-09-24T16:23:24.319718+00:00",
+        "status": "ok"
+      }
+    },
+    {
+      "kind": "country",
+      "id": "6813b6d446e731854c7ac7b2",
+      "name": "Hungary",
+      "name_observed_at": "2026-09-24T16:20:45.929439+00:00",
+      "profile_status": "ok",
+      "image_url": "https://media.warera.io/images/flags/hu.svg?v=16",
+      "image": {
+        "sha256": "a777e28a7d6c388f0770a53d6a65cadefa9e40a5df88dee4fc404541b2705856",
+        "mime_type": "image/svg+xml",
+        "width": 32,
+        "height": 24,
+        "byte_count": 934,
+        "observed_at": "2026-09-24T16:23:24.319718+00:00",
+        "status": "ok"
+      }
+    }
+  ],
+  "refresh_summary": {
+    "profiles_attempted": 30,
+    "assets_attempted": 35,
+    "errors": [
+      "asset https://cdn.discordapp.com/avatars/97139768399245312/99b7f97b1aac55ba61a31317c7584971.png?size=256: ValueError",
+      "asset https://media.warera.io/images/flags/ar.svg?v=16: ValueError",
+      "asset https://media.warera.io/images/flags/de.svg?v=16: ValueError",
+      "asset https://media.warera.io/images/flags/hu.svg?v=16: ValueError",
+      "asset https://media.warera.io/images/flags/id.svg?v=16: ValueError",
+      "asset https://media.warera.io/images/flags/it.svg?v=16: ValueError",
+      "asset https://media.warera.io/images/flags/la.svg?v=16: ValueError",
+      "asset https://media.warera.io/images/flags/lu.svg?v=16: ValueError",
+      "asset https://media.warera.io/images/flags/mt.svg?v=16: ValueError",
+      "asset https://media.warera.io/images/flags/pt.svg?v=16: ValueError",
+      "asset https://media.warera.io/images/flags/se.svg?v=16: ValueError"
+    ],
+    "deferred": 0
+  },
+  "validation_retry": {
+    "profiles_attempted": 0,
+    "assets_attempted": 11,
+    "errors": [],
+    "deferred": 11
+  },
+  "equipment": {
+    "codes": 30,
+    "artworks": 5,
+    "rarities": {
+      "common": {
+        "tier": 1,
+        "color_scheme": "gray",
+        "frame_color": "#203539",
+        "frame_end": "#090F10",
+        "text_color": "#B6D1D5"
+      },
+      "uncommon": {
+        "tier": 2,
+        "color_scheme": "emerald",
+        "frame_color": "#0A3521",
+        "frame_end": "#030F09",
+        "text_color": "#7BD8AC"
+      },
+      "rare": {
+        "tier": 3,
+        "color_scheme": "blue",
+        "frame_color": "#102249",
+        "frame_end": "#050A15",
+        "text_color": "#A5B9E7"
+      },
+      "epic": {
+        "tier": 4,
+        "color_scheme": "purple",
+        "frame_color": "#301B50",
+        "frame_end": "#0E0817",
+        "text_color": "#CAB8E5"
+      },
+      "legendary": {
+        "tier": 5,
+        "color_scheme": "yellow",
+        "frame_color": "#343413",
+        "frame_end": "#0F0F05",
+        "text_color": "#D1D29D"
+      },
+      "mythic": {
+        "tier": 6,
+        "color_scheme": "red",
+        "frame_color": "#421213",
+        "frame_end": "#130505",
+        "text_color": "#E6A5A6"
+      }
+    }
+  },
+  "captures": [
+    {
+      "kind": "user",
+      "table": "turnover",
+      "path": "output/identity-verification/user-turnover.png",
+      "width": 1126,
+      "height": 910
+    },
+    {
+      "kind": "user",
+      "table": "breakdown",
+      "path": "output/identity-verification/user-breakdown.png",
+      "width": 1124,
+      "height": 89620
+    },
+    {
+      "kind": "mu",
+      "table": "turnover",
+      "path": "output/identity-verification/mu-turnover.png",
+      "width": 1110,
+      "height": 754
+    },
+    {
+      "kind": "mu",
+      "table": "breakdown",
+      "path": "output/identity-verification/mu-breakdown.png",
+      "width": 1003,
+      "height": 5056
+    },
+    {
+      "kind": "country",
+      "table": "turnover",
+      "path": "output/identity-verification/country-turnover.png",
+      "width": 1052,
+      "height": 754
+    },
+    {
+      "kind": "country",
+      "table": "breakdown",
+      "path": "output/identity-verification/country-breakdown.png",
+      "width": 945,
+      "height": 5512
+    }
+  ]
+}

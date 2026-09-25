@@ -1,0 +1,1800 @@
+
+window.onload = function() {
+  // Build a system
+  var url = window.location.search.match(/url=([^&]+)/);
+  if (url && url.length > 1) {
+    url = decodeURIComponent(url[1]);
+  } else {
+    url = window.location.origin;
+  }
+  var options = {
+  "swaggerDoc": {
+    "openapi": "3.0.0",
+    "info": {
+      "title": "WarEra API",
+      "version": "0.17.4-beta",
+      "description": "WarEra tRPC API endpoints. ⚠️ Please notice that every call is in GET and not POST."
+    },
+    "paths": {
+      "/company.getById": {
+        "post": {
+          "tags": [
+            "company"
+          ],
+          "description": "Retrieves detailed information about a specific company",
+          "summary": "Get company by ID",
+          "operationId": "company.getById",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "companyId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "The unique identifier of the company"
+                    }
+                  },
+                  "required": [
+                    "companyId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/company.getCompanies": {
+        "post": {
+          "tags": [
+            "company"
+          ],
+          "description": "Retrieves a paginated list of companies with optional filtering",
+          "summary": "Get companies with pagination",
+          "operationId": "company.getCompanies",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "userId": {
+                      "type": "string",
+                      "description": "Filter companies by user ID"
+                    },
+                    "perPage": {
+                      "type": "number",
+                      "minimum": 1,
+                      "maximum": 100,
+                      "default": 10,
+                      "description": "Number of companies per page (1-100)"
+                    },
+                    "cursor": {
+                      "type": "string",
+                      "description": "Pagination cursor for next page"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/country.getCountryById": {
+        "post": {
+          "tags": [
+            "country"
+          ],
+          "description": "Retrieves detailed information about a specific country",
+          "summary": "Get country by ID",
+          "operationId": "country.getCountryById",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "countryId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "The unique identifier of the country"
+                    }
+                  },
+                  "required": [
+                    "countryId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/country.getAllCountries": {
+        "post": {
+          "tags": [
+            "country"
+          ],
+          "description": "Retrieves a list of all available countries",
+          "summary": "Get all countries",
+          "operationId": "country.getAllCountries",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/event.getEventsPaginated": {
+        "post": {
+          "tags": [
+            "event"
+          ],
+          "description": "Retrieves a paginated list of events with optional country and event type filters",
+          "summary": "Get paginated events",
+          "operationId": "event.getEventsPaginated",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "limit": {
+                      "type": "number",
+                      "minimum": 1,
+                      "maximum": 100,
+                      "default": 10,
+                      "description": "The limit of events to get"
+                    },
+                    "cursor": {
+                      "type": "string",
+                      "description": "The cursor to get the next events"
+                    },
+                    "countryId": {
+                      "type": "string",
+                      "description": "Filter events by country ID"
+                    },
+                    "eventTypes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "warDeclared",
+                          "peace_agreement",
+                          "battleOpened",
+                          "battleEnded",
+                          "newPresident",
+                          "regionTransfer",
+                          "peaceMade",
+                          "countryMoneyTransfer",
+                          "depositDiscovered",
+                          "depositDepleted",
+                          "systemRevolt",
+                          "bankruptcy",
+                          "allianceFormed",
+                          "allianceBroken",
+                          "allianceMemberJoined",
+                          "allianceMemberLeft",
+                          "allianceMemberExcluded",
+                          "defensivePactFormed",
+                          "defensivePactBroken",
+                          "regionLiberated",
+                          "strategicResourcesReshuffled",
+                          "resistanceIncreased",
+                          "resistanceDecreased",
+                          "revolutionStarted",
+                          "revolutionEnded",
+                          "financedRevolt"
+                        ]
+                      },
+                      "description": "Filter events by event types"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/government.getByCountryId": {
+        "post": {
+          "tags": [
+            "government"
+          ],
+          "description": "Retrieves government information for a specific country",
+          "summary": "Get government by country ID",
+          "operationId": "government.getByCountryId",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "countryId": {
+                      "type": "string",
+                      "description": "The unique identifier of the country"
+                    }
+                  },
+                  "required": [
+                    "countryId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/region.getById": {
+        "post": {
+          "tags": [
+            "region"
+          ],
+          "description": "Retrieves detailed information about a specific region",
+          "summary": "Get region by ID",
+          "operationId": "region.getById",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "regionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "The unique identifier of the region"
+                    }
+                  },
+                  "required": [
+                    "regionId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/region.getRegionsObject": {
+        "post": {
+          "tags": [
+            "region"
+          ],
+          "description": "Retrieves a complete object containing all available regions",
+          "summary": "Get all regions",
+          "operationId": "region.getRegionsObject",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/battle.getById": {
+        "post": {
+          "tags": [
+            "battle"
+          ],
+          "description": "Retrieves detailed information about a specific battle",
+          "summary": "Get battle by ID",
+          "operationId": "battle.getById",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "battleId": {
+                      "type": "string",
+                      "description": "The unique identifier of the battle"
+                    }
+                  },
+                  "required": [
+                    "battleId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/battle.getLiveBattleData": {
+        "post": {
+          "tags": [
+            "battle"
+          ],
+          "description": "Retrieves real-time battle data including current round information",
+          "summary": "Get live battle data",
+          "operationId": "battle.getLiveBattleData",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "battleId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "The unique identifier of the battle"
+                    },
+                    "roundNumber": {
+                      "type": "number",
+                      "description": "Optional specific round number to retrieve"
+                    }
+                  },
+                  "required": [
+                    "battleId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/battle.getBattles": {
+        "post": {
+          "tags": [
+            "battle"
+          ],
+          "description": "Retrieves a list of battles",
+          "summary": "Get battles",
+          "operationId": "battle.getBattles",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "isActive": {
+                      "type": "boolean",
+                      "description": "Whether to get active battles"
+                    },
+                    "limit": {
+                      "type": "number",
+                      "minimum": 1,
+                      "maximum": 100,
+                      "default": 10,
+                      "description": "The limit of battles to get"
+                    },
+                    "cursor": {
+                      "type": "string",
+                      "description": "The cursor to get the next battles"
+                    },
+                    "direction": {
+                      "type": "string",
+                      "enum": [
+                        "forward",
+                        "backward"
+                      ],
+                      "description": "The direction to get the battles"
+                    },
+                    "filter": {
+                      "type": "string",
+                      "enum": [
+                        "all",
+                        "yourCountry",
+                        "yourEnemies"
+                      ],
+                      "description": "Filter type for battles"
+                    },
+                    "defenderRegionId": {
+                      "type": "string",
+                      "description": "Filter battles by defender region ID"
+                    },
+                    "warId": {
+                      "type": "string",
+                      "description": "Filter battles by war ID"
+                    },
+                    "countryId": {
+                      "type": "string",
+                      "description": "Filter battles by country ID"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/round.getById": {
+        "post": {
+          "tags": [
+            "round"
+          ],
+          "description": "Retrieves detailed information about a specific battle round",
+          "summary": "Get round by ID",
+          "operationId": "round.getById",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "roundId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "The unique identifier of the round"
+                    }
+                  },
+                  "required": [
+                    "roundId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/round.getLastHits": {
+        "post": {
+          "tags": [
+            "round"
+          ],
+          "description": "Retrieves the most recent hits/damages in a specific battle round",
+          "summary": "Get last hits in round",
+          "operationId": "round.getLastHits",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "roundId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "The unique identifier of the round"
+                    }
+                  },
+                  "required": [
+                    "roundId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/battleRanking.getRanking": {
+        "post": {
+          "tags": [
+            "battleRanking"
+          ],
+          "description": "Retrieves damage, ground, or money rankings for users or countries in battles, rounds, or wars",
+          "summary": "Get battle rankings",
+          "operationId": "battleRanking.getRanking",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "battleId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "Optional battle ID to filter rankings"
+                    },
+                    "roundId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "Optional round ID to filter rankings"
+                    },
+                    "warId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "Optional war ID to filter rankings"
+                    },
+                    "dataType": {
+                      "type": "string",
+                      "enum": [
+                        "damage",
+                        "points",
+                        "money"
+                      ],
+                      "description": "Type of ranking data to retrieve (damage, ground points, or money)"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "user",
+                        "country",
+                        "mu"
+                      ],
+                      "description": "Whether to rank by user or country"
+                    },
+                    "side": {
+                      "type": "string",
+                      "enum": [
+                        "attacker",
+                        "defender",
+                        "merged"
+                      ],
+                      "description": "Which side of the battle to rank"
+                    },
+                    "limit": {
+                      "type": "number",
+                      "minimum": 1,
+                      "maximum": 100,
+                      "default": 20,
+                      "description": "Number of ranking entries per page"
+                    },
+                    "cursor": {
+                      "type": "string",
+                      "description": "Cursor to fetch the next page of entries"
+                    }
+                  },
+                  "required": [
+                    "dataType",
+                    "type",
+                    "side"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/itemTrading.getPrices": {
+        "post": {
+          "tags": [
+            "itemTrading"
+          ],
+          "description": "Retrieves current market prices for all tradeable items",
+          "summary": "Get item prices",
+          "operationId": "itemTrading.getPrices",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/tradingOrder.getTopOrders": {
+        "post": {
+          "tags": [
+            "tradingOrder"
+          ],
+          "description": "Retrieves the best orders for an item",
+          "summary": "Get best orders for an item",
+          "operationId": "tradingOrder.getTopOrders",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "itemCode": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "The item code to get orders for"
+                    },
+                    "limit": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 100,
+                      "default": 10,
+                      "description": "The limit of orders to get"
+                    }
+                  },
+                  "required": [
+                    "itemCode"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/itemOffer.getById": {
+        "post": {
+          "tags": [
+            "itemOffer"
+          ],
+          "description": "Retrieves detailed information about a specific item offer",
+          "summary": "Get item offer by ID",
+          "operationId": "itemOffer.getById",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "itemOfferId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "itemOfferId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/workOffer.getById": {
+        "post": {
+          "tags": [
+            "workOffer"
+          ],
+          "description": "Retrieves detailed information about a specific work offer",
+          "summary": "Get work offer by ID",
+          "operationId": "workOffer.getById",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "workOfferId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "workOfferId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/workOffer.getWorkOfferByCompanyId": {
+        "post": {
+          "tags": [
+            "workOffer"
+          ],
+          "description": "Retrieves work offer for a specific company",
+          "summary": "Get work offer by company ID",
+          "operationId": "workOffer.getWorkOfferByCompanyId",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "companyId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "companyId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/workOffer.getWorkOffersPaginated": {
+        "post": {
+          "tags": [
+            "workOffer"
+          ],
+          "description": "Retrieves a paginated list of work offers with optional user and region filtering",
+          "summary": "Get paginated work offers",
+          "operationId": "workOffer.getWorkOffersPaginated",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "userId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "regionId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "cursor": {
+                      "type": "string"
+                    },
+                    "limit": {
+                      "type": "integer",
+                      "default": 10
+                    },
+                    "energy": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "production": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "level": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "citizenship": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/ranking.getRanking": {
+        "post": {
+          "tags": [
+            "ranking"
+          ],
+          "description": "Retrieves ranking data for the specified ranking type and optional year-week filter",
+          "summary": "Get ranking data",
+          "operationId": "ranking.getRanking",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "rankingType": {
+                      "type": "string",
+                      "enum": [
+                        "weeklyCountryDamages",
+                        "weeklyCountryDamagesPerCitizen",
+                        "countryRegionDiff",
+                        "countryDevelopment",
+                        "countryActivePopulation",
+                        "countryDamages",
+                        "countryWealth",
+                        "countryProductionBonus",
+                        "countryBounty",
+                        "weeklyUserDamages",
+                        "userDamages",
+                        "userWealth",
+                        "userLevel",
+                        "userReferrals",
+                        "userSubscribers",
+                        "userTerrain",
+                        "userPremiumMonths",
+                        "userPremiumGifts",
+                        "userCasesOpened",
+                        "userGemsPurchased",
+                        "userBounty",
+                        "userSkinsOwned",
+                        "userMilestoneTiers",
+                        "userMissionsClaimed",
+                        "muWeeklyDamages",
+                        "muDamages",
+                        "muTerrain",
+                        "muWealth",
+                        "muBounty",
+                        "muReputation",
+                        "allianceInitialDevelopment",
+                        "allianceDevelopment",
+                        "allianceWeeklyDamages",
+                        "allianceDamages",
+                        "alliancePopulation",
+                        "allianceWeeklyDamagesPerCitizen"
+                      ],
+                      "description": "The type of ranking to retrieve"
+                    }
+                  },
+                  "required": [
+                    "rankingType"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/search.searchAnything": {
+        "post": {
+          "tags": [
+            "search"
+          ],
+          "description": "Performs a global search across users, countries, regions, military units, parties, and other entities",
+          "summary": "Global search",
+          "operationId": "search.searchAnything",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "searchText": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "The search query string"
+                    }
+                  },
+                  "required": [
+                    "searchText"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/gameConfig.getDates": {
+        "post": {
+          "tags": [
+            "gameConfig"
+          ],
+          "description": "Retrieves game-related dates and timings",
+          "summary": "Get game dates",
+          "operationId": "gameConfig.getDates",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/gameConfig.getGameConfig": {
+        "post": {
+          "tags": [
+            "gameConfig"
+          ],
+          "description": "Retrieves static game configuration",
+          "summary": "Get game configuration",
+          "operationId": "gameConfig.getGameConfig",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/user.getUserLite": {
+        "post": {
+          "tags": [
+            "user"
+          ],
+          "description": "Retrieves basic public information about a user including username, skills, and rankings",
+          "summary": "Get user profile (lite)",
+          "operationId": "user.getUserLite",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "userId": {
+                      "type": "string",
+                      "pattern": "^[a-f\\d]{24}$",
+                      "description": "The unique identifier of the user"
+                    }
+                  },
+                  "required": [
+                    "userId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/user.getUsersByCountry": {
+        "post": {
+          "tags": [
+            "user"
+          ],
+          "description": "Retrieves a list of users by country",
+          "summary": "Get users by country",
+          "operationId": "user.getUsersByCountry",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "countryId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "limit": {
+                      "type": "number",
+                      "minimum": 1,
+                      "maximum": 100,
+                      "default": 10
+                    },
+                    "cursor": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "countryId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/user.getUserById": {
+        "post": {
+          "tags": [
+            "user"
+          ],
+          "description": "Retrieves public information about a user by their ID",
+          "summary": "Get user by ID",
+          "operationId": "user.getUserById",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "userId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "userId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/article.getArticleById": {
+        "post": {
+          "tags": [
+            "article"
+          ],
+          "description": "Retrieves detailed information about a specific article",
+          "summary": "Get article by ID",
+          "operationId": "article.getArticleById",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "articleId": {
+                      "type": "string",
+                      "description": "The ID of the article to get"
+                    }
+                  },
+                  "required": [
+                    "articleId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/article.getArticleLiteById": {
+        "post": {
+          "tags": [
+            "article"
+          ],
+          "description": "Retrieves only the title and basic stats of an article without counting as a view",
+          "summary": "Get article lite by ID",
+          "operationId": "article.getArticleLiteById",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "articleId": {
+                      "type": "string",
+                      "description": "The ID of the article to get"
+                    }
+                  },
+                  "required": [
+                    "articleId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/article.getArticlesPaginated": {
+        "post": {
+          "tags": [
+            "article"
+          ],
+          "description": "Retrieves a paginated list of articles",
+          "summary": "Get paginated articles",
+          "operationId": "article.getArticlesPaginated",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "daily",
+                        "weekly",
+                        "top",
+                        "my",
+                        "subscriptions",
+                        "last"
+                      ],
+                      "description": "The type of articles to get"
+                    },
+                    "limit": {
+                      "type": "number",
+                      "minimum": 1,
+                      "maximum": 100,
+                      "default": 10,
+                      "description": "The limit of articles to get"
+                    },
+                    "cursor": {
+                      "type": "string"
+                    },
+                    "userId": {
+                      "type": "string",
+                      "description": "The user ID to get articles for"
+                    },
+                    "categories": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The categories to get articles for"
+                    },
+                    "languages": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The languages to get articles for"
+                    },
+                    "positiveScoreOnly": {
+                      "type": "boolean",
+                      "description": "Only show articles with a positive score"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/mu.getById": {
+        "post": {
+          "tags": [
+            "mu"
+          ],
+          "description": "Retrieves detailed information about a specific military unit",
+          "summary": "Get military unit by ID",
+          "operationId": "mu.getById",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "muId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "muId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/mu.getManyPaginated": {
+        "post": {
+          "tags": [
+            "mu"
+          ],
+          "description": "Retrieves a paginated list of military units with optional filters",
+          "summary": "Get military units (paginated)",
+          "operationId": "mu.getManyPaginated",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "limit": {
+                      "type": "number",
+                      "minimum": 1,
+                      "maximum": 100,
+                      "default": 20
+                    },
+                    "cursor": {
+                      "type": "string"
+                    },
+                    "memberId": {
+                      "type": "string"
+                    },
+                    "userId": {
+                      "type": "string"
+                    },
+                    "search": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/transaction.getPaginatedTransactions": {
+        "post": {
+          "tags": [
+            "transaction"
+          ],
+          "description": "Retrieves a paginated list of transactions",
+          "summary": "Get paginated transactions",
+          "operationId": "transaction.getPaginatedTransactions",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "limit": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 100,
+                      "default": 10,
+                      "description": "The limit of transactions to get"
+                    },
+                    "cursor": {
+                      "type": "string",
+                      "description": "The cursor to get the next transactions"
+                    },
+                    "userId": {
+                      "type": "string",
+                      "description": "The user ID to get transactions for"
+                    },
+                    "muId": {
+                      "type": "string",
+                      "description": "The MU ID to get transactions for"
+                    },
+                    "countryId": {
+                      "type": "string",
+                      "description": "The country ID to get transactions for"
+                    },
+                    "partyId": {
+                      "type": "string",
+                      "description": "The party ID to get transactions for"
+                    },
+                    "itemCode": {
+                      "type": "string",
+                      "description": "The item code to get transactions for"
+                    },
+                    "transactionType": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "applicationFee",
+                            "trading",
+                            "itemMarket",
+                            "wage",
+                            "donation",
+                            "articleTip",
+                            "openCase",
+                            "craftItem",
+                            "dismantleItem",
+                            "battleLoot",
+                            "countryMoneyTransfer"
+                          ]
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "applicationFee",
+                              "trading",
+                              "itemMarket",
+                              "wage",
+                              "donation",
+                              "articleTip",
+                              "openCase",
+                              "craftItem",
+                              "dismantleItem",
+                              "battleLoot",
+                              "countryMoneyTransfer"
+                            ]
+                          }
+                        }
+                      ],
+                      "description": "The type of transactions to get"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/upgrade.getUpgradeByTypeAndEntity": {
+        "post": {
+          "tags": [
+            "upgrade"
+          ],
+          "description": "Retrieves upgrade information for a specific upgrade type and entity (region, company, or military unit)",
+          "summary": "Get upgrade by type and entity",
+          "operationId": "upgrade.getUpgradeByTypeAndEntity",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "upgradeType": {
+                      "type": "string",
+                      "enum": [
+                        "bunker",
+                        "base",
+                        "pacificationCenter",
+                        "storage",
+                        "automatedEngine",
+                        "breakRoom",
+                        "headquarters",
+                        "dormitories"
+                      ],
+                      "description": "The upgrade type to get"
+                    },
+                    "regionId": {
+                      "type": "string",
+                      "description": "The region ID to get upgrade for"
+                    },
+                    "companyId": {
+                      "type": "string",
+                      "description": "The company ID to get upgrade for"
+                    },
+                    "muId": {
+                      "type": "string",
+                      "description": "The military unit ID to get upgrade for"
+                    }
+                  },
+                  "required": [
+                    "upgradeType"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/worker.getWorkers": {
+        "post": {
+          "tags": [
+            "worker"
+          ],
+          "description": "Get workers for a company or user",
+          "summary": "Get workers",
+          "operationId": "worker.getWorkers",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "companyId": {
+                      "type": "string"
+                    },
+                    "userId": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/worker.getTotalWorkersCount": {
+        "post": {
+          "tags": [
+            "worker"
+          ],
+          "description": "Get total workers count for a user",
+          "summary": "Get total workers count",
+          "operationId": "worker.getTotalWorkersCount",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "userId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "userId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/battleOrder.getByBattle": {
+        "post": {
+          "tags": [
+            "battleOrder"
+          ],
+          "description": "Retrieves active battle orders for a specific battle and side. Order text and rank are only included for citizens of the ordering country / members of the ordering MU; everyone else gets an empty text and a rank of 0.",
+          "summary": "Get battle orders",
+          "operationId": "battleOrder.getByBattle",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "battleId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "side": {
+                      "type": "string",
+                      "enum": [
+                        "attacker",
+                        "defender"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "battleId",
+                    "side"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/battleLootSummary.getByBattleAndUser": {
+        "post": {
+          "tags": [
+            "battleLootSummary"
+          ],
+          "description": "Retrieves the loot summary for a specific user in a specific battle, including case counts, hits, total damage and pool loot.",
+          "summary": "Get battle loot summary by battle and user",
+          "operationId": "battleLootSummary.getByBattleAndUser",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "battleId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "userId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "battleId",
+                    "userId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/inventory.fetchCurrentEquipment": {
+        "post": {
+          "tags": [
+            "inventory"
+          ],
+          "description": "Retrieves the currently equipped items for a user",
+          "summary": "Get equipped items",
+          "operationId": "inventory.fetchCurrentEquipment",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "userId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "userId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/mercenaryContractAuction.getPaginatedAuctions": {
+        "post": {
+          "tags": [
+            "mercenaryContractAuction"
+          ],
+          "description": "Retrieves a list of active mercenary contract auctions, with optional filtering by country, battle, and status",
+          "summary": "Get active mercenary contract auctions with optional filters",
+          "operationId": "mercenaryContractAuction.getPaginatedAuctions",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "countryId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "battleId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "status": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "won",
+                            "expiredNoBids",
+                            "expiredBattle",
+                            "expiredRound",
+                            "cancelled"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "const": "terminated"
+                        }
+                      ]
+                    },
+                    "cursor": {
+                      "type": "string"
+                    },
+                    "limit": {
+                      "type": "number",
+                      "minimum": 1,
+                      "maximum": 50
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "servers": [
+      {
+        "url": "/trpc",
+        "description": "Server"
+      }
+    ]
+  },
+  "customOptions": {
+    "docExpansion": "list",
+    "filter": true,
+    "showRequestDuration": true
+  }
+};
+  url = options.swaggerUrl || url
+  var urls = options.swaggerUrls
+  var customOptions = options.customOptions
+  var spec1 = options.swaggerDoc
+  var swaggerOptions = {
+    spec: spec1,
+    url: url,
+    urls: urls,
+    dom_id: '#swagger-ui',
+    deepLinking: true,
+    presets: [
+      SwaggerUIBundle.presets.apis,
+      SwaggerUIStandalonePreset
+    ],
+    plugins: [
+      SwaggerUIBundle.plugins.DownloadUrl
+    ],
+    layout: "StandaloneLayout"
+  }
+  for (var attrname in customOptions) {
+    swaggerOptions[attrname] = customOptions[attrname];
+  }
+  var ui = SwaggerUIBundle(swaggerOptions)
+
+  if (customOptions.oauth) {
+    ui.initOAuth(customOptions.oauth)
+  }
+
+  if (customOptions.preauthorizeApiKey) {
+    const key = customOptions.preauthorizeApiKey.authDefinitionKey;
+    const value = customOptions.preauthorizeApiKey.apiKeyValue;
+    if (!!key && !!value) {
+      const pid = setInterval(() => {
+        const authorized = ui.preauthorizeApiKey(key, value);
+        if(!!authorized) clearInterval(pid);
+      }, 500)
+
+    }
+  }
+
+  if (customOptions.authAction) {
+    ui.authActions.authorize(customOptions.authAction)
+  }
+
+  window.ui = ui
+}

@@ -38,13 +38,31 @@ def contents(store):
             for table in sorted(store.table_names())}
 
 
+def test_inventory_does_not_migrate_or_create_database(tmp_path):
+    path = tmp_path / "inventory.sqlite3"
+    store = legacy_database(path, 4)
+    before = contents(store)
+    store.close()
+    inventory = store.database_inventory()
+    assert inventory["schema_version"] == inventory["user_version"] == 4
+    assert inventory["integrity"] == ["ok"]
+    assert inventory["counts"]["transactions"] == 1
+    assert inventory["transactions"][0]["oldest"] == "2026-06-30T09:45:00.123Z"
+    assert contents(store) == before
+    store.close()
+    missing = tmp_path / "missing.sqlite3"
+    with pytest.raises(market_store.sqlite3.OperationalError):
+        MarketStore(missing).database_inventory()
+    assert not missing.exists()
+
+
 @pytest.mark.parametrize("version", [1, 4])
 def test_upgrade_preserves_all_original_columns_and_reopen(tmp_path, version):
     path = tmp_path / "legacy.sqlite3"
     store = legacy_database(path, version)
     before = contents(store)
     store.initialize()
-    assert store.schema_version() == store.user_version() == 5
+    assert store.schema_version() == store.user_version() == 7
     after = contents(store)
     for table, rows in before.items():
         if table == "schema_meta":
@@ -89,7 +107,7 @@ def test_failed_upgrade_rolls_back_ddl_rows_and_both_markers(tmp_path, monkeypat
     assert reopened._connect().execute("pragma integrity_check").fetchone()[0] == "ok"
     monkeypatch.setitem(MIGRATIONS, 5, real_migration)
     reopened.initialize()
-    assert reopened.schema_version() == reopened.user_version() == 5
+    assert reopened.schema_version() == reopened.user_version() == 7
     assert reopened.transaction_details("old")["money"] == before["transactions"][0][5]
     reopened.close()
 
@@ -128,7 +146,7 @@ def test_installed_offline_migrate_command(tmp_path):
     result = subprocess.run([str(executable), "--migrate-db", "--market-db", str(path)],
                             capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "Backup:" in result.stdout and "schema v5" in result.stdout
+    assert "Backup:" in result.stdout and "schema v7" in result.stdout
     backups = list(tmp_path.glob("cli.sqlite3.backup-*"))
     assert len(backups) == 1
     backup = MarketStore(backups[0])  # Inspect without initializing/migrating the backup.

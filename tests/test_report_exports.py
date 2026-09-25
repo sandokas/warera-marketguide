@@ -36,3 +36,34 @@ def test_current_assets_exclude_archives_and_tables_are_complete_pngs(tmp_path):
     assert 'published-table' in published
     assert '-7.50' in published
     assert json.loads((tmp_path/'asset_inventory.json').read_text()) == inventory
+
+
+def test_participant_tables_complete_bounds_and_pngs(tmp_path):
+    from test_participant_report import participant_fixture, frame, NOW
+    _, html = write_outputs(frame(), tmp_path, participant_report=participant_fixture(), equipment_details=[], as_of=NOW)
+    obsolete = tmp_path / 'participant_rankings_7d' / 'participants-user-losses.png'
+    obsolete.parent.mkdir(exist_ok=True)
+    obsolete.write_bytes(b'obsolete')
+    unrelated = obsolete.with_name('keep-me.png')
+    unrelated.write_bytes(b'keep')
+    inventory = export_report_assets(html, tmp_path)
+    assert not obsolete.exists()
+    assert unrelated.read_bytes() == b'keep'
+    tables = [a for a in inventory if a.get('table_id', '').startswith('participants-')]
+    assert {a['table_id'] for a in tables} == {
+        f'participants-{kind}-{board}' for kind in ('user','mu','country')
+        for board in ('volume','explanations')}
+    assert len(tables) == 6
+    assert len({a['table_id'] for a in tables}) == 6
+    for asset in tables:
+        assert asset['path'].startswith('participant_rankings_7d/')
+        bounds = asset['css_size']
+        assert bounds['cellsOutside'] == 0
+        assert bounds['minCellFont'] >= 14
+        assert bounds['scrollWidth'] <= bounds['width'] + 2
+        assert bounds['scrollHeight'] <= bounds['height'] + 2
+        width, height = struct.unpack('>II', (tmp_path / asset['path']).read_bytes()[16:24])
+        assert abs(width - 2 * bounds['width']) <= 4
+        assert abs(height - 2 * bounds['height']) <= 4
+    assert len([a for a in inventory if a['kind'] == 'data']) == 5
+    assert '<table ' not in html.read_text(encoding='utf-8')

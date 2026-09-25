@@ -1,0 +1,1205 @@
+{
+  "verified_at": "2026-09-25T09:04:14.323950+00:00",
+  "items": {
+    "limestone": {
+      "item_code": "limestone",
+      "item_type": "raw",
+      "rarity": "common",
+      "image_url": "https://media.warera.io/images/itemsv2/limestone.png?v=1",
+      "tier": 1,
+      "color_scheme": "gray",
+      "frame_color": "#203539",
+      "frame_end": "#090F10",
+      "text_color": "#B6D1D5",
+      "asset": {
+        "local_path": "limestone.png",
+        "mime_type": "image/png",
+        "sha256": "1b79aea2362ef52abd8869dadebd49ef049dd3c4cbd5a54d1f55bb44e836e3e7",
+        "width": 256,
+        "height": 256,
+        "byte_count": 44707,
+        "source_url": "https://media.warera.io/images/itemsv2/limestone.png?v=1"
+      }
+    },
+    "grain": {
+      "item_code": "grain",
+      "item_type": "raw",
+      "rarity": "common",
+      "image_url": "https://media.warera.io/images/itemsv2/grain.png?v=1",
+      "tier": 1,
+      "color_scheme": "gray",
+      "frame_color": "#203539",
+      "frame_end": "#090F10",
+      "text_color": "#B6D1D5",
+      "asset": {
+        "local_path": "grain.png",
+        "mime_type": "image/png",
+        "sha256": "779913130a48bf2b326a690d0323d279b70ae0cd88d850c245ae74632f2cdadd",
+        "width": 256,
+        "height": 256,
+        "byte_count": 61455,
+        "source_url": "https://media.warera.io/images/itemsv2/grain.png?v=1"
+      }
+    },
+    "livestock": {
+      "item_code": "livestock",
+      "item_type": "raw",
+      "rarity": "common",
+      "image_url": "https://media.warera.io/images/itemsv2/livestock.png?v=1",
+      "tier": 1,
+      "color_scheme": "gray",
+      "frame_color": "#203539",
+      "frame_end": "#090F10",
+      "text_color": "#B6D1D5",
+      "asset": {
+        "local_path": "livestock.png",
+        "mime_type": "image/png",
+        "sha256": "4c202ecc66f511db4cbe4ba37e416b358afd4f46896b226043336666c0826bda",
+        "width": 256,
+        "height": 256,
+        "byte_count": 50993,
+        "source_url": "https://media.warera.io/images/itemsv2/livestock.png?v=1"
+      }
+    },
+    "fish": {
+      "item_code": "fish",
+      "item_type": "raw",
+      "rarity": "common",
+      "image_url": "https://media.warera.io/images/itemsv2/fish.png?v=1",
+      "tier": 1,
+      "color_scheme": "gray",
+      "frame_color": "#203539",
+      "frame_end": "#090F10",
+      "text_color": "#B6D1D5",
+      "asset": {
+        "local_path": "fish.png",
+        "mime_type": "image/png",
+        "sha256": "ed45066c9ac1bdb38572ec68cb7df17536e986f1336efd427a8ab94078a289d3",
+        "width": 256,
+        "height": 256,
+        "byte_count": 37103,
+        "source_url": "https://media.warera.io/images/itemsv2/fish.png?v=1"
+      }
+    },
+    "iron": {
+      "item_code": "iron",
+      "item_type": "raw",
+      "rarity": "common",
+      "image_url": "https://media.warera.io/images/itemsv2/iron.png?v=1",
+      "tier": 1,
+      "color_scheme": "gray",
+      "frame_color": "#203539",
+      "frame_end": "#090F10",
+      "text_color": "#B6D1D5",
+      "asset": {
+        "local_path": "iron.png",
+        "mime_type": "image/png",
+        "sha256": "d122beceb4c8ee7d943d9518415e1956314c485c9c773953ee06ffaf042cb99c",
+        "width": 256,
+        "height": 256,
+        "byte_count": 47937,
+        "source_url": "https://media.warera.io/images/itemsv2/iron.png?v=1"
+      }
+    },
+    "coca": {
+      "item_code": "coca",
+      "item_type": "raw",
+      "rarity": "common",
+      "image_url": "https://media.warera.io/images/itemsv2/coca.png?v=1",
+      "tier": 1,
+      "color_scheme": "gray",
+      "frame_color": "#203539",
+      "frame_end": "#090F10",
+      "text_color": "#B6D1D5",
+      "asset": {
+        "local_path": "coca.png",
+        "mime_type": "image/png",
+        "sha256": "7c35a87ae0f6fd5ad960bc8a116129309c13aaec181dca78a21ccaf65d7a6c58",
+        "width": 256,
+        "height": 256,
+        "byte_count": 32217,
+        "source_url": "https://media.warera.io/images/itemsv2/coca.png?v=1"
+      }
+    },
+    "lead": {
+      "item_code": "lead",
+      "item_type": "raw",
+      "rarity": "common",
+      "image_url": "https://media.warera.io/images/itemsv2/lead.png?v=1",
+      "tier": 1,
+      "color_scheme": "gray",
+      "frame_color": "#203539",
+      "frame_end": "#090F10",
+      "text_color": "#B6D1D5",
+      "asset": {
+        "local_path": "lead.png",
+        "mime_type": "image/png",
+        "sha256": "1223b8224b90a407ab94a5342db3b162bdc54c75dc0b33c983c72a3cda33cf3a",
+        "width": 256,
+        "height": 256,
+        "byte_count": 47166,
+        "source_url": "https://media.warera.io/images/itemsv2/lead.png?v=1"
+      }
+    },
+    "petroleum": {
+      "item_code": "petroleum",
+      "item_type": "raw",
+      "rarity": "common",
+      "image_url": "https://media.warera.io/images/itemsv2/petroleum.png?v=1",
+      "tier": 1,
+      "color_scheme": "gray",
+      "frame_color": "#203539",
+      "frame_end": "#090F10",
+      "text_color": "#B6D1D5",
+      "asset": {
+        "local_path": "petroleum.png",
+        "mime_type": "image/png",
+        "sha256": "25c1c58995628e9c8f748271a1f1a9b85407500f171210f68eb50636e93d2afd",
+        "width": 256,
+        "height": 256,
+        "byte_count": 27424,
+        "source_url": "https://media.warera.io/images/itemsv2/petroleum.png?v=1"
+      }
+    },
+    "wood": {
+      "item_code": "wood",
+      "item_type": "raw",
+      "rarity": "common",
+      "image_url": "https://media.warera.io/images/itemsv2/wood.png?v=1",
+      "tier": 1,
+      "color_scheme": "gray",
+      "frame_color": "#203539",
+      "frame_end": "#090F10",
+      "text_color": "#B6D1D5",
+      "asset": {
+        "local_path": "wood.png",
+        "mime_type": "image/png",
+        "sha256": "8fa0cf98263ca121eb30124fcc12b9ff08f000c7dcc6b77478f218098eaea4cd",
+        "width": 256,
+        "height": 256,
+        "byte_count": 57114,
+        "source_url": "https://media.warera.io/images/itemsv2/wood.png?v=1"
+      }
+    },
+    "concrete": {
+      "item_code": "concrete",
+      "item_type": "product",
+      "rarity": "uncommon",
+      "image_url": "https://media.warera.io/images/itemsv2/concrete.png?v=1",
+      "tier": 2,
+      "color_scheme": "emerald",
+      "frame_color": "#0A3521",
+      "frame_end": "#030F09",
+      "text_color": "#7BD8AC",
+      "asset": {
+        "local_path": "concrete.png",
+        "mime_type": "image/png",
+        "sha256": "9804b861ef5255799145684358e60e790bbb733bae789b9327b77e46f732fb20",
+        "width": 256,
+        "height": 256,
+        "byte_count": 50877,
+        "source_url": "https://media.warera.io/images/itemsv2/concrete.png?v=1"
+      }
+    },
+    "steel": {
+      "item_code": "steel",
+      "item_type": "product",
+      "rarity": "uncommon",
+      "image_url": "https://media.warera.io/images/itemsv2/steel.png?v=1",
+      "tier": 2,
+      "color_scheme": "emerald",
+      "frame_color": "#0A3521",
+      "frame_end": "#030F09",
+      "text_color": "#7BD8AC",
+      "asset": {
+        "local_path": "steel.png",
+        "mime_type": "image/png",
+        "sha256": "e8502338fc95d9e8fb4a175ca86de171b81fe099876dbeff1d606756ab0c3531",
+        "width": 256,
+        "height": 256,
+        "byte_count": 47477,
+        "source_url": "https://media.warera.io/images/itemsv2/steel.png?v=1"
+      }
+    },
+    "bread": {
+      "item_code": "bread",
+      "item_type": "product",
+      "rarity": "uncommon",
+      "image_url": "https://media.warera.io/images/itemsv2/bread.png?v=1",
+      "tier": 2,
+      "color_scheme": "emerald",
+      "frame_color": "#0A3521",
+      "frame_end": "#030F09",
+      "text_color": "#7BD8AC",
+      "asset": {
+        "local_path": "bread.png",
+        "mime_type": "image/png",
+        "sha256": "a3b9c38786efe77792c70029cca0c51960b8d326a1ae2433abd8769064b28772",
+        "width": 256,
+        "height": 256,
+        "byte_count": 37011,
+        "source_url": "https://media.warera.io/images/itemsv2/bread.png?v=1"
+      }
+    },
+    "steak": {
+      "item_code": "steak",
+      "item_type": "product",
+      "rarity": "rare",
+      "image_url": "https://media.warera.io/images/itemsv2/steak.png?v=1",
+      "tier": 3,
+      "color_scheme": "blue",
+      "frame_color": "#102249",
+      "frame_end": "#050A15",
+      "text_color": "#A5B9E7",
+      "asset": {
+        "local_path": "steak.png",
+        "mime_type": "image/png",
+        "sha256": "8256c54e79f4cd7fc9ec97f50ab4e2c112e2300748b315146da6e1ee2bfa8b2e",
+        "width": 256,
+        "height": 256,
+        "byte_count": 47609,
+        "source_url": "https://media.warera.io/images/itemsv2/steak.png?v=1"
+      }
+    },
+    "cookedFish": {
+      "item_code": "cookedFish",
+      "item_type": "product",
+      "rarity": "epic",
+      "image_url": "https://media.warera.io/images/itemsv2/cookedFish.png?v=1",
+      "tier": 4,
+      "color_scheme": "purple",
+      "frame_color": "#301B50",
+      "frame_end": "#0E0817",
+      "text_color": "#CAB8E5",
+      "asset": {
+        "local_path": "cookedFish.png",
+        "mime_type": "image/png",
+        "sha256": "c63b60700fa782af8946274301b370e1fd45d8b3c4110af46afe234badf09606",
+        "width": 256,
+        "height": 256,
+        "byte_count": 50777,
+        "source_url": "https://media.warera.io/images/itemsv2/cookedFish.png?v=1"
+      }
+    },
+    "lightAmmo": {
+      "item_code": "lightAmmo",
+      "item_type": "product",
+      "rarity": "uncommon",
+      "image_url": "https://media.warera.io/images/itemsv2/lightAmmo.png?v=1",
+      "tier": 2,
+      "color_scheme": "emerald",
+      "frame_color": "#0A3521",
+      "frame_end": "#030F09",
+      "text_color": "#7BD8AC",
+      "asset": {
+        "local_path": "lightAmmo.png",
+        "mime_type": "image/png",
+        "sha256": "5cde633a084183fc929639ebc672d4b49dc1c6995bbbda8bd87d3df49aaed8df",
+        "width": 256,
+        "height": 256,
+        "byte_count": 32147,
+        "source_url": "https://media.warera.io/images/itemsv2/lightAmmo.png?v=1"
+      }
+    },
+    "ammo": {
+      "item_code": "ammo",
+      "item_type": "product",
+      "rarity": "rare",
+      "image_url": "https://media.warera.io/images/itemsv2/ammo.png?v=1",
+      "tier": 3,
+      "color_scheme": "blue",
+      "frame_color": "#102249",
+      "frame_end": "#050A15",
+      "text_color": "#A5B9E7",
+      "asset": {
+        "local_path": "ammo.png",
+        "mime_type": "image/png",
+        "sha256": "619706cdbb7d5a0f16c2d4af31c2b2db045c4b9aae8fa5b2f4fa475c41490d4b",
+        "width": 256,
+        "height": 256,
+        "byte_count": 36775,
+        "source_url": "https://media.warera.io/images/itemsv2/ammo.png?v=1"
+      }
+    },
+    "cocain": {
+      "item_code": "cocain",
+      "item_type": "product",
+      "rarity": "epic",
+      "image_url": "https://media.warera.io/images/itemsv2/cocain.png?v=1",
+      "tier": 4,
+      "color_scheme": "purple",
+      "frame_color": "#301B50",
+      "frame_end": "#0E0817",
+      "text_color": "#CAB8E5",
+      "asset": {
+        "local_path": "cocain.png",
+        "mime_type": "image/png",
+        "sha256": "f535819f633c15087c29a246f40360577fa1169eff6d265fd649e1afbfc2086f",
+        "width": 256,
+        "height": 256,
+        "byte_count": 28330,
+        "source_url": "https://media.warera.io/images/itemsv2/cocain.png?v=1"
+      }
+    },
+    "oil": {
+      "item_code": "oil",
+      "item_type": "product",
+      "rarity": "uncommon",
+      "image_url": "https://media.warera.io/images/itemsv2/oil.png?v=1",
+      "tier": 2,
+      "color_scheme": "emerald",
+      "frame_color": "#0A3521",
+      "frame_end": "#030F09",
+      "text_color": "#7BD8AC",
+      "asset": {
+        "local_path": "oil.png",
+        "mime_type": "image/png",
+        "sha256": "aae8f4c5ec1935751873cc58da94828c2bf049a088143739eb3eef5001988b4f",
+        "width": 256,
+        "height": 256,
+        "byte_count": 41056,
+        "source_url": "https://media.warera.io/images/itemsv2/oil.png?v=1"
+      }
+    },
+    "paper": {
+      "item_code": "paper",
+      "item_type": "product",
+      "rarity": "uncommon",
+      "image_url": "https://media.warera.io/images/itemsv2/paper.png?v=1",
+      "tier": 2,
+      "color_scheme": "emerald",
+      "frame_color": "#0A3521",
+      "frame_end": "#030F09",
+      "text_color": "#7BD8AC",
+      "asset": {
+        "local_path": "paper.png",
+        "mime_type": "image/png",
+        "sha256": "f1c0c3946ade3c8abbf016f00660e9e2fef23f102fcf6a226083df0df51262c5",
+        "width": 256,
+        "height": 256,
+        "byte_count": 49479,
+        "source_url": "https://media.warera.io/images/itemsv2/paper.png?v=1"
+      }
+    },
+    "heavyAmmo": {
+      "item_code": "heavyAmmo",
+      "item_type": "product",
+      "rarity": "epic",
+      "image_url": "https://media.warera.io/images/itemsv2/heavyAmmo.png?v=1",
+      "tier": 4,
+      "color_scheme": "purple",
+      "frame_color": "#301B50",
+      "frame_end": "#0E0817",
+      "text_color": "#CAB8E5",
+      "asset": {
+        "local_path": "heavyAmmo.png",
+        "mime_type": "image/png",
+        "sha256": "63e377d0fe530937ce2f1a2bed0cb2aaca3d3be31a2c924a23b43c81e4e5c535",
+        "width": 256,
+        "height": 256,
+        "byte_count": 53861,
+        "source_url": "https://media.warera.io/images/itemsv2/heavyAmmo.png?v=1"
+      }
+    },
+    "knife": {
+      "item_code": "knife",
+      "item_type": "weapon",
+      "rarity": "common",
+      "image_url": "https://media.warera.io/images/itemsv2/knife.png?v=1",
+      "tier": 1,
+      "color_scheme": "gray",
+      "frame_color": "#203539",
+      "frame_end": "#090F10",
+      "text_color": "#B6D1D5",
+      "asset": {
+        "local_path": "knife.png",
+        "mime_type": "image/png",
+        "sha256": "34a624078083b87e73c92a8626ef8c2deddd14f600dbce6f344e71c0f770c260",
+        "width": 256,
+        "height": 256,
+        "byte_count": 37982,
+        "source_url": "https://media.warera.io/images/itemsv2/knife.png?v=1"
+      }
+    },
+    "gun": {
+      "item_code": "gun",
+      "item_type": "weapon",
+      "rarity": "uncommon",
+      "image_url": "https://media.warera.io/images/itemsv2/gun.png?v=1",
+      "tier": 2,
+      "color_scheme": "emerald",
+      "frame_color": "#0A3521",
+      "frame_end": "#030F09",
+      "text_color": "#7BD8AC",
+      "asset": {
+        "local_path": "gun.png",
+        "mime_type": "image/png",
+        "sha256": "fb50c9bbdc01e1c1a10cad659822c886ef3235f38a4dac76ac482781ce8e2aab",
+        "width": 256,
+        "height": 256,
+        "byte_count": 41808,
+        "source_url": "https://media.warera.io/images/itemsv2/gun.png?v=1"
+      }
+    },
+    "rifle": {
+      "item_code": "rifle",
+      "item_type": "weapon",
+      "rarity": "rare",
+      "image_url": "https://media.warera.io/images/itemsv2/rifle.png?v=1",
+      "tier": 3,
+      "color_scheme": "blue",
+      "frame_color": "#102249",
+      "frame_end": "#050A15",
+      "text_color": "#A5B9E7",
+      "asset": {
+        "local_path": "rifle.png",
+        "mime_type": "image/png",
+        "sha256": "7deecaa373e76592eb7431287d04d1f9264f870bda148df88b46e8a7a27f224a",
+        "width": 282,
+        "height": 256,
+        "byte_count": 62334,
+        "source_url": "https://media.warera.io/images/itemsv2/rifle.png?v=1"
+      }
+    },
+    "sniper": {
+      "item_code": "sniper",
+      "item_type": "weapon",
+      "rarity": "epic",
+      "image_url": "https://media.warera.io/images/itemsv2/sniper.png?v=1",
+      "tier": 4,
+      "color_scheme": "purple",
+      "frame_color": "#301B50",
+      "frame_end": "#0E0817",
+      "text_color": "#CAB8E5",
+      "asset": {
+        "local_path": "sniper.png",
+        "mime_type": "image/png",
+        "sha256": "cf32ba6af90c49a2a8b4150bbf1274e1ab6d12f257f57f3cb703c4bf49377851",
+        "width": 282,
+        "height": 256,
+        "byte_count": 53103,
+        "source_url": "https://media.warera.io/images/itemsv2/sniper.png?v=1"
+      }
+    },
+    "tank": {
+      "item_code": "tank",
+      "item_type": "weapon",
+      "rarity": "legendary",
+      "image_url": "https://media.warera.io/images/itemsv2/tank.png?v=1",
+      "tier": 5,
+      "color_scheme": "yellow",
+      "frame_color": "#343413",
+      "frame_end": "#0F0F05",
+      "text_color": "#D1D29D",
+      "asset": {
+        "local_path": "tank.png",
+        "mime_type": "image/png",
+        "sha256": "8a60857043c0d6c15d89047df131b645ead447658a22c16331a7693f9d97ed3c",
+        "width": 282,
+        "height": 256,
+        "byte_count": 79114,
+        "source_url": "https://media.warera.io/images/itemsv2/tank.png?v=1"
+      }
+    },
+    "jet": {
+      "item_code": "jet",
+      "item_type": "weapon",
+      "rarity": "mythic",
+      "image_url": "https://media.warera.io/images/itemsv2/jet.png?v=1",
+      "tier": 6,
+      "color_scheme": "red",
+      "frame_color": "#421213",
+      "frame_end": "#130505",
+      "text_color": "#E6A5A6",
+      "asset": {
+        "local_path": "jet.png",
+        "mime_type": "image/png",
+        "sha256": "ccab58700f1e3fb77770252e96c223708da519ff6201ac06d0509a74f1f56601",
+        "width": 282,
+        "height": 256,
+        "byte_count": 72253,
+        "source_url": "https://media.warera.io/images/itemsv2/jet.png?v=1"
+      }
+    },
+    "case1": {
+      "item_code": "case1",
+      "item_type": "case",
+      "rarity": "legendary",
+      "image_url": "https://media.warera.io/images/itemsv2/case1.png?v=1",
+      "tier": 5,
+      "color_scheme": "yellow",
+      "frame_color": "#343413",
+      "frame_end": "#0F0F05",
+      "text_color": "#D1D29D",
+      "asset": {
+        "local_path": "case1.png",
+        "mime_type": "image/png",
+        "sha256": "429c3e9dcc41ad48dd45c2a65b8cdcf0161e60cda2afac7ad44e6543a65358a9",
+        "width": 256,
+        "height": 256,
+        "byte_count": 54372,
+        "source_url": "https://media.warera.io/images/itemsv2/case1.png?v=1"
+      }
+    },
+    "case2": {
+      "item_code": "case2",
+      "item_type": "case",
+      "rarity": "mythic",
+      "image_url": "https://media.warera.io/images/itemsv2/case2.png?v=1",
+      "tier": 6,
+      "color_scheme": "red",
+      "frame_color": "#421213",
+      "frame_end": "#130505",
+      "text_color": "#E6A5A6",
+      "asset": {
+        "local_path": "case2.png",
+        "mime_type": "image/png",
+        "sha256": "e01d04cb27923a81cdfbcd5cb5cf3d02ee6e1e75365f3a3a0d4f69b148f5b3fe",
+        "width": 512,
+        "height": 512,
+        "byte_count": 198217,
+        "source_url": "https://media.warera.io/images/itemsv2/case2.png?v=1"
+      }
+    },
+    "woodenCase": {
+      "item_code": "woodenCase",
+      "item_type": "case",
+      "rarity": "legendary",
+      "image_url": "https://media.warera.io/images/itemsv2/woodenCase.png?v=1",
+      "tier": 5,
+      "color_scheme": "yellow",
+      "frame_color": "#343413",
+      "frame_end": "#0F0F05",
+      "text_color": "#D1D29D",
+      "asset": {
+        "local_path": "woodenCase.png",
+        "mime_type": "image/png",
+        "sha256": "90c48b22bc9ed0b986dd96babe090298bfd0e5050730c584ddbcc85ea0997d9d",
+        "width": 256,
+        "height": 256,
+        "byte_count": 53164,
+        "source_url": "https://media.warera.io/images/itemsv2/woodenCase.png?v=1"
+      }
+    },
+    "scraps": {
+      "item_code": "scraps",
+      "item_type": "product",
+      "rarity": "rare",
+      "image_url": "https://media.warera.io/images/itemsv2/scraps.png?v=1",
+      "tier": 3,
+      "color_scheme": "blue",
+      "frame_color": "#102249",
+      "frame_end": "#050A15",
+      "text_color": "#A5B9E7",
+      "asset": {
+        "local_path": "scraps.png",
+        "mime_type": "image/png",
+        "sha256": "ad94f9989ce50519eb5978e75f85d4b1b069991e54e545e350b20b14f9ef0ee7",
+        "width": 256,
+        "height": 256,
+        "byte_count": 50641,
+        "source_url": "https://media.warera.io/images/itemsv2/scraps.png?v=1"
+      }
+    },
+    "helmet1": {
+      "item_code": "helmet1",
+      "item_type": "equipment",
+      "rarity": "common",
+      "image_url": "https://media.warera.io/images/itemsv2/helmet.png?v=1",
+      "tier": 1,
+      "color_scheme": "gray",
+      "frame_color": "#203539",
+      "frame_end": "#090F10",
+      "text_color": "#B6D1D5",
+      "asset": {
+        "local_path": "helmet.png",
+        "mime_type": "image/png",
+        "sha256": "d83afd81d0410307b5952b320a4521a18c045eede787c60f4c5de679d8c3818a",
+        "width": 256,
+        "height": 256,
+        "byte_count": 54354,
+        "source_url": "https://media.warera.io/images/itemsv2/helmet.png?v=1"
+      }
+    },
+    "helmet2": {
+      "item_code": "helmet2",
+      "item_type": "equipment",
+      "rarity": "uncommon",
+      "image_url": "https://media.warera.io/images/itemsv2/helmet.png?v=1",
+      "tier": 2,
+      "color_scheme": "emerald",
+      "frame_color": "#0A3521",
+      "frame_end": "#030F09",
+      "text_color": "#7BD8AC",
+      "asset": {
+        "local_path": "helmet.png",
+        "mime_type": "image/png",
+        "sha256": "d83afd81d0410307b5952b320a4521a18c045eede787c60f4c5de679d8c3818a",
+        "width": 256,
+        "height": 256,
+        "byte_count": 54354,
+        "source_url": "https://media.warera.io/images/itemsv2/helmet.png?v=1"
+      }
+    },
+    "helmet3": {
+      "item_code": "helmet3",
+      "item_type": "equipment",
+      "rarity": "rare",
+      "image_url": "https://media.warera.io/images/itemsv2/helmet.png?v=1",
+      "tier": 3,
+      "color_scheme": "blue",
+      "frame_color": "#102249",
+      "frame_end": "#050A15",
+      "text_color": "#A5B9E7",
+      "asset": {
+        "local_path": "helmet.png",
+        "mime_type": "image/png",
+        "sha256": "d83afd81d0410307b5952b320a4521a18c045eede787c60f4c5de679d8c3818a",
+        "width": 256,
+        "height": 256,
+        "byte_count": 54354,
+        "source_url": "https://media.warera.io/images/itemsv2/helmet.png?v=1"
+      }
+    },
+    "helmet4": {
+      "item_code": "helmet4",
+      "item_type": "equipment",
+      "rarity": "epic",
+      "image_url": "https://media.warera.io/images/itemsv2/helmet.png?v=1",
+      "tier": 4,
+      "color_scheme": "purple",
+      "frame_color": "#301B50",
+      "frame_end": "#0E0817",
+      "text_color": "#CAB8E5",
+      "asset": {
+        "local_path": "helmet.png",
+        "mime_type": "image/png",
+        "sha256": "d83afd81d0410307b5952b320a4521a18c045eede787c60f4c5de679d8c3818a",
+        "width": 256,
+        "height": 256,
+        "byte_count": 54354,
+        "source_url": "https://media.warera.io/images/itemsv2/helmet.png?v=1"
+      }
+    },
+    "helmet5": {
+      "item_code": "helmet5",
+      "item_type": "equipment",
+      "rarity": "legendary",
+      "image_url": "https://media.warera.io/images/itemsv2/helmet.png?v=1",
+      "tier": 5,
+      "color_scheme": "yellow",
+      "frame_color": "#343413",
+      "frame_end": "#0F0F05",
+      "text_color": "#D1D29D",
+      "asset": {
+        "local_path": "helmet.png",
+        "mime_type": "image/png",
+        "sha256": "d83afd81d0410307b5952b320a4521a18c045eede787c60f4c5de679d8c3818a",
+        "width": 256,
+        "height": 256,
+        "byte_count": 54354,
+        "source_url": "https://media.warera.io/images/itemsv2/helmet.png?v=1"
+      }
+    },
+    "helmet6": {
+      "item_code": "helmet6",
+      "item_type": "equipment",
+      "rarity": "mythic",
+      "image_url": "https://media.warera.io/images/itemsv2/helmet.png?v=1",
+      "tier": 6,
+      "color_scheme": "red",
+      "frame_color": "#421213",
+      "frame_end": "#130505",
+      "text_color": "#E6A5A6",
+      "asset": {
+        "local_path": "helmet.png",
+        "mime_type": "image/png",
+        "sha256": "d83afd81d0410307b5952b320a4521a18c045eede787c60f4c5de679d8c3818a",
+        "width": 256,
+        "height": 256,
+        "byte_count": 54354,
+        "source_url": "https://media.warera.io/images/itemsv2/helmet.png?v=1"
+      }
+    },
+    "chest1": {
+      "item_code": "chest1",
+      "item_type": "equipment",
+      "rarity": "common",
+      "image_url": "https://media.warera.io/images/itemsv2/chest.png?v=1",
+      "tier": 1,
+      "color_scheme": "gray",
+      "frame_color": "#203539",
+      "frame_end": "#090F10",
+      "text_color": "#B6D1D5",
+      "asset": {
+        "local_path": "chest.png",
+        "mime_type": "image/png",
+        "sha256": "ec8c57471ce03fa303d7efd1b9704a60cd7b8b70b6afbcc88586a7fdae557f5f",
+        "width": 256,
+        "height": 256,
+        "byte_count": 46959,
+        "source_url": "https://media.warera.io/images/itemsv2/chest.png?v=1"
+      }
+    },
+    "chest2": {
+      "item_code": "chest2",
+      "item_type": "equipment",
+      "rarity": "uncommon",
+      "image_url": "https://media.warera.io/images/itemsv2/chest.png?v=1",
+      "tier": 2,
+      "color_scheme": "emerald",
+      "frame_color": "#0A3521",
+      "frame_end": "#030F09",
+      "text_color": "#7BD8AC",
+      "asset": {
+        "local_path": "chest.png",
+        "mime_type": "image/png",
+        "sha256": "ec8c57471ce03fa303d7efd1b9704a60cd7b8b70b6afbcc88586a7fdae557f5f",
+        "width": 256,
+        "height": 256,
+        "byte_count": 46959,
+        "source_url": "https://media.warera.io/images/itemsv2/chest.png?v=1"
+      }
+    },
+    "chest3": {
+      "item_code": "chest3",
+      "item_type": "equipment",
+      "rarity": "rare",
+      "image_url": "https://media.warera.io/images/itemsv2/chest.png?v=1",
+      "tier": 3,
+      "color_scheme": "blue",
+      "frame_color": "#102249",
+      "frame_end": "#050A15",
+      "text_color": "#A5B9E7",
+      "asset": {
+        "local_path": "chest.png",
+        "mime_type": "image/png",
+        "sha256": "ec8c57471ce03fa303d7efd1b9704a60cd7b8b70b6afbcc88586a7fdae557f5f",
+        "width": 256,
+        "height": 256,
+        "byte_count": 46959,
+        "source_url": "https://media.warera.io/images/itemsv2/chest.png?v=1"
+      }
+    },
+    "chest4": {
+      "item_code": "chest4",
+      "item_type": "equipment",
+      "rarity": "epic",
+      "image_url": "https://media.warera.io/images/itemsv2/chest.png?v=1",
+      "tier": 4,
+      "color_scheme": "purple",
+      "frame_color": "#301B50",
+      "frame_end": "#0E0817",
+      "text_color": "#CAB8E5",
+      "asset": {
+        "local_path": "chest.png",
+        "mime_type": "image/png",
+        "sha256": "ec8c57471ce03fa303d7efd1b9704a60cd7b8b70b6afbcc88586a7fdae557f5f",
+        "width": 256,
+        "height": 256,
+        "byte_count": 46959,
+        "source_url": "https://media.warera.io/images/itemsv2/chest.png?v=1"
+      }
+    },
+    "chest5": {
+      "item_code": "chest5",
+      "item_type": "equipment",
+      "rarity": "legendary",
+      "image_url": "https://media.warera.io/images/itemsv2/chest.png?v=1",
+      "tier": 5,
+      "color_scheme": "yellow",
+      "frame_color": "#343413",
+      "frame_end": "#0F0F05",
+      "text_color": "#D1D29D",
+      "asset": {
+        "local_path": "chest.png",
+        "mime_type": "image/png",
+        "sha256": "ec8c57471ce03fa303d7efd1b9704a60cd7b8b70b6afbcc88586a7fdae557f5f",
+        "width": 256,
+        "height": 256,
+        "byte_count": 46959,
+        "source_url": "https://media.warera.io/images/itemsv2/chest.png?v=1"
+      }
+    },
+    "chest6": {
+      "item_code": "chest6",
+      "item_type": "equipment",
+      "rarity": "mythic",
+      "image_url": "https://media.warera.io/images/itemsv2/chest.png?v=1",
+      "tier": 6,
+      "color_scheme": "red",
+      "frame_color": "#421213",
+      "frame_end": "#130505",
+      "text_color": "#E6A5A6",
+      "asset": {
+        "local_path": "chest.png",
+        "mime_type": "image/png",
+        "sha256": "ec8c57471ce03fa303d7efd1b9704a60cd7b8b70b6afbcc88586a7fdae557f5f",
+        "width": 256,
+        "height": 256,
+        "byte_count": 46959,
+        "source_url": "https://media.warera.io/images/itemsv2/chest.png?v=1"
+      }
+    },
+    "boots1": {
+      "item_code": "boots1",
+      "item_type": "equipment",
+      "rarity": "common",
+      "image_url": "https://media.warera.io/images/itemsv2/boots.png?v=1",
+      "tier": 1,
+      "color_scheme": "gray",
+      "frame_color": "#203539",
+      "frame_end": "#090F10",
+      "text_color": "#B6D1D5",
+      "asset": {
+        "local_path": "boots.png",
+        "mime_type": "image/png",
+        "sha256": "415e1aba73f574f8f26e13d8afe44d5c54a6723c46229ef0e3bede0903bf98ae",
+        "width": 256,
+        "height": 256,
+        "byte_count": 52264,
+        "source_url": "https://media.warera.io/images/itemsv2/boots.png?v=1"
+      }
+    },
+    "boots2": {
+      "item_code": "boots2",
+      "item_type": "equipment",
+      "rarity": "uncommon",
+      "image_url": "https://media.warera.io/images/itemsv2/boots.png?v=1",
+      "tier": 2,
+      "color_scheme": "emerald",
+      "frame_color": "#0A3521",
+      "frame_end": "#030F09",
+      "text_color": "#7BD8AC",
+      "asset": {
+        "local_path": "boots.png",
+        "mime_type": "image/png",
+        "sha256": "415e1aba73f574f8f26e13d8afe44d5c54a6723c46229ef0e3bede0903bf98ae",
+        "width": 256,
+        "height": 256,
+        "byte_count": 52264,
+        "source_url": "https://media.warera.io/images/itemsv2/boots.png?v=1"
+      }
+    },
+    "boots3": {
+      "item_code": "boots3",
+      "item_type": "equipment",
+      "rarity": "rare",
+      "image_url": "https://media.warera.io/images/itemsv2/boots.png?v=1",
+      "tier": 3,
+      "color_scheme": "blue",
+      "frame_color": "#102249",
+      "frame_end": "#050A15",
+      "text_color": "#A5B9E7",
+      "asset": {
+        "local_path": "boots.png",
+        "mime_type": "image/png",
+        "sha256": "415e1aba73f574f8f26e13d8afe44d5c54a6723c46229ef0e3bede0903bf98ae",
+        "width": 256,
+        "height": 256,
+        "byte_count": 52264,
+        "source_url": "https://media.warera.io/images/itemsv2/boots.png?v=1"
+      }
+    },
+    "boots4": {
+      "item_code": "boots4",
+      "item_type": "equipment",
+      "rarity": "epic",
+      "image_url": "https://media.warera.io/images/itemsv2/boots.png?v=1",
+      "tier": 4,
+      "color_scheme": "purple",
+      "frame_color": "#301B50",
+      "frame_end": "#0E0817",
+      "text_color": "#CAB8E5",
+      "asset": {
+        "local_path": "boots.png",
+        "mime_type": "image/png",
+        "sha256": "415e1aba73f574f8f26e13d8afe44d5c54a6723c46229ef0e3bede0903bf98ae",
+        "width": 256,
+        "height": 256,
+        "byte_count": 52264,
+        "source_url": "https://media.warera.io/images/itemsv2/boots.png?v=1"
+      }
+    },
+    "boots5": {
+      "item_code": "boots5",
+      "item_type": "equipment",
+      "rarity": "legendary",
+      "image_url": "https://media.warera.io/images/itemsv2/boots.png?v=1",
+      "tier": 5,
+      "color_scheme": "yellow",
+      "frame_color": "#343413",
+      "frame_end": "#0F0F05",
+      "text_color": "#D1D29D",
+      "asset": {
+        "local_path": "boots.png",
+        "mime_type": "image/png",
+        "sha256": "415e1aba73f574f8f26e13d8afe44d5c54a6723c46229ef0e3bede0903bf98ae",
+        "width": 256,
+        "height": 256,
+        "byte_count": 52264,
+        "source_url": "https://media.warera.io/images/itemsv2/boots.png?v=1"
+      }
+    },
+    "boots6": {
+      "item_code": "boots6",
+      "item_type": "equipment",
+      "rarity": "mythic",
+      "image_url": "https://media.warera.io/images/itemsv2/boots.png?v=1",
+      "tier": 6,
+      "color_scheme": "red",
+      "frame_color": "#421213",
+      "frame_end": "#130505",
+      "text_color": "#E6A5A6",
+      "asset": {
+        "local_path": "boots.png",
+        "mime_type": "image/png",
+        "sha256": "415e1aba73f574f8f26e13d8afe44d5c54a6723c46229ef0e3bede0903bf98ae",
+        "width": 256,
+        "height": 256,
+        "byte_count": 52264,
+        "source_url": "https://media.warera.io/images/itemsv2/boots.png?v=1"
+      }
+    },
+    "gloves1": {
+      "item_code": "gloves1",
+      "item_type": "equipment",
+      "rarity": "common",
+      "image_url": "https://media.warera.io/images/itemsv2/gloves.png?v=1",
+      "tier": 1,
+      "color_scheme": "gray",
+      "frame_color": "#203539",
+      "frame_end": "#090F10",
+      "text_color": "#B6D1D5",
+      "asset": {
+        "local_path": "gloves.png",
+        "mime_type": "image/png",
+        "sha256": "36d5eba981de004982fc0fa9627add4b830de09123487e9b9f5a46c6c913ef35",
+        "width": 256,
+        "height": 256,
+        "byte_count": 59472,
+        "source_url": "https://media.warera.io/images/itemsv2/gloves.png?v=1"
+      }
+    },
+    "gloves2": {
+      "item_code": "gloves2",
+      "item_type": "equipment",
+      "rarity": "uncommon",
+      "image_url": "https://media.warera.io/images/itemsv2/gloves.png?v=1",
+      "tier": 2,
+      "color_scheme": "emerald",
+      "frame_color": "#0A3521",
+      "frame_end": "#030F09",
+      "text_color": "#7BD8AC",
+      "asset": {
+        "local_path": "gloves.png",
+        "mime_type": "image/png",
+        "sha256": "36d5eba981de004982fc0fa9627add4b830de09123487e9b9f5a46c6c913ef35",
+        "width": 256,
+        "height": 256,
+        "byte_count": 59472,
+        "source_url": "https://media.warera.io/images/itemsv2/gloves.png?v=1"
+      }
+    },
+    "gloves3": {
+      "item_code": "gloves3",
+      "item_type": "equipment",
+      "rarity": "rare",
+      "image_url": "https://media.warera.io/images/itemsv2/gloves.png?v=1",
+      "tier": 3,
+      "color_scheme": "blue",
+      "frame_color": "#102249",
+      "frame_end": "#050A15",
+      "text_color": "#A5B9E7",
+      "asset": {
+        "local_path": "gloves.png",
+        "mime_type": "image/png",
+        "sha256": "36d5eba981de004982fc0fa9627add4b830de09123487e9b9f5a46c6c913ef35",
+        "width": 256,
+        "height": 256,
+        "byte_count": 59472,
+        "source_url": "https://media.warera.io/images/itemsv2/gloves.png?v=1"
+      }
+    },
+    "gloves4": {
+      "item_code": "gloves4",
+      "item_type": "equipment",
+      "rarity": "epic",
+      "image_url": "https://media.warera.io/images/itemsv2/gloves.png?v=1",
+      "tier": 4,
+      "color_scheme": "purple",
+      "frame_color": "#301B50",
+      "frame_end": "#0E0817",
+      "text_color": "#CAB8E5",
+      "asset": {
+        "local_path": "gloves.png",
+        "mime_type": "image/png",
+        "sha256": "36d5eba981de004982fc0fa9627add4b830de09123487e9b9f5a46c6c913ef35",
+        "width": 256,
+        "height": 256,
+        "byte_count": 59472,
+        "source_url": "https://media.warera.io/images/itemsv2/gloves.png?v=1"
+      }
+    },
+    "gloves5": {
+      "item_code": "gloves5",
+      "item_type": "equipment",
+      "rarity": "legendary",
+      "image_url": "https://media.warera.io/images/itemsv2/gloves.png?v=1",
+      "tier": 5,
+      "color_scheme": "yellow",
+      "frame_color": "#343413",
+      "frame_end": "#0F0F05",
+      "text_color": "#D1D29D",
+      "asset": {
+        "local_path": "gloves.png",
+        "mime_type": "image/png",
+        "sha256": "36d5eba981de004982fc0fa9627add4b830de09123487e9b9f5a46c6c913ef35",
+        "width": 256,
+        "height": 256,
+        "byte_count": 59472,
+        "source_url": "https://media.warera.io/images/itemsv2/gloves.png?v=1"
+      }
+    },
+    "gloves6": {
+      "item_code": "gloves6",
+      "item_type": "equipment",
+      "rarity": "mythic",
+      "image_url": "https://media.warera.io/images/itemsv2/gloves.png?v=1",
+      "tier": 6,
+      "color_scheme": "red",
+      "frame_color": "#421213",
+      "frame_end": "#130505",
+      "text_color": "#E6A5A6",
+      "asset": {
+        "local_path": "gloves.png",
+        "mime_type": "image/png",
+        "sha256": "36d5eba981de004982fc0fa9627add4b830de09123487e9b9f5a46c6c913ef35",
+        "width": 256,
+        "height": 256,
+        "byte_count": 59472,
+        "source_url": "https://media.warera.io/images/itemsv2/gloves.png?v=1"
+      }
+    },
+    "pants1": {
+      "item_code": "pants1",
+      "item_type": "equipment",
+      "rarity": "common",
+      "image_url": "https://media.warera.io/images/itemsv2/pants.png?v=1",
+      "tier": 1,
+      "color_scheme": "gray",
+      "frame_color": "#203539",
+      "frame_end": "#090F10",
+      "text_color": "#B6D1D5",
+      "asset": {
+        "local_path": "pants.png",
+        "mime_type": "image/png",
+        "sha256": "bc4b054cd4957cfcef2842860ba03b8028bb335818783f3d95c42fc9dc581867",
+        "width": 256,
+        "height": 256,
+        "byte_count": 50357,
+        "source_url": "https://media.warera.io/images/itemsv2/pants.png?v=1"
+      }
+    },
+    "pants2": {
+      "item_code": "pants2",
+      "item_type": "equipment",
+      "rarity": "uncommon",
+      "image_url": "https://media.warera.io/images/itemsv2/pants.png?v=1",
+      "tier": 2,
+      "color_scheme": "emerald",
+      "frame_color": "#0A3521",
+      "frame_end": "#030F09",
+      "text_color": "#7BD8AC",
+      "asset": {
+        "local_path": "pants.png",
+        "mime_type": "image/png",
+        "sha256": "bc4b054cd4957cfcef2842860ba03b8028bb335818783f3d95c42fc9dc581867",
+        "width": 256,
+        "height": 256,
+        "byte_count": 50357,
+        "source_url": "https://media.warera.io/images/itemsv2/pants.png?v=1"
+      }
+    },
+    "pants3": {
+      "item_code": "pants3",
+      "item_type": "equipment",
+      "rarity": "rare",
+      "image_url": "https://media.warera.io/images/itemsv2/pants.png?v=1",
+      "tier": 3,
+      "color_scheme": "blue",
+      "frame_color": "#102249",
+      "frame_end": "#050A15",
+      "text_color": "#A5B9E7",
+      "asset": {
+        "local_path": "pants.png",
+        "mime_type": "image/png",
+        "sha256": "bc4b054cd4957cfcef2842860ba03b8028bb335818783f3d95c42fc9dc581867",
+        "width": 256,
+        "height": 256,
+        "byte_count": 50357,
+        "source_url": "https://media.warera.io/images/itemsv2/pants.png?v=1"
+      }
+    },
+    "pants4": {
+      "item_code": "pants4",
+      "item_type": "equipment",
+      "rarity": "epic",
+      "image_url": "https://media.warera.io/images/itemsv2/pants.png?v=1",
+      "tier": 4,
+      "color_scheme": "purple",
+      "frame_color": "#301B50",
+      "frame_end": "#0E0817",
+      "text_color": "#CAB8E5",
+      "asset": {
+        "local_path": "pants.png",
+        "mime_type": "image/png",
+        "sha256": "bc4b054cd4957cfcef2842860ba03b8028bb335818783f3d95c42fc9dc581867",
+        "width": 256,
+        "height": 256,
+        "byte_count": 50357,
+        "source_url": "https://media.warera.io/images/itemsv2/pants.png?v=1"
+      }
+    },
+    "pants5": {
+      "item_code": "pants5",
+      "item_type": "equipment",
+      "rarity": "legendary",
+      "image_url": "https://media.warera.io/images/itemsv2/pants.png?v=1",
+      "tier": 5,
+      "color_scheme": "yellow",
+      "frame_color": "#343413",
+      "frame_end": "#0F0F05",
+      "text_color": "#D1D29D",
+      "asset": {
+        "local_path": "pants.png",
+        "mime_type": "image/png",
+        "sha256": "bc4b054cd4957cfcef2842860ba03b8028bb335818783f3d95c42fc9dc581867",
+        "width": 256,
+        "height": 256,
+        "byte_count": 50357,
+        "source_url": "https://media.warera.io/images/itemsv2/pants.png?v=1"
+      }
+    },
+    "pants6": {
+      "item_code": "pants6",
+      "item_type": "equipment",
+      "rarity": "mythic",
+      "image_url": "https://media.warera.io/images/itemsv2/pants.png?v=1",
+      "tier": 6,
+      "color_scheme": "red",
+      "frame_color": "#421213",
+      "frame_end": "#130505",
+      "text_color": "#E6A5A6",
+      "asset": {
+        "local_path": "pants.png",
+        "mime_type": "image/png",
+        "sha256": "bc4b054cd4957cfcef2842860ba03b8028bb335818783f3d95c42fc9dc581867",
+        "width": 256,
+        "height": 256,
+        "byte_count": 50357,
+        "source_url": "https://media.warera.io/images/itemsv2/pants.png?v=1"
+      }
+    }
+  }
+}

@@ -57,6 +57,8 @@ def test_from_db_preserves_structured_order_book_for_report(monkeypatch, tmp_pat
         def transactions_for_period(self, _item_codes, _start_epoch, _end_epoch):
             return []
 
+    monkeypatch.setattr(cli_module, "load_participant_report", lambda *a, **k: None)
+    monkeypatch.setattr(cli_module, "iter_equipment_sale_details", lambda *a, **k: iter(()))
     captured = {}
     book = {"best_bid": 9, "best_ask": 10, "bids": [], "asks": []}
     monkeypatch.setattr(cli_module, "MarketStore", DummyStore)
@@ -241,3 +243,36 @@ def test_from_db_never_constructs_api_with_equipment_participants(tmp_path, monk
     monkeypatch.setattr(sys, "argv", ["warera-marketguide", "--from-db", "--market-db", str(path),
                                     "--output", str(tmp_path / "out"), "--quiet"])
     main()
+
+
+def test_as_of_offline_participant_and_equipment_exports(monkeypatch, tmp_path):
+    from test_participant_market_data import fact, ingest, NOW
+    import csv
+    path = tmp_path / 'market.db'
+    with MarketStore(path) as store:
+        ingest(store, [fact('start', -7), fact('inside', -1), fact('excluded', 0),
+            fact('equipment', -2, equipment={'_id':'helmet-id','code':'helmet','skills':{'attack':3}}),
+            fact('equipment-excluded', 0, equipment={'_id':'future','code':'helmet','skills':{'attack':8}})])
+    monkeypatch.setattr(cli_module, 'WarEraApiClient', lambda **k: pytest.fail('offline report attempted API'))
+    out = tmp_path / 'output'
+    monkeypatch.setattr(sys, 'argv', ['warera-quant','--from-db','--market-db',str(path),'--output',str(out),
+        '--as-of','2026-09-23T01:00:00+01:00','--quiet'])
+    main()
+    first = (out / 'participant_rankings_7d.csv').read_bytes()
+    main()
+    assert (out / 'participant_rankings_7d.csv').read_bytes() == first
+    with (out / 'participant_rankings_7d.csv').open() as f:
+        rows = list(csv.DictReader(f))
+    assert all(r['as_of'] == NOW.isoformat() for r in rows)
+    assert all(r['source_turnover'] == '30' for r in rows)
+    with (out / 'equipment_sales_7d.csv').open() as f:
+        assert [r['id'] for r in csv.DictReader(f)] == ['equipment']
+    html = (out / 'market_report.html').read_text(encoding='utf-8')
+    assert 'data-item-code="helmet"' not in html
+    assert 'participants-user-volume' in html
+
+
+@pytest.mark.parametrize('value', ['2026-09-23', 'not-a-date'])
+def test_as_of_requires_timezone(value):
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(['--as-of', value])

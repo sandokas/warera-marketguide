@@ -2380,7 +2380,8 @@ def participant_source_coverage(sources, start, end):
         complete = (reached >= end and progress.get("status") in ("complete", "exhausted")
                     and not progress.get("rejected", 0) and not progress.get("last_error"))
         streams[stream] = {"window_covered": reached >= end,
-            "history_exhaustion_observed": bool(status.get("latest_scan_exhausted")),
+            "history_exhaustion_observed": bool(status.get("latest_scan_exhausted")
+                                               or status.get("api_exhaustion_observed_at")),
             "status": "observed_api_coverage" if complete else "partial_or_unverified"}
     return {"streams": streams, "status": "observed_api_coverage"
             if all(s["status"] == "observed_api_coverage" for s in streams.values()) else "partial_or_unverified"}

@@ -9,6 +9,9 @@ from datetime import datetime, timezone
 from .market_models import TransactionFacts, ScalarField, OrderEntry, OrderLevel
 from dataclasses import dataclass
 from typing import Any, Protocol
+from pathlib import Path
+import re
+from .market_models import DisplayIdentity
 
 
 PRICES_ENDPOINT = "/itemTrading.getPrices"
@@ -45,6 +48,78 @@ class TransactionPage:
 class WarEraMarketApi:
     def __init__(self, client: JsonClient):
         self.client = client
+
+    def get_identity(self, kind: str, entity_id: str) -> DisplayIdentity:
+        endpoints = {"user": ("/user.getUserLite", "userId"),
+                     "mu": ("/mu.getById", "muId"),
+                     "country": ("/country.getCountryById", "countryId")}
+        if kind not in endpoints:
+            raise WarEraApiError("Unsupported identity kind")
+        endpoint, key = endpoints[kind]
+        data = _trpc_data(self.client.get_json(endpoint, params=_input_params({key: entity_id})))
+        if not isinstance(data, dict) or data.get("_id") != entity_id:
+            raise WarEraApiError("Profile ID does not match requested identity")
+        name = data.get("username" if kind == "user" else "name")
+        if not isinstance(name, str) or not name.strip():
+            raise WarEraApiError("Profile display name is unavailable")
+        code = data.get("code") if kind == "country" else None
+        image_url = data.get("avatarUrl") if kind != "country" else None
+        if code is not None:
+            if not isinstance(code, str) or not re.fullmatch(r"[a-z0-9_-]{1,32}", code):
+                raise WarEraApiError("Invalid country asset code")
+            image_url = f"https://media.warera.io/images/flags/{code}.svg?v=16"
+        if image_url is not None and not isinstance(image_url, str):
+            raise WarEraApiError("Invalid profile image URL")
+        level = citizenship = None
+        if kind == "user":
+            leveling = data.get("leveling")
+            if leveling is not None:
+                if not isinstance(leveling, dict):
+                    raise WarEraApiError("Invalid user leveling")
+                level = leveling.get("level")
+                if level is not None and (type(level) is not int or level < 0):
+                    raise WarEraApiError("Invalid user level")
+            citizenship = data.get("country")
+            if citizenship is not None and (not isinstance(citizenship, str) or not citizenship):
+                raise WarEraApiError("Invalid citizenship country")
+        return DisplayIdentity(kind, entity_id, name, image_url or None, code, level, citizenship)
+
+    def get_item_display(self) -> list[dict]:
+        """Normalize official icon mappings using the game's item-image rule."""
+        data = _trpc_data(self.client.get_json(GAME_CONFIG_ENDPOINT))
+        if not isinstance(data, dict) or not isinstance(data.get("items"), dict):
+            raise WarEraApiError("Expected game-config items")
+        rarities = json.loads((Path(__file__).parent / "assets/official/equipment.json").read_text())["rarities"]
+        result = []
+        for code, item in data["items"].items():
+            if not isinstance(item, dict) or not re.fullmatch(r"[A-Za-z0-9]+", code):
+                raise WarEraApiError("Invalid item display mapping")
+            filename = item.get("iconImg") or code + ".png"
+            if not re.fullmatch(r"[A-Za-z0-9_-]+\.png", filename):
+                raise WarEraApiError("Invalid item icon filename")
+            rarity = item.get("rarity")
+            if rarity not in rarities:
+                raise WarEraApiError("Unknown item rarity")
+            result.append({"item_code": code, "item_type": item.get("type"), "rarity": rarity,
+                           "image_url": f"https://media.warera.io/images/itemsv2/{filename}?v=1",
+                           **rarities[rarity]})
+        return result
+
+    def get_equipment_display(self) -> list[dict]:
+        data = _trpc_data(self.client.get_json(GAME_CONFIG_ENDPOINT))
+        if not isinstance(data, dict) or not isinstance(data.get("items"), dict):
+            raise WarEraApiError("Expected game-config items")
+        verified = json.loads((Path(__file__).parent / "assets/official/equipment.json").read_text())
+        result = []
+        for code, item in data["items"].items():
+            if not isinstance(item, dict) or item.get("type") != "equipment":
+                continue
+            reference = verified["items"].get(code)
+            if (reference is None or item.get("rarity") != reference["rarity"]
+                    or reference["image_url"].split("/")[-1] != str(item.get("iconImg")) + "?v=1"):
+                raise WarEraApiError(f"Unverified equipment mapping: {code}")
+            result.append(dict(reference))
+        return result
 
     def get_prices(self) -> dict[str, float]:
         response = self.client.get_json(PRICES_ENDPOINT)

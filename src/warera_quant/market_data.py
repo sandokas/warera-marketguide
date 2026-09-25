@@ -6,6 +6,7 @@ from bisect import bisect_left, bisect_right
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from collections.abc import Iterable
+from contextlib import closing
 from typing import Any
 
 from .market_store import MarketStore
@@ -1666,10 +1667,36 @@ def load_participant_report(store: MarketStore, *, as_of: datetime, batch_size: 
     as_of = participant_utc(as_of)
     start = as_of - timedelta(days=7)
     sources = store.market_sync_status()
-    trades = (_participant_trade_input(row)
-              for row in store.iter_participant_history(start, as_of, batch_size=batch_size))
-    result = calculate_participant_rankings(trades, as_of=as_of, sources=sources)
+    with closing(store.iter_participant_history(start, as_of, batch_size=batch_size)) as history:
+        trades = (_participant_trade_input(row) for row in history)
+        result = calculate_participant_rankings(trades, as_of=as_of, sources=sources)
+    enrich_participant_display(store, result)
+    return result
+
+
+def displayed_identity_keys(report: dict) -> list[tuple[str, str]]:
+    """Both published tables draw exclusively from these volume populations."""
+    return list(dict.fromkeys((row["entity_kind"], row["entity_id"])
+        for boards in report["rankings"].values() for row in boards["volume"]))
+
+
+def enrich_participant_display(store: MarketStore, result: dict) -> None:
+    from .display_assets import asset_data_uri, bundled_item_display
     names = store.participant_names((row["entity_kind"], row["entity_id"]) for row in result["entities"])
+    countries = store.participant_names(("country", c["citizenship_id"])
+        for c in names.values() if c.get("citizenship_id"))
+    equipment = bundled_item_display()
+    assets = {}
+
+    def image(url):
+        if url not in assets:
+            cached = store.cached_asset(url) if url else None
+            assets[url] = (asset_data_uri(cached), cached or {})
+        return assets[url]
+
+    for code, metadata in store.equipment_display().items():
+        src, cached = image(metadata["image_url"])
+        equipment[code] = {**metadata, "image_src": src or equipment.get(code, {}).get("image_src")}
     # Decimal output projection copies ranking rows; attach the same dated cache
     # metadata to both aggregates and rankings, with no profile/network lookup.
     rows = list(result["entities"])
@@ -1678,7 +1705,30 @@ def load_participant_report(store: MarketStore, *, as_of: datetime, batch_size: 
         cached = names.get((row["entity_kind"], row["entity_id"]), {})
         row["name"] = cached.get("name") or row["entity_id"]
         row["name_observed_at"] = cached.get("name_observed_at")
-    return result
+        src, asset = image(cached.get("image_url"))
+        if not src and cached.get("image_cache_url"):
+            src, asset = image(cached["image_cache_url"])
+        label = {"user": "User", "mu": "Military unit", "country": "Country", "party": "Party"}.get(row["entity_kind"], "Entity")
+        citizenship = countries.get(("country", cached.get("citizenship_id")), {})
+        flag, _ = image(citizenship.get("image_url"))
+        if not flag:
+            flag, _ = image(citizenship.get("image_cache_url"))
+        row["identity"] = {"level": cached.get("level"),
+            "citizenship_id": cached.get("citizenship_id"),
+            "citizenship_name": citizenship.get("name"), "citizenship_image_src": flag,"entity_kind": row["entity_kind"], "entity_id": row["entity_id"],
+            "display_name": cached.get("name") or f"{label} {row['entity_id']}",
+            "name_observed_at": cached.get("name_observed_at"),
+            "lookup_status": cached.get("lookup_status", "not_cached"),
+            "profile_attempted_at": cached.get("lookup_attempted_at"),
+            "image_src": src, "image_status": ("stale" if src and (
+                asset.get("source_url") != cached.get("image_url") or asset.get("status") != "ok")
+                else asset.get("status", "not_available")),
+            "image_source_url": asset.get("source_url"), "image_sha256": asset.get("sha256"),
+            "image_width": asset.get("width"), "image_height": asset.get("height"),
+            "image_observed_at": asset.get("observed_at"), "country_code": cached.get("country_code")}
+        for categories in [*row["categories"].values(), row["top_buy"], row["top_sell"]]:
+            for category in categories:
+                category["display"] = equipment.get(category["item_code"], {})
 
 
 def iter_equipment_sale_details(store: MarketStore, *, as_of: datetime, batch_size: int = 500):

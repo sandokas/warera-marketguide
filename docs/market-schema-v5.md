@@ -3,9 +3,19 @@
 Implemented in phase 1, 2026-09-23. The inspected `master` branch had v4 as its
 latest schema. Only `market_store.py` imports SQLite or executes SQL.
 `market_models.py` contains pure normalized models; `warera_api.py` maps source
-fields and extracts unknown scalar leaves. No production database was migrated.
+fields and extracts unknown scalar leaves. Production was migrated additively on
+2026-09-23 after backup/restore rehearsal; the full-history import is in progress.
+Actual counts, retained backup and operational status are recorded in the
+[implementation log](market-participants-implementation-log.md).
 
 ## Migration and compatibility
+
+See the [historical query-scope correction](market-history-query-scope-spec.md).
+Broad-query exhaustion does not establish all available history. A filtered
+commodity diagnostic reached September 16 with continuation; the server-default
+explanation remains unverified. Scope-aware acquisition, checkpoints and coverage
+are requirements for further work, not claims about the current implementation.
+
 
 `initialize()` executes `BEGIN IMMEDIATE`, all pending migrations, the
 `schema_meta.version` write and `PRAGMA user_version` write in one transaction.
@@ -31,8 +41,9 @@ It requires an existing database, creates a uniquely named sibling
 `.backup-YYYYMMDDTHHMMSSffffffZ` using SQLite's online backup API, migrates, prints
 the backup path and resulting schema, then exits before configuration/report/API
 work. It rejects combinations with other input/database actions. On migration
-failure the error identifies the retained backup. Only temporary fixtures were
-used to test this command in phase 1.
+failure the error identifies the retained backup. Phase 1 tested temporary
+fixtures; phase 6 also ran the command successfully on production without deleting
+legacy transactions or aggregate observations.
 
 `MarketStore.backup(new_path)` includes committed WAL data and refuses an existing
 destination, the source path, or an uncommitted source transaction.
@@ -43,6 +54,28 @@ before restore. Call `initialize()` explicitly afterward if an upgrade is wanted
 There is no destructive down migration.
 
 ## Transaction additions
+
+### Optional durable continuation (authorized 2026-09-24)
+
+No table/column migration is needed for the opt-in operational checkpoint.
+Existing scalar `schema_meta` rows under `market_resume_<stream>_` hold `stream`,
+`scan_anchor`, `phase` (`history`/`history-complete`), `next_cursor` when continuing,
+`previous_oldest_us`, `pages`, `normalization_version` and `page_size`. The opaque
+cursor is the only persisted pagination token; no raw response or JSON is stored.
+`ingest_transactions(..., checkpoint=...)` validates its page/stream/anchor against
+progress and commits it with rows/children/coverage. Rollback preserves the previous
+continuation. A completed history checkpoint clears its token. A fresh scan clears
+prior operational checkpoints; ordinary status exposes only phase, page, anchor
+and whether a continuation is saved. Tokens are not published or logged.
+
+`--resume-market` is restricted to all-history resync. Saved checkpoint/version/
+page-size mismatches fail closed. Expired upstream tokens remain a possible
+external blocker; no silent fallback reconstructs cursors or deletes history.
+Exhaustion is recorded independently of interval coverage, including empty streams.
+An exhausted nonempty stream covers only from its oldest returned event. The
+phase 6 metadata repair narrowed the former epoch-wide intervals without deleting
+any source transaction or aggregate observation. Historical exhaustion remains
+visible in participant coverage after a subsequent incremental scan.
 
 `transactions` retains all v4 columns and its upstream-ID primary key. Additions:
 
@@ -146,9 +179,15 @@ so repeated instance IDs do not overwrite another sale's stats or condition.
   `item_codes(transaction_type=None)` for all stored types or `itemMarket` for
   equipment discovery. Legacy null rows remain unchanged/unclassified until
   source provenance establishes a type; they are not guessed from code names.
+- Participant history and equipment export ordering fall back to parsing the
+  preserved `created_at` text when legacy `created_at_us` is absent. A deterministic
+  connection-local SQLite function preserves subsecond order and exact window
+  bounds without rewriting legacy rows. Whole-second epochs remain coarse index
+  bounds only; opaque IDs break equal-time ties, not different subsecond times.
 - Existing housekeeping cascades through the new children and trims enrichment
-  coverage when history is pruned. Separate all-history transaction retention
-  remains phase 3; phase 1 does not authorize or initiate bulk collection.
+  coverage when history is pruned. Phase 3 implemented independent transaction
+  retention; the project selects `all`, with observation retention still 120 days.
+  Phase 6 did not run housekeeping or remove old aggregates.
 
 ## Evidence and remaining work
 
@@ -160,14 +199,14 @@ unknown scalars, zero orders, page/child atomicity, cache timestamps, commodity
 query isolation and retention cascades. Actual run totals are recorded in the
 [implementation log](market-participants-implementation-log.md).
 
-Phase 2 must wire separate global trading/itemMarket streams into the existing
-sync orchestration, replace legacy duplicate/high-water stopping with proven
-normalized overlap, handle rejection diagnostics visibly, and populate progress
-and coverage only from committed scans. It must preserve full source timestamps,
-use normalized domain models, and retain the new parser's Decimal transport.
-Name lookup remains optional; no current membership attribution. No P&L, fee
-assumptions, equipment lineage claims, full-resync/status CLI, or bulk history
-operation is implemented by this migration.
+Phases 2-3 wired separate global trading/itemMarket streams, normalized overlap,
+page-atomic progress/coverage, bounded transport retries, all-history resync,
+catch-up and offline status. Phases 4-5 added offline participant accounting,
+nine boards and normalized equipment detail exports. Name lookup remains
+optional; current membership is never historical attribution. Monetary settlement
+and equipment lineage remain unverified, so live source-money volume is available
+while unsupported net/gross P&L remains unavailable. Migration itself provides
+neither enrichment nor proof of historical completeness.
 
 
 Phase 3 also uses scalar `schema_meta` keys `market_elapsed_<stream>` and
@@ -175,4 +214,6 @@ Phase 3 also uses scalar `schema_meta` keys `market_elapsed_<stream>` and
 scan/catch-up work, excluding catalog reads. Exhaustion timestamps are committed
 with the exhausting page and reset at the start of a new invocation. They record
 an observation independently of retained coverage; pruning can shrink coverage
-without undoing that historical observation. No cursor or raw response is stored.
+without undoing that historical observation. Default scans store no cursor;
+authorized opt-in operational checkpoints are described above. Raw responses are
+never stored.

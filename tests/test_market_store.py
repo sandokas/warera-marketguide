@@ -34,6 +34,7 @@ def test_initialize_creates_schema_tables(tmp_path):
             "transaction_field_state", "transaction_extra_fields", "order_book_entries",
             "order_entry_field_state", "order_entry_extra_fields", "market_entities",
             "market_ingestion_state", "market_enrichment_coverage",
+            "display_assets", "equipment_display",
         }
 
 

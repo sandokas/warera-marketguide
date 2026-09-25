@@ -110,25 +110,53 @@ observed exhaustion. Counts describe committed pages (including replay and
 catch-up observations); rejected counts describe known invalid rows, not
 unreadable network pages. Remaining page count and ETA are unknown.
 
-Cursors are never persisted or constructed from IDs. There is no verified date/ID
-seek: restarting **repeats network requests from the head**, even over normalized
-rows. Exact replay avoids transaction/child rewrites; durable progress is evidence
-of commits, not directly resumable opaque pagination. A rerun of full resync
-intentionally rechecks all history. A `running` status after process exit indicates
-an interrupted job. Exhaustion records what the API returned; it does not prove
+Cursors are never constructed from IDs. Ordinary scans keep cursors in memory;
+restarting them repeats network requests from the head. For durable all-history
+resume, opt in with `--resume-market`:
+
+```powershell
+.venv\Scripts\python -m warera_quant.cli --sync --resync-market --history-scope all --resume-market --market-db data/warera_market.sqlite3
+```
+
+Each continuation commits atomically with its page, children and progress. Run
+the same command after a process dies; finished history streams are skipped and
+catch-up replays their heads. Opaque tokens stay out of status/log output. Cursor
+lifetime is unverified: a rejected continuation stops visibly and remains saved;
+there is no automatic destructive reset or silent head replay. An explicit full
+resync **without** `--resume-market` starts fresh pagination while retaining data.
+There is still no verified date/ID seek. Ordinary sync starts new incremental
+progress and clears completed scan checkpoints; do not run concurrent writers.
+
+For unattended full import, catch-up, snapshot, report and verification, use
+`scripts/market_rollout.py --job-dir output/market-rollout`. Run it with the existing
+`.venv` Python; on Windows launch with `Start-Process -WindowStyle Hidden` and logs
+as shown in the [monitor/resume handoff](docs/market-participants-next-agent-prompt.md).
+`job.json` saves the stage, snapshot, common cutoff, PID and success/failure state;
+rerunning the same job resumes its stage. An OS file lock prevents duplicate
+runner writers and releases on process death. Transport counters include retries;
+failed jobs stop for inspection. This is restartable, not a Windows service or
+automatic reboot restart. Completed jobs do not silently start another import.
+
+Exact replay avoids transaction/child rewrites. A `running` status after process
+exit indicates an interrupted job. Exhaustion records what the API returned; it does not prove
 complete game history or known inventory basis. A failed catch-up can coexist
 with earlier observed exhaustion. Concurrent pagination is not a verified server
 snapshot; late historical corrections require reconciliation and activity after
 the catch-up anchor is collected by the next normal sync.
 
-No production import is performed by installation/tests. Phase 6 owns the
-operational rollout; these commands are implemented and tested offline.
+No production import is performed by installation/tests. The phase 6 import and
+catch-up completed global-query pagination on September 24, but a filtered probe
+retrieved older history. Full historical acceptance is reopened; see the
+[query-scope correction spec](docs/market-history-query-scope-spec.md) and the
+[implementation log](docs/market-participants-implementation-log.md) for counts,
+backup, residual legacy coverage and publication status. Coverage starts at the
+oldest returned event, not at 1970 or an assumed game-history beginning.
 
 Completed equipment sales retain participant references, instance details and all
 stats, but stay out of commodity cards, tables, charts, VWAP and WE24. Current
 commodity snapshots preserve individual orders and compatible aggregate depth;
 pending equipment listings are not collected. Unknown scalar fields are retained
-with warning diagnostics. Participant names currently use IDs: supported lookup
+with warning diagnostics. Participant names use dated cached names when available, otherwise IDs; supported live lookup
 response contracts remain unverified. `--from-db` performs no network lookups.
 
 The legacy backfill route also uses both global streams, ignoring overlap and stopping at its independent lookback boundary:
@@ -285,6 +313,63 @@ Each table PNG captures the complete table element without its section heading o
 whitespace. The exporter checks for overflow and replaces the published HTML tables with those
 static images, retaining table text as image alternative text. Composite section PNGs are separate
 assets and may include headings. All item rows are retained; `--top` is a compatibility option.
+
+## Seven-day participant reports
+
+DB reports now include independent top-ten loss, profit and monetary-turnover
+boards for users, MUs and countries. Use a timezone-aware cutoff to reproduce the
+participant window and equipment exports from the same database:
+
+```powershell
+.venv\Scripts\warera-marketguide --from-db --market-db data/warera_market.sqlite3 --as-of 2026-09-23T00:00:00Z --output output
+```
+
+One UTC clock is supplied to report read models and charts. Participant activity
+and equipment exports use `[as_of - 7 days, as_of)`; earlier trades are consumed
+for costing. `--as-of` does not sync or rewind current commodity quotes or cached
+names. Changed source facts can change a rerun. Without the option, the boundary
+is captured once at invocation. CSV-only input omits the participant section.
+
+Amounts are **observed market FIFO realized P&L on matched sales**, never total
+account profit. Equipment requires verified specific-item lineage. Current DB
+money/fee evidence remains unverified: activity uses **source-money turnover**,
+and profit/loss boards can honestly be empty. Unknown is not zero. Basis, fees,
+attribution and source-history coverage remain distinct. MU/country boards rank
+economic accounts, not all members. Summing account turnover counts both sides.
+
+Published participant tables show monetary turnover and a companion complete
+buy/sell breakdown for the same top-ten entities per kind. Compact summaries keep
+three categories; breakdowns show every category in value order, with units, BTC,
+percentage share and trade count. Commodity trades aggregate by item; equipment
+variants retain full stats and condition in their signatures and CSVs. Display
+labels omit condition. Unknown cells say `Unknown`; partial subtotals say
+`X known (N missing)`. Units are never summed across unlike categories.
+Loss/profit, coverage sections and method footers are omitted from presentation;
+accounting records and CSV diagnostics remain unchanged. Activity Comparison has
+no Observed footer. Every PNG captures the complete table element only.
+
+New paths under the output directory:
+
+- `participant_rankings_7d/participants-{user|mu|country}-{volume|explanations}.png`
+  (six tables, including explicit empty states). Successful asset export removes
+  only exact obsolete participant losses/profits/coverage PNG names; unrelated
+  files remain untouched and the inventory lists only current-run assets.
+- `participant_rankings_7d.csv`: one row per board/rank, with matched P&L,
+  monetary totals and coverage. The same account can occur in multiple boards.
+- `participant_trade_breakdown_7d.csv`: all categories, keyed by entity kind/ID,
+  side and category index; `participant_trade_stats_7d.csv` normalizes every skill.
+- `equipment_sales_7d.csv` and `equipment_sale_stats_7d.csv`: window sales and
+  every per-sale skill, joined by transaction ID; source references, condition,
+  precision/presence and unavailable costing remain explicit.
+
+`asset_inventory.json` explicitly lists these current-run PNGs and CSVs. Empty
+DB results produce header-only CSVs and unavailable/empty boards, not zero-profit
+claims. Names/labels are HTML-escaped. Formula-leading source strings are quoted
+at the CSV boundary without changing stored data. Decimal accounting exports
+retain precision; tables display at most six decimal places. Long stat vectors
+can make tall images; nothing is truncated or hidden behind hover controls.
+
+Identity-phase handoff: [stable participant rendering/read-model contract](docs/participant-rendering-contract.md).
 
 ## Trading guide percentage
 

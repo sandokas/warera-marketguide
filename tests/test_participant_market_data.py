@@ -119,6 +119,41 @@ def test_empty_and_utc_microsecond_boundaries(tmp_path):
         assert result['as_of'] == NOW
 
 
+def test_legacy_source_precision_orders_mixed_history_and_half_open_exports(tmp_path):
+    """Opaque IDs and truncated legacy epochs cannot order same-second trades."""
+    cutoff = NOW + timedelta(microseconds=500001)
+    start = cutoff - timedelta(days=7)
+    stamps = [('before', start - timedelta(microseconds=1)), ('start', start),
+              ('z-early-legacy', NOW - timedelta(seconds=1, microseconds=900000)),
+              ('m-normalized', NOW - timedelta(seconds=1, microseconds=500000)),
+              ('a-late-legacy', NOW - timedelta(seconds=1, microseconds=100000)),
+              ('inside', cutoff - timedelta(microseconds=1)), ('end', cutoff)]
+    with MarketStore(tmp_path / 'legacy-order.db') as store:
+        ingest(store, [normalize_transaction({'_id':id, 'createdAt':at.isoformat(),
+            'transactionType':'itemMarket', 'itemCode':'gear', 'money':1, 'quantity':1,
+            'buyerId':'U', 'sellerId':'V', 'item':{'code':'gear'}}) for id,at in stamps])
+        with store._connect() as connection:
+            connection.execute("update transactions set created_at_us=null, normalization_version=0 where id != 'm-normalized'")
+        history = list(store.iter_participant_history(start, cutoff, batch_size=1))
+        assert [row['id'] for row in history] == [id for id,_ in stamps[:-1]]
+        sales = list(store.iter_equipment_sales(start, cutoff, batch_size=1))
+        assert [row['id'] for row in sales] == [id for id,_ in stamps[1:-1]]
+        report = load_participant_report(store, as_of=cutoff, batch_size=1)
+        assert report['coverage']['market_transaction_count'] == 5
+
+
+def test_historical_exhaustion_survives_later_incremental_status(tmp_path):
+    with MarketStore(tmp_path / 'historical-exhaustion.db') as store:
+        ingest(store, [fact('a', -1)])
+        store.record_enrichment_coverage(EnrichmentCoverage('trading', (NOW-timedelta(days=3)).isoformat(),
+            NOW.isoformat(), 'global-contiguous-pagination', 'api-exhausted', NOW.isoformat()))
+        store.record_stream_progress(StreamProgress('trading', scan_mode='incremental', status='complete'))
+        report = load_participant_report(store, as_of=NOW)
+        stream = report['source_coverage']['streams']['trading']
+        assert stream['history_exhaustion_observed']
+        assert not stream['window_covered']  # Exhausted three days does not cover seven days.
+
+
 def test_source_gaps_retained_separately_and_order_failure_does_not_block_volume(tmp_path):
     with MarketStore(tmp_path / 'market.db') as store:
         ingest(store, [fact('a', -6)])

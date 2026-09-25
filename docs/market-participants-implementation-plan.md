@@ -1,5 +1,7 @@
 # Market participants, equipment, and realized trading results
 
+Current acceptance correction: see [query-scope findings and required work](market-history-query-scope-spec.md). Verify server query behavior before selecting and implementing the historical acquisition strategy. Full-history acceptance remains open.
+
 Status: phases 1-3 normalized storage, migration, global ingestion, full/recent
 resync, offline status, retries and independent retention implemented, 2026-09-23; see [schema v5](market-schema-v5.md),
 [verified contracts](market-api-contracts.md) and the
@@ -7,8 +9,15 @@ resync, offline status, retries and independent retention implemented, 2026-09-2
 Phase 4 offline source/read models, evidence-gated costing, attribution, rankings
 and explanations are implemented and tested. Global two-stream collection and
 resync/status commands are implemented and tested offline. Phase 5 participant
-rendering/exports and the phase 6 operational import remain future work. The offline `--migrate-db` command is implemented and tested on
-temporary fixtures only. Companion:
+rendering/exports are implemented and tested. Phase 6 production backup, restore
+verification, additive migration, global-query exhaustion and catch-up are
+complete, with an interrupted first attempt documented in the log. Historical
+acceptance is reopened: a live per-item query reached older events than the global
+scan, so full available-history acquisition is NOT complete. The unattended
+runner refreshed and verified publication with corrected coverage metadata;
+final visual review/closeout is in the next-agent handoff.
+The offline `--migrate-db` command has been exercised on fixtures and production.
+Companion:
 [implementation prompts](market-participants-implementation-prompts.md).
 
 This plan supersedes implementation recommendations in the
@@ -307,7 +316,8 @@ indexes; do not store precomputed leaderboards as source facts.
 
 The offline `--migrate-db`, normal two-stream sync, both resync scopes and
 `--market-sync-status` commands below are implemented and tested offline.
-Ranking cutoff options remain **proposed CLI contracts**.
+The aware UTC report cutoff `--as-of` is implemented and exercised in phase 5
+and the phase 6 partial production-snapshot publication.
 
 ```powershell
 # Offline additive migration and consistent backup (new command).
@@ -357,16 +367,20 @@ boundaries with equal timestamps; retain full precision and IDs. Fix one anchor
 per scan. New trades arriving during a long scan are handled by a catch-up pass
 and do not move its history boundary. Never treat an API error as exhaustion.
 
-### Restart limits when cursors are not saved
+### Restart behavior (updated by user authorization, 2026-09-24)
 
-Keep `nextCursor` only in memory as requested. Durable timestamp/ID markers
-record what is committed; **they do not prove the API supports seeking there**.
-With only opaque cursors, an interrupted process must replay pagination from
-the beginning to reach old history. Avoid rewriting unchanged rows, but acknowledge
-the repeated requests. Never forge/decode/reconstruct cursors from IDs. A future
-supported date/ID filter can improve this after verification. True efficient
-cross-process deep resume would otherwise require revisiting the no-cursor-storage
-decision; it is not promised by this plan.
+The user superseded the earlier no-cursor-storage decision and requested durable,
+unattended resume. `--resume-market` now opts an all-history resync into opaque
+continuations committed with each page. Fixed anchor, stream/normalization version,
+page size, committed page count and ordering boundary must match on restart.
+Finished historical streams are skipped; catch-up can safely replay its head.
+No cursor is exposed in ordinary status/logs or reconstructed from source IDs.
+The API accepted saved tokens across real process exits in a bounded live rehearsal;
+long-term expiry remains unknown. Invalid tokens stop visibly without automatic
+head fallback. Without the flag, the original head-replay behavior remains.
+The unattended runner and next-agent handoff are documented in README. Historical
+phase logs retain their original no-cursor constraints as history; this explicit
+authorization governs current operational continuation.
 
 The status command reports elapsed time, pages/rows, insertion/enrichment counts,
 oldest/newest committed event, per-stream errors and gaps, normalization coverage,
@@ -473,7 +487,7 @@ network calls. New test filenames below are implementation targets.
 | Migration/store | Legacy v1/v4 fixtures; all previous rows unchanged; version atomicity and rollback; WAL-consistent backup/restore; child FK constraints; idempotent enrichment; omitted fields don't erase data; older updates can't replace newer facts |
 | Orders | Same-price distinct orders retained but aggregates unchanged; zero placeholder retained outside executable depth; repeated snapshots distinct; old aggregate snapshots not fabricated into entries |
 | Sync | Global types include non-price-list codes; empty stream; duplicates; same-timestamp multi-page boundary; interrupted page transaction; retry/cap/error; no equipment-listing requests; new arrivals; all-history ignores 7-day report default; two independent stream states |
-| Restart | No cursor anywhere in persisted schema/state/log artifacts; restart replays safely; no unsupported historical seek; markers do not imply coverage beyond committed pages |
+| Restart | Default scans retain no cursor; opted-in continuation commits with its page and survives hard termination; tokens never enter logs/exports; no unsupported historical seek or false coverage |
 | Retention | Full-history transaction setting survives housekeeping; observation pruning still works; optional transaction pruning cascades and shrinks coverage accurately |
 | Attribution | Personal user; user acting for MU/country; conflict/unknown IDs; no double credit; no membership inference; account self-trade excluded; distinct accounts still separate |
 | FIFO | Buys before window, partial/multiple lots, intervening prior sales, unsold purchases, unmatched sales, no future matching, deterministic equal timestamps, known-zero vs unknown cost, stable decimal allocations |

@@ -22,6 +22,8 @@ from .market_data import (
     load_action_cost_results,
     load_price_action_history,
     load_market_rows,
+    load_participant_report,
+    iter_equipment_sale_details,
     opportunity_fields,
 )
 from .market_store import MarketStore
@@ -59,6 +61,16 @@ def _current_complete_utc_midnight(now: datetime | None = None) -> datetime:
     return current.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
 
 
+def _parse_as_of(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            raise ValueError("timezone required")
+        return parsed.astimezone(timezone.utc)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("--as-of requires an ISO timestamp with UTC offset") from exc
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generate a WarEra Market Guide report.")
     parser.add_argument("--csv", default="data/sample_market.csv", help="Input CSV with market fields.")
@@ -70,6 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--live", action="store_true", help="Fetch live WarEra market data from the API.")
     parser.add_argument("--migrate-db", action="store_true", help="Back up and migrate an existing database offline, then exit.")
     parser.add_argument("--market-sync-status", action="store_true", help="Show offline market ingestion progress and coverage, then exit.")
+    parser.add_argument("--resume-market", action="store_true", help="Persist page-atomic cursors and resume an all-history resync; cursor validity is upstream-dependent.")
     parser.add_argument("--resync-market", action="store_true", help="Enrich both global market streams; requires --sync --history-scope 7d or all.")
     parser.add_argument("--history-scope", choices=("7d", "all"), help="Download scope for recent enrichment, independent of report windows.")
     parser.add_argument("--sync", action="store_true", help="Sync live WarEra market data into SQLite, then exit.")
@@ -214,14 +227,39 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print detailed importer progress for each global stream and transaction page.",
     )
+    parser.add_argument("--as-of", type=_parse_as_of, help="Reproducible report boundary (ISO timestamp with timezone)")
+    parser.add_argument("--refresh-identities", action="store_true", help="Refresh displayed profiles/assets only, then exit; no history collection")
+    parser.add_argument("--identity-limit", type=int, default=30, help="Maximum profile attempts (0-100)")
+    parser.add_argument("--asset-limit", type=int, default=35, help="Maximum image attempts (0-100)")
+    parser.add_argument("--identity-max-age-hours", type=float, default=24, help="Display-cache refresh age")
     return parser
 
 
 def main() -> None:
     load_dotenv()
     args = build_parser().parse_args()
+    report_as_of = args.as_of or datetime.now(timezone.utc)
+    participant_report = None
+    equipment_details = None
+    if args.refresh_identities:
+        if any((args.from_db, args.live, args.sync, args.housekeeping, args.api_endpoint,
+                args.migrate_db, args.market_sync_status, args.transaction_backfill, args.resync_market,
+                args.history_scope, args.resume_market)):
+            raise SystemExit("--refresh-identities is a standalone action; --from-db stays offline.")
+        if not Path(args.market_db).is_file():
+            raise SystemExit("Market database does not exist.")
+        from .market_data import displayed_identity_keys
+        from .sync import refresh_display_cache
+        with MarketStore(args.market_db) as store:
+            population = displayed_identity_keys(load_participant_report(store, as_of=report_as_of))
+            summary = refresh_display_cache(WarEraMarketApi(WarEraApiClient()), store, population,
+                asset_dir=Path(args.market_db).resolve().parent / "display-assets",
+                max_profiles=args.identity_limit, max_assets=args.asset_limit,
+                max_age_hours=args.identity_max_age_hours)
+        print(json.dumps(summary, indent=2))
+        return
     if args.market_sync_status:
-        if any((args.live, args.sync, args.housekeeping, args.api_endpoint, args.from_db, args.transaction_backfill, args.resync_market, args.history_scope, args.migrate_db, args.history_pages, args.exclude_item_code)):
+        if any((args.live, args.sync, args.housekeeping, args.api_endpoint, args.from_db, args.transaction_backfill, args.resync_market, args.history_scope, args.migrate_db, args.history_pages, args.exclude_item_code, args.resume_market)):
             raise SystemExit("--market-sync-status cannot be combined with another action or scope.")
         if not Path(args.market_db).exists():
             raise SystemExit("Market database does not exist.")
@@ -229,7 +267,7 @@ def main() -> None:
             print(json.dumps(store.market_sync_status(), indent=2))
         return
     if args.migrate_db:
-        if any((args.live, args.sync, args.housekeeping, args.api_endpoint, args.from_db, args.transaction_backfill, args.resync_market, args.history_scope)):
+        if any((args.live, args.sync, args.housekeeping, args.api_endpoint, args.from_db, args.transaction_backfill, args.resync_market, args.history_scope, args.resume_market)):
             raise SystemExit("--migrate-db cannot be combined with another database/input action.")
         store = MarketStore(args.market_db)
         try:
@@ -253,6 +291,8 @@ def main() -> None:
     )
     if selected_sources > 1:
         raise SystemExit("Use only one of --live, --sync, --housekeeping, or --api-endpoint.")
+    if args.resume_market and not (args.sync and args.resync_market and args.history_scope == "all"):
+        raise SystemExit("--resume-market requires --sync --resync-market --history-scope all.")
     if args.resync_market or args.history_scope:
         if not (args.sync and args.resync_market and args.history_scope in ("7d", "all")):
             raise SystemExit("Market enrichment requires --sync --resync-market --history-scope 7d or all.")
@@ -336,10 +376,12 @@ def main() -> None:
                 progress=None if args.quiet else lambda message: print(message, flush=True),
                 verbose=args.verbose,
                 **({"resync_market": True, "history_scope": args.history_scope} if args.resync_market else {}),
+                **({"resume_market": True} if args.resume_market else {}),
             )
             rows = load_market_rows(
                 store,
                 windows=("1D", "7D", "30D"),
+                now=report_as_of,
                 forecast_horizon_hours=args.forecast_horizon_hours,
                 forecast_target_max_lag_hours=args.forecast_target_max_lag_hours,
                 forecast_min_samples=args.forecast_min_samples,
@@ -348,8 +390,10 @@ def main() -> None:
             )
             data_sync_metadata = store.market_sync_metadata()
             if args.live and not args.sync:
-                we24 = build_we24_market_index(store, as_of=datetime.now(timezone.utc), display_days=max(args.we24_days, args.research_days or 0))
-                action_cost_results = load_action_cost_results(store, as_of=datetime.now(timezone.utc))
+                we24 = build_we24_market_index(store, as_of=report_as_of, display_days=max(args.we24_days, args.research_days or 0))
+                action_cost_results = load_action_cost_results(store, as_of=report_as_of)
+                participant_report = load_participant_report(store, as_of=report_as_of)
+                equipment_details = list(iter_equipment_sale_details(store, as_of=report_as_of))
         if not args.quiet:
             print(
                 f"Synced {sync_result.prices_observed} price(s), "
@@ -374,6 +418,7 @@ def main() -> None:
             rows = load_market_rows(
                 store,
                 windows=("1D", "7D", "30D"),
+                now=report_as_of,
                 forecast_horizon_hours=args.forecast_horizon_hours,
                 forecast_target_max_lag_hours=args.forecast_target_max_lag_hours,
                 forecast_min_samples=args.forecast_min_samples,
@@ -381,8 +426,10 @@ def main() -> None:
                 flip_assumptions=assumptions,
             )
             data_sync_metadata = store.market_sync_metadata()
-            we24 = build_we24_market_index(store, as_of=datetime.now(timezone.utc), display_days=max(args.we24_days, args.research_days or 0))
-            action_cost_results = load_action_cost_results(store, as_of=datetime.now(timezone.utc))
+            we24 = build_we24_market_index(store, as_of=report_as_of, display_days=max(args.we24_days, args.research_days or 0))
+            action_cost_results = load_action_cost_results(store, as_of=report_as_of)
+            participant_report = load_participant_report(store, as_of=report_as_of)
+            equipment_details = list(iter_equipment_sale_details(store, as_of=report_as_of))
         df_in = pd.DataFrame(rows)
     elif args.api_endpoint:
         client = WarEraApiClient(min_interval_seconds=args.min_interval)
@@ -460,6 +507,7 @@ def main() -> None:
                 item_code.lower(): load_price_action_history(
                     store, item_code=item_code, window_days=args.item_chart_days,
                     interval=args.chart_interval,
+                    now=report_as_of,
                 )
                 for item_code in item_codes
             }
@@ -512,6 +560,7 @@ def main() -> None:
                         store, item_code=storage_code,
                         window_days=args.research_days or args.item_chart_days,
                         interval=args.chart_interval,
+                        now=report_as_of,
                     )
                     chart_item = prepare_price_action_item(
                         row,
@@ -556,6 +605,9 @@ def main() -> None:
         we24=we24,
         we24_chart_path=we24_chart_path,
         action_cost_results=action_cost_results,
+        participant_report=participant_report,
+        equipment_details=equipment_details,
+        as_of=report_as_of,
     )
     print(f"Wrote {csv_path}")
     if action_cost_results:
