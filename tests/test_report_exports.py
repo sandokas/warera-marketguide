@@ -65,5 +65,5 @@ def test_participant_tables_complete_bounds_and_pngs(tmp_path):
         width, height = struct.unpack('>II', (tmp_path / asset['path']).read_bytes()[16:24])
         assert abs(width - 2 * bounds['width']) <= 4
         assert abs(height - 2 * bounds['height']) <= 4
-    assert len([a for a in inventory if a['kind'] == 'data']) == 5
+    assert len([a for a in inventory if a['kind'] == 'data']) == 6
     assert '<table ' not in html.read_text(encoding='utf-8')

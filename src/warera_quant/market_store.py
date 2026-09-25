@@ -1517,17 +1517,23 @@ def _validate_scalar(value_type: str, value: str | None) -> None:
 
 
 def migrate_to_v6(connection: sqlite3.Connection) -> None:
-    connection.execute("alter table market_entities add column image_url text")
-    connection.execute("alter table market_entities add column country_code text")
-    connection.execute("alter table market_entities add column image_cache_url text")
-    connection.execute("alter table market_entities add column level integer")
-    connection.execute("alter table market_entities add column citizenship_id text")
-    connection.execute("alter table market_entities add column prestige integer default 0")
-    connection.execute("""create table display_assets (
+    # Add columns if they don't already exist
+    for column in ["image_url", "country_code", "image_cache_url", "level", "citizenship_id"]:
+        try:
+            connection.execute(f"alter table market_entities add column {column} text")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e):
+                raise
+    try:
+        connection.execute("alter table market_entities add column prestige integer default 0")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" not in str(e):
+            raise
+    connection.execute("""create table if not exists display_assets (
         source_url text primary key, local_path text, sha256 text, mime_type text,
         width integer, height integer, byte_count integer, observed_at text,
         status text not null, attempted_at text not null)""")
-    connection.execute("""create table equipment_display (
+    connection.execute("""create table if not exists equipment_display (
         item_code text primary key, rarity text not null, tier integer not null,
         color_scheme text not null, frame_color text not null, frame_end text not null,
         text_color text not null, image_url text not null, observed_at text not null)""")

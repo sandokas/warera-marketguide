@@ -146,7 +146,7 @@ def test_installed_offline_migrate_command(tmp_path):
     result = subprocess.run([str(executable), "--migrate-db", "--market-db", str(path)],
                             capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "Backup:" in result.stdout and "schema v7" in result.stdout
+    assert "Backup:" in result.stdout and "schema v6" in result.stdout
     backups = list(tmp_path.glob("cli.sqlite3.backup-*"))
     assert len(backups) == 1
     backup = MarketStore(backups[0])  # Inspect without initializing/migrating the backup.

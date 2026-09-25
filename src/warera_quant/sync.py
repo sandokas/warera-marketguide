@@ -74,6 +74,11 @@ def refresh_display_cache(api: WarEraMarketApi, store: MarketStore, identities,
                     print(f"[VERBOSE] refresh_display_cache: Added country {cached['citizenship_id']} to queue")
         if cached and cached.get("image_url"):
             urls.add(cached["image_url"])
+        # Also add citizenship country image_url if available
+        if cached and cached.get("citizenship_id"):
+            country_cached = store.entity_name("country", cached["citizenship_id"])
+            if country_cached and country_cached.get("image_url"):
+                urls.add(country_cached["image_url"])
     if equipment:
         existing = store.equipment_display()
         if not existing or any(now - datetime.fromisoformat(r["observed_at"]) >= timedelta(hours=max_age_hours) for r in existing.values()):
