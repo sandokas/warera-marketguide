@@ -2294,6 +2294,12 @@ def _identity_html(row):
     name = identity.get("display_name") or row.get("name") or f"{label} {row['entity_id']}"
     if name == row['entity_id']:
         name = f"{label} {name}"
+    
+    # Add prestige indicator (skull symbol) before name for prestiged users
+    prestige = identity.get("prestige", False)
+    if prestige:
+        name = "💀 " + name
+    
     icon = _display_image(identity.get("image_src"), f"{label} image", "identity-image")
     if not icon:
         icon = '<span class="identity-placeholder">' + escape(label) + '</span>'
@@ -2358,14 +2364,15 @@ def _participant_html(report):
               '.identity-citizenship{position:absolute;left:-4px;bottom:-4px;width:20px;height:15px;object-fit:contain;border-radius:2px;box-shadow:0 0 0 1px #101820}'
               '.identity-placeholder{display:inline-block;font-size:11px;padding:3px;border:1px solid #8899aa;margin-right:6px}'
               '.equipment-frame{display:inline-block;width:42px;height:42px;border:1px solid;border-bottom-width:2px;border-radius:5px;vertical-align:middle;margin:3px 7px 3px 0}'
-              '.equipment-image{width:42px;height:42px;object-fit:contain;vertical-align:middle}</style>']
+              '.equipment-image{width:42px;height:42px;object-fit:contain;vertical-align:middle}'
+              '.horizontal-items{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}</style>']
     for kind, label in (("user", "Users"), ("mu", "Military Units"), ("country", "Countries")):
         entries = report['rankings'][kind]['volume']
         rows, details = [], []
         for rank, row in enumerate(entries, 1):
             name = _identity_html(row)
             count = sum(c['trade_count'] for cats in row['categories'].values() for c in cats)
-            tops = [_DisplayHtml('<br>'.join(_category_html(c) for c in row['top_' + side]) or 'No observed activity') for side in ('buy', 'sell')]
+            tops = [_DisplayHtml('<div class="horizontal-items">' + ' '.join(str(_category_html(c)) for c in row['top_' + side]) + '</div>' if row['top_' + side] else 'No observed activity') for side in ('buy', 'sell')]
             rows.append([rank, name,
                          _participant_amount(row[prefix + '_turnover'], row['missing_money_count'], count), *tops])
             for side in ('buy', 'sell'):
@@ -2376,7 +2383,7 @@ def _participant_html(report):
                         _participant_amount(c['quantity'], c['missing_quantity_count'], c['trade_count']),
                         share, c['trade_count']])
         blocks.append(table(f'participants-{kind}-volume', f'{label} - monetary turnover',
-            ['Rank', {'user': 'User', 'mu': 'MU', 'country': 'Country'}[kind], '7D Turnover BTC', 'Mostly bought (details below)', 'Mostly sold (details below)'], rows))
+            ['Rank', {'user': 'User', 'mu': 'MU', 'country': 'Country'}[kind], '7D Turnover BTC', 'Bought', 'Sold'], rows))
         blocks.append(table(f'participants-{kind}-explanations', f'{label} - buy/sell breakdown',
             [{'user': 'User', 'mu': 'MU', 'country': 'Country'}[kind], 'Side', 'Item / full stats', '7D Value BTC', 'Units', 'Side share', 'Trades'], details))
     return ''.join(blocks)

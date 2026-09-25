@@ -697,14 +697,14 @@ class MarketStore:
         row = self._connect().execute("select * from market_entities where entity_kind=? and entity_id=?", (entity_kind, entity_id)).fetchone()
         return dict(row) if row else None
 
-    def cache_identity(self, identity, observed_at: str) -> None:
+    def cache_identity(self, identity, observed_at: str, force_refresh: bool = False) -> None:
         previous = self.entity_name(identity.entity_kind, identity.entity_id)
-        if previous and _parse_datetime(observed_at, "observed_at") < _parse_datetime(previous["lookup_attempted_at"], "attempted"):
+        if not force_refresh and previous and _parse_datetime(observed_at, "observed_at") < _parse_datetime(previous["lookup_attempted_at"], "attempted"):
             return
         self.cache_entity_name(identity.entity_kind, identity.entity_id, identity.name, observed_at, "ok")
         with self._connect():
-            self._connect().execute("update market_entities set image_url=?,country_code=?,level=?,citizenship_id=?, image_cache_url=case when ? is null then null else image_cache_url end where entity_kind=? and entity_id=?",
-                (identity.image_url, identity.country_code, identity.level, identity.citizenship_id, identity.image_url, identity.entity_kind, identity.entity_id))
+            self._connect().execute("update market_entities set image_url=?,country_code=?,level=?,citizenship_id=?,prestige=? where entity_kind=? and entity_id=?",
+                (identity.image_url, identity.country_code, identity.level, identity.citizenship_id, 1 if identity.prestige else 0, identity.entity_kind, identity.entity_id))
 
     def link_identity_asset(self, url: str) -> None:
         with self._connect():
@@ -1468,6 +1468,7 @@ def migrate_to_v5(connection: sqlite3.Connection) -> None:
         create table market_entities (
             entity_kind text not null check(entity_kind in ('user','mu','country','party')),
             entity_id text not null, name text, name_observed_at text, lookup_status text not null, lookup_attempted_at text not null,
+            image_url text, country_code text, image_cache_url text, level integer, citizenship_id text, prestige integer default 0,
             primary key(entity_kind,entity_id)
         );
         create table market_ingestion_state (
@@ -1519,6 +1520,9 @@ def migrate_to_v6(connection: sqlite3.Connection) -> None:
     connection.execute("alter table market_entities add column image_url text")
     connection.execute("alter table market_entities add column country_code text")
     connection.execute("alter table market_entities add column image_cache_url text")
+    connection.execute("alter table market_entities add column level integer")
+    connection.execute("alter table market_entities add column citizenship_id text")
+    connection.execute("alter table market_entities add column prestige integer default 0")
     connection.execute("""create table display_assets (
         source_url text primary key, local_path text, sha256 text, mime_type text,
         width integer, height integer, byte_count integer, observed_at text,
@@ -1529,11 +1533,6 @@ def migrate_to_v6(connection: sqlite3.Connection) -> None:
         text_color text not null, image_url text not null, observed_at text not null)""")
 
 
-def migrate_to_v7(connection: sqlite3.Connection) -> None:
-    connection.execute("alter table market_entities add column level integer")
-    connection.execute("alter table market_entities add column citizenship_id text")
-
-
 MIGRATIONS = {
     1: migrate_to_v1,
     2: migrate_to_v2,
@@ -1541,7 +1540,6 @@ MIGRATIONS = {
     4: migrate_to_v4,
     5: migrate_to_v5,
     6: migrate_to_v6,
-    7: migrate_to_v7,
 }
 
 

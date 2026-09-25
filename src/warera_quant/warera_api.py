@@ -70,7 +70,7 @@ class WarEraMarketApi:
             image_url = f"https://media.warera.io/images/flags/{code}.svg?v=16"
         if image_url is not None and not isinstance(image_url, str):
             raise WarEraApiError("Invalid profile image URL")
-        level = citizenship = None
+        level = citizenship = prestige = None
         if kind == "user":
             leveling = data.get("leveling")
             if leveling is not None:
@@ -82,7 +82,9 @@ class WarEraMarketApi:
             citizenship = data.get("country")
             if citizenship is not None and (not isinstance(citizenship, str) or not citizenship):
                 raise WarEraApiError("Invalid citizenship country")
-        return DisplayIdentity(kind, entity_id, name, image_url or None, code, level, citizenship)
+            # Check for prestige - skull symbol (💀) in username or separate prestige field
+            prestige = "💀" in name or bool(data.get("prestige"))
+        return DisplayIdentity(kind, entity_id, name, image_url or None, code, level, citizenship, prestige or False)
 
     def get_item_display(self) -> list[dict]:
         """Normalize official icon mappings using the game's item-image rule."""

@@ -17,7 +17,7 @@ from .warera_api import WarEraMarketApi, timestamp_us
 def refresh_display_cache(api: WarEraMarketApi, store: MarketStore, identities,
                           *, asset_dir: str | Path, max_profiles: int = 30,
                           max_assets: int = 35, max_age_hours: float = 24,
-                          now: datetime | None = None, equipment: bool = True) -> dict:
+                          now: datetime | None = None, equipment: bool = True, force_refresh: bool = False) -> dict:
     """Refresh only the explicit displayed population, never market history.
 
     Limits count attempts, including failures. Profile age uses last attempt to
@@ -41,13 +41,13 @@ def refresh_display_cache(api: WarEraMarketApi, store: MarketStore, identities,
     queued = set(pending)
     for kind, entity_id in pending:
         cached = store.entity_name(kind, entity_id)
-        if not fresh({"attempted_at": cached["lookup_attempted_at"]} if cached else None):
+        if force_refresh or not fresh({"attempted_at": cached["lookup_attempted_at"]} if cached else None):
             if result["profiles_attempted"] >= max_profiles:
                 result["deferred"] += 1
             else:
                 result["profiles_attempted"] += 1
                 try:
-                    store.cache_identity(api.get_identity(kind, entity_id), stamp)
+                    store.cache_identity(api.get_identity(kind, entity_id), stamp, force_refresh=force_refresh)
                 except Exception as exc:
                     store.cache_entity_name(kind, entity_id, None, stamp, "unavailable")
                     result["errors"].append(f"{kind} {entity_id}: {type(exc).__name__}")

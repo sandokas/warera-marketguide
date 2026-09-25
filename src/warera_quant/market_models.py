@@ -12,6 +12,7 @@ class DisplayIdentity:
     country_code: str | None = None
     level: int | None = None
     citizenship_id: str | None = None
+    prestige: bool = False
 
 
 @dataclass(frozen=True)
