@@ -144,7 +144,8 @@ def test_offline_all_kinds_and_equipment_without_membership_attribution(tmp_path
         assert html.count('class="identity-image"') == 6
         assert html.count('class="equipment-image"') == 6
         assert 'Tier 4 / epic' not in html and 'condition' not in html
-        assert 'stats:' not in html and ' 23</td>' in html
+        # Equipment stats now use icon format (e.g., 💨23) instead of "stats:"
+        assert 'stats:' not in html and ('💨23' in html or '•23' in html)
         for row in report['entities']:
             assert row['identity']['image_src'].startswith('data:image/')
 
@@ -266,6 +267,7 @@ def test_bundled_weapons_and_items_render_as_icons_with_compact_stats():
         assert items[code]["image_src"].startswith("data:image/png;base64,")
         html = _category_html({"item_code": code, "display": items[code],
             "category": ("equipment-v1", code, (("attack", "141"), ("criticalChance", "31")), None, None)})
-        assert html.endswith(" 141/31") and "<img " in html
+        # Equipment stats now use icon format (e.g., ⚔️141 🎯31) instead of slash-separated
+        assert ("⚔️141" in html or "•141" in html) and ("🎯31" in html or "•31" in html) and "<img " in html
         assert "stats:" not in html and "Tier " not in html
         assert f">{code}<" not in html

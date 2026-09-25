@@ -79,6 +79,7 @@ def _fmt_report_value(value: object, *, column: str | None = None) -> str:
         return "N/A"
     if isinstance(value, (int, float)):
         label = str(column or "").lower()
+        # Quantities and counts: whole numbers
         if (
             "volume" in label
             or "sample" in label
@@ -86,13 +87,16 @@ def _fmt_report_value(value: object, *, column: str | None = None) -> str:
             or label.endswith("trades")
             or "trade count" in label
             or label == "liquidity"
+            or "quantity" in label
+            or label == "qty"
+            or "unmatched" in label  # Net unmatched is a quantity
         ):
             return _fmt(value, 0)
+        # Percentages: 2 decimal places
         if "%" in label:
             return _fmt(value, 2)
-        if label in {"now", "latest", "min", "max", "fair", "buy", "sell", "last", "last trade"} or label.endswith(("low", "high")):
-            return _fmt(value, 3)
-        if "price" in label or label in {"open", "close", "vwap", "average", "median", "rolling average"}:
+        # BTC values (prices, totals, profits): exactly 3 decimal places
+        if "btc" in label or "price" in label or label in {"now", "latest", "min", "max", "fair", "buy", "sell", "last", "last trade"} or label.endswith(("low", "high")) or label in {"open", "close", "vwap", "average", "median", "rolling average", "profit", "total"}:
             return _fmt(value, 3)
         return _fmt(value, 3)
     return str(value)
@@ -2320,11 +2324,13 @@ def _category_description(category, *, include_condition=False):
     return text
 
 
-def _participant_amount(amount, missing, count):
-    """Display known subtotals without presenting absent observations as zero."""
+def _participant_amount(amount, missing, count, is_btc=True):
+    """Display known subtotals without presenting absent observations as zero. Uses 3 decimals for BTC, 0 for quantities."""
     if amount is None or (missing and missing == count):
         return "Unknown"
-    text = format(amount, ",.6f").rstrip("0").rstrip(".") or "0"
+    decimals = 3 if is_btc else 0
+    text = format(amount, f",.{decimals}f").rstrip("0").rstrip(".") if is_btc else format(amount, ",.0f")
+    text = text or "0"
     return f"{text} known ({missing} missing)" if missing else text
 
 
@@ -2409,7 +2415,35 @@ def _category_html(category):
     signature = category["category"]
     equipment = signature[0] == "equipment-v1"
     stats = signature[2] if equipment else ()
-    values = "Unknown" if stats is None else "/".join(_participant_value(v) for _, v in stats)
+    
+    # Equipment stat icon mapping
+    stat_icons = {
+        'attack': '⚔️',
+        'armor': '🛡️',
+        'defense': '🛡️',
+        'dodge': '💨',
+        'speed': '⚡',
+        'criticalChance': '🎯',
+        'criticalDamage': '💥',
+        'accuracy': '🎯',
+        'damage': '💥',
+        'health': '❤️',
+        'strength': '💪',
+        'agility': '🏃',
+        'intelligence': '🧠',
+        'luck': '🍀',
+    }
+    
+    if equipment and stats is not None:
+        # Format equipment stats with icons, keeping original precision
+        formatted_stats = []
+        for code, value in stats:
+            icon = stat_icons.get(code, '•')
+            formatted_stats.append(f"{icon}{_participant_value(value)}")
+        values = " ".join(formatted_stats)
+    else:
+        values = ""
+    
     icon = _display_image(metadata.get("image_src"), category["item_code"], "equipment-image")
     if icon:
         colors = [metadata.get(key, "") for key in ("frame_color", "frame_end")]
@@ -2436,7 +2470,28 @@ def _participant_html(report, verbose: bool = False):
 
     def table(identifier, title, headers, rows):
         header_cells = ''.join(f'<th class="{_column_classes(str(h))}">{escape(h)}</th>' for h in headers)
-        body = ''.join('<tr>' + ''.join(f'<td class="{_column_classes(str(headers[i]))}">{c if isinstance(c, _DisplayHtml) else escape(str(c))}</td>' for i, c in enumerate(row)) + '</tr>' for row in rows)
+        body_rows = []
+        for row in rows:
+            row_cells = []
+            for i, c in enumerate(row):
+                column_name = str(headers[i])
+                cell_class = _column_classes(column_name)
+                # Add emphasis classes for specific columns
+                if "Total Profit" in column_name:
+                    cell_class += " col-total-profit"
+                if "Net Unmatched" in column_name:
+                    # Apply color coding based on value
+                    try:
+                        value = float(str(c).replace("N/A", "0").replace(",", "").replace(" known", "").split()[0])
+                        if value > 0:
+                            cell_class += " net-positive"
+                        elif value < 0:
+                            cell_class += " net-negative"
+                    except (ValueError, IndexError):
+                        pass
+                row_cells.append(f'<td class="{cell_class}">{c if isinstance(c, _DisplayHtml) else escape(str(c))}</td>')
+            body_rows.append('<tr>' + ''.join(row_cells) + '</tr>')
+        body = ''.join(body_rows)
         if not body:
             body = f'<tr><td colspan="{len(headers)}">No qualifying observed activity.</td></tr>'
         return (f'<section class="participant-section"><h2>{escape(title)}</h2><div class="table-wrap participant-table">'
@@ -2448,6 +2503,9 @@ def _participant_html(report, verbose: bool = False):
               '.participant-table th,.participant-table td {white-space:normal;max-width:24ch;overflow-wrap:anywhere}'
               '.participant-table th.number,.participant-table td.number {text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}'
               '.participant-table th:not(.number),.participant-table td:not(.number) {text-align:left}'
+              '.participant-table .col-total-profit {font-weight:700}'
+              '.participant-table .net-positive {color:var(--good);font-weight:600}'
+              '.participant-table .net-negative {color:var(--bad);font-weight:600}'
               '.identity-link{display:inline-flex;align-items:center;gap:10px;color:inherit;text-decoration:none}'
               '.identity-avatar{position:relative;display:inline-block;flex-shrink:0;width:44px;height:44px;margin:4px 0 6px 10px}'
               '.identity-image{width:44px;height:44px;object-fit:contain;vertical-align:middle;border-radius:4px}'
@@ -2471,21 +2529,21 @@ def _participant_html(report, verbose: bool = False):
             
             # New item-based breakdown with buy/sell combined
             for item in row.get('top_items', []):
-                buy_qty = _participant_amount(item['buy_quantity'], item['buy_missing_quantity_count'], item['buy_trade_count'])
-                buy_avg = _fmt_report_value(item['buy_avg_price'], column='average price')
-                buy_total = _participant_amount(item['buy_total_value'], item['buy_missing_money_count'], item['buy_trade_count'])
-                sell_qty = _participant_amount(item['sell_quantity'], item['sell_missing_quantity_count'], item['sell_trade_count'])
-                sell_avg = _fmt_report_value(item['sell_avg_price'], column='average price')
-                sell_total = _participant_amount(item['sell_total_value'], item['sell_missing_money_count'], item['sell_trade_count'])
+                buy_qty = _participant_amount(item['buy_quantity'], item['buy_missing_quantity_count'], item['buy_trade_count'], is_btc=False)
+                buy_avg = _fmt_report_value(item['buy_avg_price'], column='Buy Avg')
+                buy_total = _fmt_report_value(item['buy_total_value'], column='Buy Total BTC')
+                sell_qty = _participant_amount(item['sell_quantity'], item['sell_missing_quantity_count'], item['sell_trade_count'], is_btc=False)
+                sell_avg = _fmt_report_value(item['sell_avg_price'], column='Sell Avg')
+                sell_total = _fmt_report_value(item['sell_total_value'], column='Sell Total BTC')
                 
                 # Format profit/loss
-                profit_per_unit = _fmt_report_value(item['profit_loss_per_unit'], column='profit per unit')
-                profit_total = _fmt_report_value(item['profit_loss_btc'], column='total profit')
+                profit_per_unit = _fmt_report_value(item['profit_loss_per_unit'], column='Profit/Unit BTC')
+                profit_total = _fmt_report_value(item['profit_loss_btc'], column='Total Profit BTC')
                 
-                # Format remaining inventory - merge unmatched buy/sell, sell as negative
-                net_unmatched = _participant_amount(
+                # Format remaining inventory - merge unmatched buy/sell, sell as negative (quantity, not BTC)
+                net_unmatched = _fmt_report_value(
                     float(item['unmatched_buy_quantity'] or 0) - float(item['unmatched_sell_quantity'] or 0), 
-                    None, 0
+                    column='Net Unmatched Qty'
                 )
                 
                 details.append([name, _category_html(item),
@@ -2497,7 +2555,7 @@ def _participant_html(report, verbose: bool = False):
         blocks.append(table(f'participants-{kind}-volume', f'{label} - monetary turnover',
             ['Rank', {'user': 'User', 'mu': 'MU', 'country': 'Country'}[kind], '7D Turnover BTC', 'Bought', 'Sold'], rows))
         blocks.append(table(f'participants-{kind}-explanations', f'{label} - item breakdown (buy/sell combined)',
-            [{'user': 'User', 'mu': 'MU', 'country': 'Country'}[kind], 'Item', 'Buy Qty', 'Buy Avg', 'Buy Total BTC', 'Sell Qty', 'Sell Avg', 'Sell Total BTC', 'Profit/Unit', 'Total Profit BTC', 'Net Unmatched'], details))
+            [{'user': 'User', 'mu': 'MU', 'country': 'Country'}[kind], 'Item', 'Buy Qty', 'Buy Avg', 'Buy Total BTC', 'Sell Qty', 'Sell Avg', 'Sell Total BTC', 'Profit/Unit', 'Total Profit BTC', 'Net Unmatched Qty'], details))
     return ''.join(blocks)
 
 

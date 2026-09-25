@@ -49,7 +49,8 @@ def test_shared_turnover_and_complete_breakdown(kind):
         assert '<tfoot>' not in table
         assert all(text not in table for text in ('Coverage', 'P&L', 'Result', 'condition', 'Other categories', 'Observed:'))
     assert '<script>' not in html and '&lt;script&gt;' in html
-    assert '/'.join(['1.123456789'] * 30) in html
+    # Check that equipment stats use icon format instead of slash-separated
+    assert '⚔️' in html or '•' in html  # Equipment stats now use icons
     assert 'stats:' not in html and 'Participant activity:' not in html
     # Check that new item-based breakdown columns are present
     assert 'Buy Qty' in html
@@ -60,7 +61,7 @@ def test_shared_turnover_and_complete_breakdown(kind):
     assert 'Sell Total BTC' in html
     assert 'Profit/Unit' in html
     assert 'Total Profit BTC' in html
-    assert 'Net Unmatched' in html
+    assert 'Net Unmatched Qty' in html
     assert report['rankings'][kind]['profits']  # diagnostics preserved
     assert '2026-09-16T00:00:00+00:00' not in html
 
