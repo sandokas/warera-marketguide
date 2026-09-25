@@ -2145,7 +2145,8 @@ def calculate_participant_rankings(trades, *, as_of, sources=None):
                 "missing_money_count": 0, "invalid_quantity_count": 0,
                 "sale_count": 0, "net_matched_quantity": Fraction(0),
                 "unknown_fee_quantity": Fraction(0), "equal_timestamp_order": False,
-                "_categories": {"buy": {}, "sell": {}}}
+                "_categories": {"buy": {}, "sell": {}},
+                "_item_categories": {}}
         return entities[key]
 
     def add_optional(row, field, amount):
@@ -2228,6 +2229,34 @@ def calculate_participant_rankings(trades, *, as_of, sources=None):
                 detail["trade_count"] += 1
                 detail["missing_money_count"] += money is None
                 detail["missing_quantity_count"] += quantity is None
+                
+                # Also track by item for combined buy/sell view
+                item_key = category
+                item_detail = row["_item_categories"].setdefault(item_key, {
+                    "category": category, "item_code": trade.get("item_code"),
+                    "market_type": trade["transaction_type"],
+                    "buy_quantity": Fraction(0), "buy_gross_money": Fraction(0), "buy_source_money": Fraction(0),
+                    "sell_quantity": Fraction(0), "sell_gross_money": Fraction(0), "sell_source_money": Fraction(0),
+                    "buy_trade_count": 0, "sell_trade_count": 0,
+                    "buy_missing_money_count": 0, "sell_missing_money_count": 0,
+                    "buy_missing_quantity_count": 0, "sell_missing_quantity_count": 0
+                })
+                if side == "buy":
+                    item_detail["buy_quantity"] += quantity or 0
+                    item_detail["buy_gross_money"] = (None if gross is None or item_detail["buy_gross_money"] is None
+                                                     else item_detail["buy_gross_money"] + gross)
+                    item_detail["buy_source_money"] += money or 0
+                    item_detail["buy_trade_count"] += 1
+                    item_detail["buy_missing_money_count"] += money is None
+                    item_detail["buy_missing_quantity_count"] += quantity is None
+                else:  # sell
+                    item_detail["sell_quantity"] += quantity or 0
+                    item_detail["sell_gross_money"] = (None if gross is None or item_detail["sell_gross_money"] is None
+                                                      else item_detail["sell_gross_money"] + gross)
+                    item_detail["sell_source_money"] += money or 0
+                    item_detail["sell_trade_count"] += 1
+                    item_detail["sell_missing_money_count"] += money is None
+                    item_detail["sell_missing_quantity_count"] += quantity is None
             lots = inventory[lot_key] if not equipment else deque()
             if equipment and lineage and item_lot and item_lot[0] == key:
                 lots.append(item_lot[1])
@@ -2346,6 +2375,63 @@ def calculate_participant_rankings(trades, *, as_of, sources=None):
                 "trade_count": sum(c["trade_count"] for c in ordered[3:]),
                 "share": sum((c["money"] for c in ordered[3:]), Fraction(0)) / total
                          if total and not row["missing_money_count"] else None}
+        
+        # Process item-based categories with buy/sell combined and profit/loss calculations
+        row["item_categories"] = []
+        for item_key, item_detail in row.pop("_item_categories").items():
+            # Use gross money if verified, otherwise source money
+            buy_money = item_detail["buy_gross_money"] if verified_gross else item_detail["buy_source_money"]
+            sell_money = item_detail["sell_gross_money"] if verified_gross else item_detail["sell_source_money"]
+            
+            # Calculate average prices
+            buy_avg_price = float(buy_money) / float(item_detail["buy_quantity"]) if item_detail["buy_quantity"] > 0 and buy_money is not None else None
+            sell_avg_price = float(sell_money) / float(item_detail["sell_quantity"]) if item_detail["sell_quantity"] > 0 and sell_money is not None else None
+            
+            # Calculate profit/loss
+            profit_loss_per_unit = None
+            profit_loss_btc = None
+            matched_quantity = min(item_detail["buy_quantity"], item_detail["sell_quantity"])
+            
+            if buy_avg_price is not None and sell_avg_price is not None and matched_quantity > 0:
+                profit_loss_per_unit = sell_avg_price - buy_avg_price
+                profit_loss_btc = profit_loss_per_unit * matched_quantity
+            
+            # Calculate unmatched quantities
+            unmatched_buy = item_detail["buy_quantity"] - matched_quantity
+            unmatched_sell = item_detail["sell_quantity"] - matched_quantity
+            
+            item_category = {
+                "category": item_detail["category"],
+                "item_code": item_detail["item_code"],
+                "market_type": item_detail["market_type"],
+                "buy_quantity": item_detail["buy_quantity"],
+                "buy_avg_price": buy_avg_price,
+                "buy_total_value": buy_money,
+                "buy_trade_count": item_detail["buy_trade_count"],
+                "buy_missing_money_count": item_detail["buy_missing_money_count"],
+                "buy_missing_quantity_count": item_detail["buy_missing_quantity_count"],
+                "sell_quantity": item_detail["sell_quantity"],
+                "sell_avg_price": sell_avg_price,
+                "sell_total_value": sell_money,
+                "sell_trade_count": item_detail["sell_trade_count"],
+                "sell_missing_money_count": item_detail["sell_missing_money_count"],
+                "sell_missing_quantity_count": item_detail["sell_missing_quantity_count"],
+                "profit_loss_per_unit": profit_loss_per_unit,
+                "profit_loss_btc": profit_loss_btc,
+                "matched_quantity": matched_quantity,
+                "unmatched_buy_quantity": unmatched_buy,
+                "unmatched_sell_quantity": unmatched_sell
+            }
+            row["item_categories"].append(item_category)
+        
+        # Sort item categories by total turnover (buy + sell)
+        row["item_categories"] = sorted(
+            row["item_categories"],
+            key=lambda c: -((c["buy_total_value"] or 0) + (c["sell_total_value"] or 0))
+        )
+        
+        # Keep top items for display
+        row["top_items"] = row["item_categories"][:10]
     # One money basis per report: never compare mixed gross/source totals.
     turnover_field = "gross_turnover" if verified_gross else "source_turnover"
     rankings = {}

@@ -51,7 +51,11 @@ def test_shared_turnover_and_complete_breakdown(kind):
     assert '<script>' not in html and '&lt;script&gt;' in html
     assert '/'.join(['1.123456789'] * 30) in html
     assert 'stats:' not in html and 'Participant activity:' not in html
-    assert '100.00%' in html
+    # Check that new item-based breakdown columns are present
+    assert 'Buy (qty @ avg)' in html
+    assert 'Sell (qty @ avg)' in html
+    assert 'Profit/Unit' in html
+    assert 'Total Profit BTC' in html
     assert report['rankings'][kind]['profits']  # diagnostics preserved
     assert '2026-09-16T00:00:00+00:00' not in html
 
@@ -85,19 +89,20 @@ def test_all_categories_missingness_and_top_ten(kind, side):
     html = _participant_html(report)
     detail = html.split(f'data-table-id="participants-{kind}-explanations"')[1].split('</table>')[0]
     winner = next(r for r in report['entities'] if r['entity_id']=='winner')
-    # Only top 3 items are shown in breakdown table for each user
-    for c in winner['top_' + side]:
-        assert c['item_code'] in detail
-    # Check that average price column exists
-    assert 'Avg Price' in detail
+    # Check that top items are shown in the new item-based breakdown table
+    for item in winner.get('top_items', []):
+        assert item['item_code'] in detail
+    # Check that new columns exist
+    assert 'Buy (qty @ avg)' in detail
+    assert 'Sell (qty @ avg)' in detail
+    assert 'Profit/Unit' in detail
     assert 'commodity0' in detail
-    assert '21.000' in detail  # Average price for commodity0: 105/5 = 21
     # Missing data should still be handled properly
     assert 'condition' not in html
     assert len(report['rankings'][kind]['volume']) == 10
-    # Each user in top 10 should only show their top 3 items
+    # Each user in top 10 should only show their top items (limited to 10)
     actor4 = next(r for r in report['entities'] if r['entity_id']=='actor4')
-    assert len(actor4['top_' + side]) <= 3
+    assert len(actor4.get('top_items', [])) <= 10
     assert all(x not in html for x in ('Other categories', 'Remaining items', 'Mixed items'))
 
 
@@ -130,6 +135,18 @@ def test_precise_exports_full_stats_formula_protection_and_source_unchanged(tmp_
     assert sale['money'] == equipment['money']
     assert sale['participants_buy_user_id'] == "'@actor"
     assert len(read('participant_trade_stats_7d.csv')) == 30
+    # Check new item-based breakdown CSV
+    item_breakdown = read('participant_item_breakdown_7d.csv')
+    assert len(item_breakdown) > 0
+    helmet_item = next(r for r in item_breakdown if r['item_code'] == 'helmet')
+    assert helmet_item['state'] == '0' and helmet_item['max_state'] == '100'
+    assert 'condition 0/100' in helmet_item['description']
+    # Check that profit/loss fields exist
+    assert 'profit_loss_per_unit' in helmet_item
+    assert 'profit_loss_btc' in helmet_item
+    assert 'buy_quantity' in helmet_item
+    assert 'sell_quantity' in helmet_item
+    # Legacy breakdown should still exist for compatibility
     category = next(r for r in read('participant_trade_breakdown_7d.csv') if r['item_code'] == 'helmet')
     assert category['state'] == '0' and category['max_state'] == '100'
     assert 'condition 0/100' in category['description']
@@ -139,5 +156,5 @@ def test_precise_exports_full_stats_formula_protection_and_source_unchanged(tmp_
 
 def test_empty_csvs_have_headers(tmp_path):
     write_outputs(frame(), tmp_path, participant_report=calculate_participant_rankings([], as_of=NOW), equipment_details=[])
-    for name in ('participant_rankings_7d','participant_trade_breakdown_7d','equipment_sales_7d','equipment_sale_stats_7d'):
+    for name in ('participant_rankings_7d','participant_item_breakdown_7d','participant_trade_breakdown_7d','equipment_sales_7d','equipment_sale_stats_7d'):
         assert len((tmp_path / (name + '.csv')).read_text().splitlines()) == 1

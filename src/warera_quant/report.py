@@ -2248,6 +2248,12 @@ def _category_description(category, *, include_condition=False):
         text += "; stats: " + ("unknown" if stats is None else ", ".join(f"{k}={v}" for k, v in stats) or "none")
         if include_condition:
             text += f"; condition {_participant_value(signature[3])}/{_participant_value(signature[4])}"
+    elif len(signature) > 2 and signature[2] is not None:
+        # Handle case where stats might be directly in the category dict
+        stats = signature[2]
+        text += "; stats: " + (", ".join(f"{k}={v}" for k, v in stats) or "none")
+        if include_condition and len(signature) > 4:
+            text += f"; condition {_participant_value(signature[3])}/{_participant_value(signature[4])}"
     return text
 
 
@@ -2381,18 +2387,35 @@ def _participant_html(report):
             tops = [_DisplayHtml('<div class="horizontal-items">' + ' '.join(str(_category_html(c)) for c in row['top_' + side]) + '</div>' if row['top_' + side] else 'No observed activity') for side in ('buy', 'sell')]
             rows.append([rank, name,
                          _participant_amount(row[prefix + '_turnover'], row['missing_money_count'], count), *tops])
-            for side in ('buy', 'sell'):
-                for c in row['top_' + side]:
-                    share = 'Unknown' if c['share'] is None else f"{c['share'] * 100:.2f}%"
-                    avg_price = _fmt_report_value(c.get('average_price'), column='average price')
-                    details.append([name, side.title(), _category_html(c),
-                        _participant_amount(c['money'], c['missing_money_count'], c['trade_count']),
-                        _participant_amount(c['quantity'], c['missing_quantity_count'], c['trade_count']),
-                        avg_price, share, c['trade_count']])
+            
+            # New item-based breakdown with buy/sell combined
+            for item in row.get('top_items', []):
+                buy_qty = _participant_amount(item['buy_quantity'], item['buy_missing_quantity_count'], item['buy_trade_count'])
+                buy_avg = _fmt_report_value(item['buy_avg_price'], column='average price')
+                buy_total = _participant_amount(item['buy_total_value'], item['buy_missing_money_count'], item['buy_trade_count'])
+                sell_qty = _participant_amount(item['sell_quantity'], item['sell_missing_quantity_count'], item['sell_trade_count'])
+                sell_avg = _fmt_report_value(item['sell_avg_price'], column='average price')
+                sell_total = _participant_amount(item['sell_total_value'], item['sell_missing_money_count'], item['sell_trade_count'])
+                
+                # Format profit/loss
+                profit_per_unit = _fmt_report_value(item['profit_loss_per_unit'], column='profit per unit')
+                profit_total = _fmt_report_value(item['profit_loss_btc'], column='total profit')
+                
+                # Format remaining inventory
+                remaining_buy = _participant_amount(item['unmatched_buy_quantity'], None, 0)
+                remaining_sell = _participant_amount(item['unmatched_sell_quantity'], None, 0)
+                
+                details.append([name, _category_html(item),
+                    f"{buy_qty} @ {buy_avg}", buy_total,
+                    f"{sell_qty} @ {sell_avg}", sell_total,
+                    profit_per_unit, profit_total,
+                    f"+{remaining_buy}" if float(item['unmatched_buy_quantity'] or 0) > 0 else remaining_buy,
+                    f"+{remaining_sell}" if float(item['unmatched_sell_quantity'] or 0) > 0 else remaining_sell])
+        
         blocks.append(table(f'participants-{kind}-volume', f'{label} - monetary turnover',
             ['Rank', {'user': 'User', 'mu': 'MU', 'country': 'Country'}[kind], '7D Turnover BTC', 'Bought', 'Sold'], rows))
-        blocks.append(table(f'participants-{kind}-explanations', f'{label} - buy/sell breakdown',
-            [{'user': 'User', 'mu': 'MU', 'country': 'Country'}[kind], 'Side', 'Item / full stats', '7D Value BTC', 'Units', 'Avg Price', 'Side share', 'Trades'], details))
+        blocks.append(table(f'participants-{kind}-explanations', f'{label} - item breakdown (buy/sell combined)',
+            [{'user': 'User', 'mu': 'MU', 'country': 'Country'}[kind], 'Item', 'Buy (qty @ avg)', 'Buy Total BTC', 'Sell (qty @ avg)', 'Sell Total BTC', 'Profit/Unit', 'Total Profit BTC', 'Unmatched Buy', 'Unmatched Sell'], details))
     return ''.join(blocks)
 
 
@@ -2430,8 +2453,31 @@ def _write_participant_exports(out, report, equipment_details):
         for kind, boards in report['rankings'].items():
             for board, rows in boards.items():
                 for rank, row in enumerate(rows, 1):
-                    rankings.append({**common, 'ranking_kind': board, 'rank': rank, **flat({k:v for k,v in row.items() if k not in ('categories','top_buy','top_sell','other_buy','other_sell','identity')}), 'name':row.get('name') or row['entity_id']})
+                    rankings.append({**common, 'ranking_kind': board, 'rank': rank, **flat({k:v for k,v in row.items() if k not in ('categories','top_buy','top_sell','other_buy','other_sell','identity','item_categories','top_items')}), 'name':row.get('name') or row['entity_id']})
         write('participant_rankings_7d.csv', rankings, ['entity_kind','entity_id','name','ranking_kind','rank','as_of','matched_net_pnl'])
+        
+        # New item-based breakdown CSV
+        item_breakdown = []
+        for row in report['entities']:
+            for index, item in enumerate(row.get('item_categories', []), 1):
+                key = {'entity_kind':row['entity_kind'], 'entity_id':row['entity_id'], 'item_index':index}
+                sig = item['category']
+                # Create a compatible category dict for description function
+                category_for_desc = {'category': sig, 'item_code': item['item_code']}
+                item_row = {**common, **key, 'name':row.get('name') or row['entity_id'],
+                    'item_code':item['item_code'], 'market_type':item['market_type'],
+                    'buy_quantity':item['buy_quantity'], 'buy_avg_price':item['buy_avg_price'], 'buy_total_value':item['buy_total_value'],
+                    'buy_trade_count':item['buy_trade_count'], 'buy_missing_money_count':item['buy_missing_money_count'], 'buy_missing_quantity_count':item['buy_missing_quantity_count'],
+                    'sell_quantity':item['sell_quantity'], 'sell_avg_price':item['sell_avg_price'], 'sell_total_value':item['sell_total_value'],
+                    'sell_trade_count':item['sell_trade_count'], 'sell_missing_money_count':item['sell_missing_money_count'], 'sell_missing_quantity_count':item['sell_missing_quantity_count'],
+                    'profit_loss_per_unit':item['profit_loss_per_unit'], 'profit_loss_btc':item['profit_loss_btc'],
+                    'matched_quantity':item['matched_quantity'], 'unmatched_buy_quantity':item['unmatched_buy_quantity'], 'unmatched_sell_quantity':item['unmatched_sell_quantity'],
+                    'signature_version':sig[0], 'state':sig[3] if len(sig)>2 else None, 'max_state':sig[4] if len(sig)>2 else None,
+                    'description':_category_description(category_for_desc, include_condition=True)}
+                item_breakdown.append(item_row)
+        write('participant_item_breakdown_7d.csv', item_breakdown, ['entity_kind','entity_id','item_index','as_of'])
+        
+        # Keep legacy side-based breakdown for compatibility
         breakdown = []
         stats = []
         for row in report['entities']:
