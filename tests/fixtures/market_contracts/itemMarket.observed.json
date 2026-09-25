@@ -1,0 +1,133 @@
+{
+  "result": {
+    "data": {
+      "items": [
+        {
+          "_id": "000000000000000000000014",
+          "money": 109.1,
+          "itemCode": "pants5",
+          "quantity": 1,
+          "sellerId": "000000000000000000000015",
+          "buyerId": "000000000000000000000016",
+          "transactionType": "itemMarket",
+          "item": {
+            "_id": "000000000000000000000017",
+            "type": "equipment",
+            "code": "pants5",
+            "skills": {
+              "armor": 39
+            },
+            "state": 100,
+            "maxState": 100,
+            "quantity": 1,
+            "lastAcquisitionAt": "2026-09-21T17:21:10.451Z"
+          },
+          "offerCreatedAt": "2026-09-22T20:35:18.887Z",
+          "createdAt": "2026-09-22T20:35:41.478Z",
+          "updatedAt": "2026-09-22T20:35:41.478Z",
+          "__v": 0
+        },
+        {
+          "_id": "000000000000000000000018",
+          "money": 12.23,
+          "itemCode": "boots3",
+          "quantity": 1,
+          "sellerId": "000000000000000000000019",
+          "buyerId": "00000000000000000000001a",
+          "transactionType": "itemMarket",
+          "item": {
+            "_id": "00000000000000000000001b",
+            "type": "equipment",
+            "code": "boots3",
+            "skills": {
+              "dodge": 14
+            },
+            "state": 100,
+            "maxState": 100,
+            "quantity": 1,
+            "lastAcquisitionAt": "2026-09-10T01:43:03.157Z"
+          },
+          "offerCreatedAt": "2026-09-22T20:26:03.849Z",
+          "createdAt": "2026-09-22T20:35:35.392Z",
+          "updatedAt": "2026-09-22T20:35:35.392Z",
+          "__v": 0
+        },
+        {
+          "_id": "00000000000000000000001c",
+          "money": 39.9,
+          "itemCode": "sniper",
+          "quantity": 1,
+          "sellerId": "00000000000000000000001d",
+          "buyerId": "00000000000000000000001e",
+          "transactionType": "itemMarket",
+          "item": {
+            "_id": "00000000000000000000001f",
+            "code": "sniper",
+            "skills": {
+              "attack": 108,
+              "criticalChance": 16
+            },
+            "state": 100,
+            "maxState": 100,
+            "quantity": 1,
+            "lastAcquisitionAt": "2026-09-22T20:20:21.105Z"
+          },
+          "offerCreatedAt": "2026-09-22T20:21:53.438Z",
+          "createdAt": "2026-09-22T20:35:19.900Z",
+          "updatedAt": "2026-09-22T20:35:19.900Z",
+          "__v": 0
+        },
+        {
+          "_id": "000000000000000000000020",
+          "money": 50.12,
+          "itemCode": "gloves4",
+          "quantity": 1,
+          "sellerId": "000000000000000000000021",
+          "buyerId": "000000000000000000000022",
+          "transactionType": "itemMarket",
+          "item": {
+            "_id": "000000000000000000000023",
+            "type": "equipment",
+            "code": "gloves4",
+            "skills": {
+              "precision": 21
+            },
+            "state": 100,
+            "maxState": 100,
+            "quantity": 1,
+            "lastAcquisitionAt": "2026-09-22T20:18:30.591Z"
+          },
+          "offerCreatedAt": "2026-09-22T20:27:24.412Z",
+          "createdAt": "2026-09-22T20:35:17.485Z",
+          "updatedAt": "2026-09-22T20:35:17.485Z",
+          "__v": 0
+        },
+        {
+          "_id": "000000000000000000000024",
+          "money": 45.938,
+          "itemCode": "helmet4",
+          "quantity": 1,
+          "sellerId": "000000000000000000000021",
+          "buyerId": "000000000000000000000025",
+          "transactionType": "itemMarket",
+          "item": {
+            "_id": "000000000000000000000026",
+            "type": "equipment",
+            "code": "helmet4",
+            "skills": {
+              "criticalDamages": 74
+            },
+            "state": 100,
+            "maxState": 100,
+            "quantity": 1,
+            "lastAcquisitionAt": "2026-09-22T20:19:34.476Z"
+          },
+          "offerCreatedAt": "2026-09-22T20:29:46.568Z",
+          "createdAt": "2026-09-22T20:35:09.848Z",
+          "updatedAt": "2026-09-22T20:35:09.848Z",
+          "__v": 0
+        }
+      ]
+    }
+  }
+}

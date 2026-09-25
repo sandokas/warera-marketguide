@@ -51,12 +51,14 @@ def test_from_db_preserves_structured_order_book_for_report(monkeypatch, tmp_pat
                 status="complete",
             )
 
-        def item_codes(self):
+        def item_codes(self, *, transaction_type="trading"):
             return []
 
         def transactions_for_period(self, _item_codes, _start_epoch, _end_epoch):
             return []
 
+    monkeypatch.setattr(cli_module, "load_participant_report", lambda *a, **k: None)
+    monkeypatch.setattr(cli_module, "iter_equipment_sale_details", lambda *a, **k: iter(()))
     captured = {}
     book = {"best_bid": 9, "best_ask": 10, "bids": [], "asks": []}
     monkeypatch.setattr(cli_module, "MarketStore", DummyStore)
@@ -192,3 +194,85 @@ def test_display_settings_do_not_change_download_window():
     assert (args.item_chart_days, args.we24_days, args.research_days, args.lookback_days) == (14, 60, 90, 180)
     defaults = build_parser().parse_args([])
     assert (defaults.item_chart_days, defaults.chart_interval, defaults.we24_days) == (30, "4h", 30)
+
+
+@pytest.mark.parametrize("flags", [
+    ["--resync-market"], ["--sync", "--history-scope", "7d"],
+    ["--sync", "--resync-market", "--history-scope", "all", "--history-pages", "1"],
+    ["--sync", "--resync-market", "--history-scope", "7d", "--history-pages", "1"],
+    ["--sync", "--resync-market", "--history-scope", "7d", "--exclude-item-code", "bread"],
+    ["--from-db", "--resync-market", "--history-scope", "7d"],
+])
+def test_recent_enrichment_validates_before_api_construction(monkeypatch, flags):
+    def forbidden(*args, **kwargs):
+        pytest.fail("API constructed for invalid CLI scope")
+    monkeypatch.setattr(cli_module, "WarEraApiClient", forbidden)
+    monkeypatch.setattr(sys, "argv", ["warera-marketguide", *flags])
+    with pytest.raises(SystemExit):
+        main()
+
+
+@pytest.mark.parametrize("scope", ["7d", "all"])
+def test_recent_enrichment_command_wires_scope_independently(tmp_path, monkeypatch, scope):
+    captured = {}
+    monkeypatch.setattr(cli_module, "WarEraApiClient", lambda **kw: object())
+    monkeypatch.setattr(cli_module, "WarEraMarketApi", lambda client: object())
+    def sync(api, store, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace()
+    monkeypatch.setattr(cli_module, "sync_market_data", sync)
+    monkeypatch.setattr(cli_module, "load_market_rows", lambda *a, **k: [])
+    monkeypatch.setattr(sys, "argv", ["warera-marketguide", "--sync", "--resync-market",
+        "--history-scope", scope, "--lookback-days", "30", "--market-db", str(tmp_path / "db"), "--quiet"])
+    main()
+    assert captured["resync_market"] and captured["history_scope"] == scope
+    assert captured["lookback_days"] == 30
+
+
+def test_from_db_never_constructs_api_with_equipment_participants(tmp_path, monkeypatch):
+    from warera_quant.warera_api import normalize_transaction
+    path = tmp_path / "db"
+    with MarketStore(path) as store:
+        store.ingest_transactions([normalize_transaction({"_id": "e", "itemCode": "weapon",
+            "transactionType": "itemMarket", "createdAt": "2026-09-23T00:00:00Z", "buyerId": "needs-name"})])
+        store.upsert_transactions("bread", [{"_id": "c", "createdAt": "2026-09-23T00:00:00Z", "money": 3, "quantity": 1}])
+    def forbidden(*a, **k):
+        pytest.fail("Offline report attempted network construction")
+    monkeypatch.setattr(cli_module, "WarEraApiClient", forbidden)
+    monkeypatch.setattr(cli_module, "write_outputs", lambda df, output_dir, **kw: (output_dir / "x.csv", output_dir / "x.html"))
+    monkeypatch.setattr(sys, "argv", ["warera-marketguide", "--from-db", "--market-db", str(path),
+                                    "--output", str(tmp_path / "out"), "--quiet"])
+    main()
+
+
+def test_as_of_offline_participant_and_equipment_exports(monkeypatch, tmp_path):
+    from test_participant_market_data import fact, ingest, NOW
+    import csv
+    path = tmp_path / 'market.db'
+    with MarketStore(path) as store:
+        ingest(store, [fact('start', -7), fact('inside', -1), fact('excluded', 0),
+            fact('equipment', -2, equipment={'_id':'helmet-id','code':'helmet','skills':{'attack':3}}),
+            fact('equipment-excluded', 0, equipment={'_id':'future','code':'helmet','skills':{'attack':8}})])
+    monkeypatch.setattr(cli_module, 'WarEraApiClient', lambda **k: pytest.fail('offline report attempted API'))
+    out = tmp_path / 'output'
+    monkeypatch.setattr(sys, 'argv', ['warera-quant','--from-db','--market-db',str(path),'--output',str(out),
+        '--as-of','2026-09-23T01:00:00+01:00','--quiet'])
+    main()
+    first = (out / 'participant_rankings_7d.csv').read_bytes()
+    main()
+    assert (out / 'participant_rankings_7d.csv').read_bytes() == first
+    with (out / 'participant_rankings_7d.csv').open() as f:
+        rows = list(csv.DictReader(f))
+    assert all(r['as_of'] == NOW.isoformat() for r in rows)
+    assert all(r['source_turnover'] == '30' for r in rows)
+    with (out / 'equipment_sales_7d.csv').open() as f:
+        assert [r['id'] for r in csv.DictReader(f)] == ['equipment']
+    html = (out / 'market_report.html').read_text(encoding='utf-8')
+    assert 'data-item-code="helmet"' not in html
+    assert 'participants-user-volume' in html
+
+
+@pytest.mark.parametrize('value', ['2026-09-23', 'not-a-date'])
+def test_as_of_requires_timezone(value):
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(['--as-of', value])

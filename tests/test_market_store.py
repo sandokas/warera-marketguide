@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from dataclasses import replace
+from decimal import Decimal
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
 from warera_quant.market_store import LATEST_SCHEMA_VERSION, MarketStore, SyncSummary, migrate_to_v1
-from warera_quant.warera_api import OrderLevel, TopOrders
+from warera_quant.warera_api import OrderLevel, TopOrders, normalize_transaction, WarEraMarketApi
+from warera_quant.market_models import ScalarField, StreamProgress, EnrichmentCoverage
 
 
 def _store(tmp_path: Path) -> MarketStore:
@@ -26,6 +30,11 @@ def test_initialize_creates_schema_tables(tmp_path):
             "item_production_config",
             "item_sync_state",
             "schema_meta",
+            "transaction_participants", "transaction_equipment", "transaction_equipment_stats",
+            "transaction_field_state", "transaction_extra_fields", "order_book_entries",
+            "order_entry_field_state", "order_entry_extra_fields", "market_entities",
+            "market_ingestion_state", "market_enrichment_coverage",
+            "display_assets", "equipment_display",
         }
 
 
@@ -390,3 +399,241 @@ def test_existing_database_infers_initial_sync_metadata_from_latest_observation(
     assert metadata is not None
     assert metadata.synced_at == "2026-07-20T12:00:00Z"
     assert metadata.status == "inferred"
+
+
+# Phase 1 normalized storage acceptance tests.
+def _sale(**updates):
+    source = {"_id": "sale", "itemCode": "weapon", "transactionType": "itemMarket",
+              "createdAt": "2026-09-22T10:00:00.123456789Z", "updatedAt": "2026-09-22T10:00:01.123456Z",
+              "money": Decimal("36.4800000000000040001"), "quantity": 1,
+              "buyerId": "actor-b", "buyerCountryId": "country", "sellerId": "actor-s", "sellerMuId": "mu",
+              "item": {"_id": "instance", "code": "weapon", "quantity": 7,
+                       "state": 0, "maxState": 100, "lastAcquisitionAt": "2026-09-20T12:00:00.123Z",
+                       "skills": {"attack": Decimal("1.234567890123456789"), "dodge": 0}}}
+    source.update(updates)
+    return normalize_transaction(source)
+
+
+def test_duplicate_enrichment_and_precision_preserve_equipment_and_skills(tmp_path):
+    with _store(tmp_path) as store:
+        minimal = normalize_transaction({"_id": "sale", "itemCode": "weapon", "transactionType": "itemMarket",
+                                         "createdAt": "2026-09-22T10:00:00.123456789Z"})
+        first = store.ingest_transactions([minimal])
+        assert (first.inserted, first.enriched, first.unchanged, first.rejected) == (1, 0, 0, 0)
+        enriched = store.ingest_transactions([_sale()])
+        assert (enriched.inserted, enriched.enriched, enriched.unchanged) == (0, 1, 0)
+        replay = store.ingest_transactions([_sale(), minimal])
+        assert (replay.inserted, replay.enriched, replay.unchanged) == (0, 0, 2)
+        row = store.transaction_details("sale")
+        assert row["created_at"] == "2026-09-22T10:00:00.123456789Z"
+        assert row["created_at_us"] % 1000000 == 123456
+        assert row["money_decimal"] == "36.4800000000000040001"
+        assert row["quantity_decimal"] == "1"
+        assert row["equipment"][0]["item_quantity"] == "7"
+        assert row["equipment"][0]["equipment_type"] is None
+        assert {s["skill_code"]: s["value_decimal"] for s in row["stats"]} == {"attack": "1.234567890123456789", "dodge": "0"}
+        assert row["participants"][0]["country_id"] == "country"
+        assert row["participants"][1]["mu_id"] == "mu"
+        assert row["extras"] == []  # Item code and side facts already have typed destinations.
+        assert "weapon" not in store.item_codes()
+        assert store.transactions_for_window("weapon", 0) == []
+
+
+def test_newer_explicit_null_and_older_partial_responses(tmp_path):
+    with _store(tmp_path) as store:
+        store.ingest_transactions([_sale()])
+        # Same revision null cannot erase a known value.
+        store.ingest_transactions([_sale(buyerId=None, item={"skills": {"attack": None}})])
+        assert store.transaction_details("sale")["participants"][0]["user_id"] == "actor-b"
+        # A strictly newer source revision is an explicit correction, including null.
+        store.ingest_transactions([_sale(updatedAt="2026-09-22T10:00:02Z", buyerId=None,
+                                         item={"skills": {"attack": None, "newSkill": 9}})])
+        store.ingest_transactions([_sale(updatedAt="2026-09-22T09:59:00Z", buyerId="obsolete")])
+        row = store.transaction_details("sale")
+        assert row["participants"][0]["user_id"] is None
+        assert row["equipment"][0]["instance_id"] == "instance"
+        skills = {s["skill_code"]: s["value_decimal"] for s in row["stats"]}
+        assert skills == {"attack": None, "dodge": "0", "newSkill": "9"}
+        assert next(p for p in row["presence"] if p["field_path"] == "buy.user_id")["is_null"] == 1
+
+
+def test_missing_optional_and_explicit_null_are_distinct(tmp_path):
+    with _store(tmp_path) as store:
+        base = {"_id": "optional", "itemCode": "steel", "createdAt": "2026-09-22T10:00:00Z"}
+        store.ingest_transactions([normalize_transaction(base)])
+        assert not any(p["field_path"] == "buy.user_id" for p in store.transaction_details("optional")["presence"])
+        store.ingest_transactions([normalize_transaction({**base, "buyerId": None, "item": None})])
+        fields = {p["field_path"]: p["is_null"] for p in store.transaction_details("optional")["presence"]}
+        assert fields["buy.user_id"] == fields["equipment"] == 1
+        assert store.transaction_details("optional")["money_decimal"] is None
+
+
+def test_unknown_scalar_paths_types_and_metadata_exclusions(tmp_path):
+    fact = _sale(**{"__v": 99, "future": {"__v": 2, "a/b": [True, None, Decimal("0.000000000000000001"), "hi"],
+                                         "a~1b": False, "nextCursor": "business-value"}})
+    assert len(fact.diagnostics) == 6
+    with _store(tmp_path) as store:
+        store.ingest_transactions([fact])
+        row = store.transaction_details("sale")
+        extras = {e["field_path"]: (e["value_type"], e["scalar_value"]) for e in row["extras"]}
+        assert extras["/future/a~1b/0"] == ("boolean", "true")
+        assert extras["/future/a~1b/1"] == ("null", None)
+        assert extras["/future/a~1b/2"] == ("number", "0.000000000000000001")
+        assert extras["/future/a~01b"] == ("boolean", "false")
+        assert extras["/future/nextCursor"] == ("string", "business-value")
+        assert not any("__v" in p for p in extras)
+        assert row["normalization_status"] == "extensions"
+        assert store.ingest_transactions([fact]).unchanged == 1
+
+
+def test_atomic_children_and_page_progress(tmp_path):
+    with _store(tmp_path) as store:
+        invalid = replace(_sale(), participants={"invalid-side": {"user_id": "bad"}})
+        result = store.ingest_transactions([invalid])
+        assert result.rejected == 1 and result.inserted == 0
+        assert store.transaction_details("sale") is None
+        invalid_extra = replace(_sale(), extras=(ScalarField("/bad", "number", "NaN"),))
+        assert store.ingest_transactions([invalid_extra]).rejected == 1
+        assert store.transaction_details("sale") is None
+        progress = StreamProgress("itemMarket", pages=1, inserted=1)
+        coverage = EnrichmentCoverage("itemMarket", "2026-09-21T00:00:00Z", "2026-09-23T00:00:00Z", "test scan", "bounded", "2026-09-23T00:00:00Z")
+        store.ingest_transactions([_sale()], progress=progress, coverage=coverage)
+        assert store.stream_status("itemMarket")["progress"]["pages"] == 1
+        assert len(store.stream_status("itemMarket")["coverage"]) == 1
+        assert store.stream_status("trading")["progress"] is None
+        bad_coverage = replace(coverage, end_at=coverage.start_at)
+        with pytest.raises(ValueError):
+            store.ingest_transactions([_sale(_id="rolled-back")], progress=replace(progress, pages=2), coverage=bad_coverage)
+        assert store.transaction_details("rolled-back") is None
+        assert store.stream_status("itemMarket")["progress"]["pages"] == 1
+        assert store.transaction_details("sale") is not None
+
+
+def test_per_sale_equipment_snapshot_not_mutable_instance(tmp_path):
+    with _store(tmp_path) as store:
+        store.ingest_transactions([_sale(), _sale(_id="resale", item={"_id": "instance", "code": "weapon", "state": 33, "skills": {"attack": 4}})])
+        assert store.transaction_details("sale")["equipment"][0]["state"] == "0"
+        assert store.transaction_details("resale")["equipment"][0]["state"] == "33"
+        assert len(store.transaction_details("sale")["stats"]) == 2
+
+
+def test_individual_orders_and_zero_placeholders_derive_compatible_depth(tmp_path):
+    class Client:
+        def get_json(self, endpoint, **kwargs):
+            return {"result": {"data": {"buyOrders": [
+                {"_id": "a", "price": Decimal("2.00000000000000001"), "quantity": 3, "user": None, "offerAt": "2026-09-22T01:00:00.001Z", "__v": 9},
+                {"_id": "b", "price": Decimal("2.00000000000000001"), "quantity": 4, "mu": "unit", "future": [True, None]},
+                {"_id": "zero-price", "price": 0, "quantity": 5},
+                {"_id": "zero-quantity", "price": 1, "quantity": 0}], "sellOrders": []}}}
+    orders = WarEraMarketApi(Client()).get_top_orders("steel", 4)
+    with _store(tmp_path) as store:
+        store.insert_order_book_observations({"steel": orders}, datetime.now(timezone.utc))
+        entries = store.order_entries(1)
+        assert [e["order_id"] for e in entries] == ["a", "b", "zero-price", "zero-quantity"]
+        assert entries[0]["price_decimal"] == "2.00000000000000001"
+        assert entries[0]["offer_at"].endswith(".001Z")
+        assert entries[0]["extras"] == []
+        assert len(entries[1]["extras"]) == 2
+        assert store.latest_order_book_with_levels("steel")["bids"] == [{"level_position": 0, "price": 2.0, "quantity": 7.0}]
+        broken = replace(orders, entries=(replace(orders.entries[0], side="bad"),))
+        with pytest.raises(Exception):
+            store.insert_order_book_observations({"steel": broken}, datetime.now(timezone.utc))
+        assert len(store.order_book_observations_for_window("steel", 0)) == 1
+
+
+def test_entity_names_are_optional_dated_cache(tmp_path):
+    with _store(tmp_path) as store:
+        assert store.entity_name("user", "one") is None
+        store.cache_entity_name("user", "one", "New", "2026-09-22T00:00:00Z", "ok")
+        store.cache_entity_name("user", "one", "Old", "2026-09-21T00:00:00Z", "ok")
+        assert store.entity_name("user", "one")["name"] == "New"
+        store.cache_entity_name("user", "one", None, "2026-09-23T00:00:00Z", "failed")
+        assert store.entity_name("user", "one")["name"] == "New"
+        assert store.entity_name("user", "one")["lookup_status"] == "failed"
+
+
+def test_transport_preserves_decimal_tokens_before_boundary(monkeypatch):
+    from requests import Response
+    from warera_quant.api_client import WarEraApiClient
+    response = Response()
+    response.status_code = 200
+    response._content = b'{"money":36.4800000000000040001}'
+    client = WarEraApiClient(api_key="test", min_interval_seconds=0)
+    monkeypatch.setattr(client.session, "request", lambda *args, **kwargs: response)
+    assert client.get_json("/test")["money"] == Decimal("36.4800000000000040001")
+
+
+@pytest.mark.parametrize("fixture", ["trading.observed.json", "itemMarket.observed.json"])
+def test_all_observed_fixture_fields_have_typed_destinations(tmp_path, fixture):
+    path = Path(__file__).parent / "fixtures" / "market_contracts" / fixture
+    payload = json.loads(path.read_text(), parse_float=Decimal)
+    facts = [normalize_transaction(item) for item in payload["result"]["data"]["items"]]
+    assert all(not fact.extras and not fact.diagnostics for fact in facts)
+    with _store(tmp_path) as store:
+        result = store.ingest_transactions(facts)
+        assert result.inserted == len(facts) and result.rejected == 0
+        assert store.ingest_transactions(facts).unchanged == len(facts)
+        for source, fact in zip(payload["result"]["data"]["items"], facts):
+            row = store.transaction_details(fact.values["id"])
+            assert row["money_decimal"] == str(source["money"])
+            assert row["money_precision"] == "decimal"
+            assert row["offer_created_at"] == source["offerCreatedAt"]
+            assert row["updated_at"] == source["updatedAt"]
+            assert row["created_at"] == source["createdAt"]
+            assert row["extras"] == []
+            if "item" in source:
+                assert len(row["stats"]) == len(source["item"]["skills"])
+
+
+def test_equipment_is_filtered_at_all_commodity_query_boundaries(tmp_path):
+    with _store(tmp_path) as store:
+        store.ingest_transactions([_sale(itemCode="steel")])
+        store.ingest_transactions([normalize_transaction({"_id": "unclassified", "itemCode": "unknown", "createdAt": "2026-09-22T10:00:00Z"})])
+        store.upsert_transactions("steel", [{"_id": "commodity", "createdAt": "2026-09-22T10:00:00Z", "money": 6, "quantity": 3}])
+        assert store.item_codes(transaction_type="trading") == ["steel"]
+        assert store.item_codes(transaction_type="itemMarket") == ["steel"]
+        assert store.item_codes(transaction_type=None) == ["steel", "unknown"]
+        assert [r["id"] for r in store.transactions_for_window("steel", 0)] == ["commodity"]
+        assert [r["id"] for r in store.transactions_for_period(["steel", "unknown"], 0, 9999999999)] == ["commodity"]
+        assert store.completed_daily_facts(["steel", "unknown"], 0, 9999999999)[0]["turnover"] == 6
+        assert store.transaction_details("sale")["transaction_type"] == "itemMarket"
+
+
+def test_housekeeping_cascades_new_children_and_trims_enrichment_coverage(tmp_path):
+    with _store(tmp_path) as store:
+        store.ingest_transactions([_sale()], progress=StreamProgress("itemMarket", oldest_at="2026-09-22T10:00:00Z", oldest_id="sale", status="exhausted"))
+        store.record_enrichment_coverage(EnrichmentCoverage("itemMarket", "2026-09-01T00:00:00Z", "2026-09-30T00:00:00Z", "test", "bounded", "2026-09-30T00:00:00Z"))
+        summary = store.run_housekeeping(retention_days=1, vacuum_interval_days=0, now=datetime(2026, 9, 25, tzinfo=timezone.utc))
+        assert summary.transactions_deleted == 1
+        assert store.transaction_details("sale") is None
+        for table in ("transaction_equipment", "transaction_equipment_stats", "transaction_participants", "transaction_field_state"):
+            assert store._connect().execute(f"select count(*) from {table}").fetchone()[0] == 0
+        assert store.stream_status("itemMarket")["coverage"][0]["start_at"] == "2026-09-24T00:00:00Z"
+        assert store.stream_status("itemMarket")["progress"]["status"] == "partial"
+
+
+def test_rejected_page_cannot_claim_coverage_or_advance_progress(tmp_path):
+    with _store(tmp_path) as store:
+        invalid = replace(_sale(), stats={"bad": "not-a-number"})
+        with pytest.raises(ValueError, match="Rejected"):
+            store.ingest_transactions([_sale(_id="good"), invalid], progress=StreamProgress("itemMarket", status="exhausted"))
+        assert store.transaction_details("good") is None
+        assert store.stream_status("itemMarket")["progress"] is None
+
+
+def test_invalid_source_shapes_are_rejected_without_partial_records(tmp_path):
+    with _store(tmp_path) as store:
+        base = {"_id": "bad", "createdAt": "2026-09-22T10:00:00Z"}
+        result = store.upsert_transactions("steel", [{**base, "item": [1, 2]}, {**base, "money": True}, {**base, "createdAt": "bad"}])
+        assert result.rejected == 3
+        assert store.transaction_details("bad") is None
+
+
+def test_idless_legacy_hash_does_not_change_when_request_context_supplies_type(tmp_path):
+    import hashlib
+    expected = hashlib.sha256(b"bread2026-06-30T09:45:00Z12.55").hexdigest()
+    with _store(tmp_path) as store:
+        store.upsert_transactions("bread", [{"createdAt": "2026-06-30T09:45:00Z", "money": "12.5", "quantity": "5"}])
+        row = store.transaction_details(expected)
+        assert row is not None
+        assert row["transaction_type"] == "trading"

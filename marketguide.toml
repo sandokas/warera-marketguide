@@ -1,8 +1,10 @@
 [housekeeping]
-# Raw market data older than this is deleted when --housekeeping is run.
+# Price and order observations older than this are deleted by --housekeeping.
 # Increasing this later cannot restore data that has already been pruned.
 enabled = true
 retention_days = 120
+# Preserve historical transactions independently of quote/order retention.
+transaction_retention_days = "all"
 
 # Rebuild the database at most this often when housekeeping finds deleted pages.
 # SQLite reuses deleted pages between rebuilds. Set to 0 to disable compaction.

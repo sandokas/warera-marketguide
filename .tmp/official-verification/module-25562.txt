@@ -1,0 +1,1 @@
+25562:(e,n,t)=>{"use strict";t.d(n,{RE:()=>a,XE:()=>o,ZU:()=>i,fe:()=>r});let d="https://media.warera.io".replace(/^https?:\/\//,"").replace(/\/+$/,""),i=d?"https://".concat(d):"",a=i?"".concat(i,"/images"):"/images/upload",r="https://media.warera.io/sounds",o=a}

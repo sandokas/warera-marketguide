@@ -155,7 +155,9 @@ def test_get_transaction_page_parses_items_next_cursor_and_input_params():
 
     page = api.get_transaction_page("steel", limit=25, cursor="current-page")
 
-    assert page.items == [{"id": "tx-1", "createdAt": "2026-06-30T10:00:00Z"}]
+    assert page.items[0].values["id"] == "tx-1"
+    assert page.items[0].values["created_at"] == "2026-06-30T10:00:00Z"
+    assert page.items[0].values["transaction_type"] == "trading"
     assert page.next_cursor == "next-page"
     endpoint, params = client.calls[0]
     assert endpoint == TRANSACTIONS_ENDPOINT
@@ -181,3 +183,78 @@ def test_get_transaction_page_rejects_malformed_responses(payload):
 
     with pytest.raises(WarEraApiError):
         api.get_transaction_page("steel", limit=25)
+
+
+@pytest.mark.parametrize("kind", ["trading", "itemMarket"])
+def test_global_pages_preserve_observed_fields(kind):
+    from pathlib import Path
+    from decimal import Decimal
+    response = json.loads((Path(__file__).parent / "fixtures" / "market_contracts" /
+                          f"{kind}.observed.json").read_text(), parse_float=Decimal)
+    # The representative subset is not itself a pagination-order fixture.
+    response["result"]["data"]["items"].sort(key=lambda r: r["createdAt"], reverse=True)
+    client = FakeClient([response])
+    page = WarEraMarketApi(client).get_transaction_page(transaction_type=kind, limit=100)
+    assert "itemCode" not in json.loads(client.calls[0][1]["input"])
+    for source, fact in zip(response["result"]["data"]["items"], page.items):
+        assert not fact.extras
+        assert fact.values["money_decimal"] == str(source["money"])
+        assert fact.values["offer_created_at"] == source["offerCreatedAt"]
+        for prefix, side in (("buyer", "buy"), ("seller", "sell")):
+            for suffix, dest in (("Id", "user_id"), ("MuId", "mu_id"), ("CountryId", "country_id")):
+                if prefix + suffix in source:
+                    assert fact.participants[side][dest] == source[prefix + suffix]
+        if "item" in source:
+            assert fact.equipment["instance_id"] == source["item"]["_id"]
+            assert fact.stats == {k: str(v) for k, v in source["item"]["skills"].items()}
+            assert fact.equipment.get("equipment_type") == source["item"].get("type")
+            for raw, dest in (("state", "state"), ("maxState", "max_state"), ("quantity", "item_quantity")):
+                assert fact.equipment[dest] == str(source["item"][raw])
+            assert fact.equipment["last_acquisition_at"] == source["item"]["lastAcquisitionAt"]
+
+
+def test_unknown_fields_visible_and_optional_equipment_fields_preserved(caplog):
+    from warera_quant.warera_api import normalize_transaction, normalize_order
+    source = {"_id": "x", "transactionType": "itemMarket", "itemCode": "newCode",
+              "createdAt": "2026-09-23T01:02:03.123456Z", "buyerId": "actor",
+              "buyerCountryId": "country", "buyerMuId": "mu", "sellerPartyId": "party",
+              "sellerId": None, "item": {"code": "newCode", "skills": {"new/skill": 0, "other": None},
+                                        "state": None, "__v": 2},
+              "new/field": [True, None, {"~key": "value"}], "__v": 3}
+    fact = normalize_transaction(source)
+    assert fact.participants["buy"] == {"user_id": "actor", "mu_id": "mu", "country_id": "country"}
+    assert fact.participants["sell"] == {"user_id": None, "party_id": "party"}
+    assert fact.stats == {"new/skill": "0", "other": None}
+    assert fact.equipment == {"equipment_code": "newCode", "state": None}
+    assert {e.path for e in fact.extras} == {"/new~1field/0", "/new~1field/1", "/new~1field/2/~0key"}
+    assert "Unknown transaction scalar retained" in caplog.text
+    order = normalize_order({"_id": "o", "price": 0, "quantity": 0, "country": "c",
+                             "party": "p", "custom": False, "__v": 1}, "bread", "bid", 0)
+    assert order.values["country_id"] == "c" and order.values["party_id"] == "p"
+    assert [e.path for e in order.extras] == ["/custom"]
+    assert "Unknown order scalar retained" in caplog.text
+
+
+@pytest.mark.parametrize("change", [{"transactionType": "itemMarket"}, {"itemCode": None},
+    {"createdAt": "bad"}, {"buyerMuId": {}}, {"item": {"skills": []}}, {"money": True}])
+def test_global_page_rejects_invalid_types_and_optional_shapes(change):
+    row = {"_id": "x", "itemCode": "newCode", "transactionType": "trading",
+           "createdAt": "2026-09-23T00:00:00Z", **change}
+    api = WarEraMarketApi(FakeClient([_trpc({"items": [row]})]))
+    with pytest.raises(WarEraApiError):
+        api.get_transaction_page(limit=100)
+
+
+def test_global_mixed_codes_allowed_but_timestamp_reversal_rejected():
+    rows = [{"_id": "a", "itemCode": "old", "createdAt": "2026-09-23T00:00:00.001Z"},
+            {"_id": "b", "itemCode": "new", "createdAt": "2026-09-23T00:00:00.002Z"}]
+    api = WarEraMarketApi(FakeClient([_trpc({"items": rows[::-1]}), _trpc({"items": rows})]))
+    assert len(api.get_transaction_page(limit=100).items) == 2
+    with pytest.raises(WarEraApiError, match="descending"):
+        api.get_transaction_page(limit=100)
+
+
+def test_missing_items_is_not_exhaustion():
+    api = WarEraMarketApi(FakeClient([_trpc({})]))
+    with pytest.raises(WarEraApiError, match="items list"):
+        api.get_transaction_page(limit=100)

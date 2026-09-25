@@ -1,350 +1,210 @@
-from __future__ import annotations
-
-from dataclasses import dataclass
+"""Global stream tests use the real boundary parser and a network-free transport."""
+import json
 from datetime import datetime, timezone
-from pathlib import Path
 
 import pytest
 
-from warera_quant.market_store import MarketStore, SyncSummary
+from warera_quant.market_store import MarketStore
 from warera_quant.sync import sync_market_data
-from warera_quant.warera_api import OrderLevel, TopOrders, TransactionPage
+from warera_quant.warera_api import (WarEraMarketApi, PRICES_ENDPOINT, GAME_CONFIG_ENDPOINT,
+                                    TOP_ORDERS_ENDPOINT, TRANSACTIONS_ENDPOINT, normalize_transaction)
+
+NOW = datetime(2026, 9, 23, 12, tzinfo=timezone.utc)
 
 
-@dataclass
-class PageResponse:
-    items: list[dict[str, object]]
-    next_cursor: str | None = None
+def trade(id="new", stamp="2026-09-23T10:00:00.001Z", code="bread", kind="trading", **extra):
+    return {"_id": id, "createdAt": stamp, "itemCode": code, "transactionType": kind,
+            "money": "12.001", "quantity": 4, **extra}
 
 
-class FakeMarketApi:
-    def __init__(self, pages: dict[tuple[str, str | None], PageResponse]):
-        self.pages = pages
-        self.calls: list[tuple[str, object]] = []
+class FakeClient:
+    def __init__(self, pages=None, order_error=False):
+        self.pages = pages or {}
+        self.calls = []
+        self.order_error = order_error
 
-    def get_prices(self) -> dict[str, float]:
-        self.calls.append(("get_prices", None))
-        return {"bread": 3.25}
-
-    def get_item_production_points(self) -> dict[str, float | None]:
-        self.calls.append(("get_item_production_points", None))
-        return {"bread": 10.0}
-
-    def get_top_orders(self, item_code: str, limit: int) -> TopOrders:
-        self.calls.append(("get_top_orders", (item_code, limit)))
-        return TopOrders(
-            buy_orders=[OrderLevel(3.10, 4)],
-            sell_orders=[OrderLevel(3.40, 2)],
-        )
-
-    def get_transaction_page(self, item_code: str, *, limit: int, cursor: str | None = None) -> TransactionPage:
-        self.calls.append(("get_transaction_page", (item_code, limit, cursor)))
-        response = self.pages[(item_code, cursor)]
-        return TransactionPage(items=response.items, next_cursor=response.next_cursor)
-
-
-def _store(tmp_path: Path) -> MarketStore:
-    store = MarketStore(tmp_path / "market.sqlite3")
-    store.initialize()
-    return store
+    def get_json(self, endpoint, *, params=None):
+        payload = json.loads(params["input"]) if params else None
+        self.calls.append((endpoint, payload))
+        if endpoint == PRICES_ENDPOINT:
+            data = {"bread": 3}
+        elif endpoint == GAME_CONFIG_ENDPOINT:
+            data = {"items": {"bread": {"isTradable": True, "productionPoints": 10}}}
+        elif endpoint == TOP_ORDERS_ENDPOINT:
+            if self.order_error:
+                raise RuntimeError("orders unavailable")
+            data = {"buyOrders": [{"_id": "a", "price": 2, "quantity": 3},
+                                  {"_id": "b", "price": 2, "quantity": 4}], "sellOrders": []}
+        elif endpoint == TRANSACTIONS_ENDPOINT:
+            assert "itemCode" not in payload
+            data = self.pages.get((payload["transactionType"], payload.get("cursor")), {"items": []})
+            if isinstance(data, Exception):
+                raise data
+        else:
+            raise AssertionError(endpoint)
+        return {"result": {"data": data}}
 
 
-def test_failure_recording_does_not_replace_original_sync_error(tmp_path, monkeypatch):
-    original = RuntimeError("transaction write failed")
-
-    def fail_write(*args, **kwargs):
-        raise original
-
-    def fail_record(*args, **kwargs):
-        raise RuntimeError("failure recording also failed")
-
-    api = FakeMarketApi({("bread", None): PageResponse(items=[])})
-    with _store(tmp_path) as store:
-        monkeypatch.setattr(store, "upsert_transactions", fail_write)
-        monkeypatch.setattr(store, "mark_item_sync_failure", fail_record)
-        with pytest.raises(RuntimeError, match="transaction write failed") as caught:
-            sync_market_data(api, store)
-    assert caught.value is original
-    assert "failure recording also failed" in original.__notes__[0]
+def run(store, client, **kwargs):
+    return sync_market_data(WarEraMarketApi(client), store, observed_at=NOW, **kwargs)
 
 
-def _transaction(transaction_id: str, created_at: str, money: str = "12", quantity: str = "4") -> dict[str, object]:
-    return {
-        "id": transaction_id,
-        "createdAt": created_at,
-        "transactionType": "trading",
-        "money": money,
-        "quantity": quantity,
-    }
-
-
-def test_incremental_sync_persists_observations_and_stops_at_high_water(tmp_path):
-    observed_at = datetime(2026, 6, 30, 10, 0, tzinfo=timezone.utc)
-    old_transaction = _transaction("tx-old", "2026-06-30T09:00:00Z")
-    api = FakeMarketApi(
-        {
-            (
-                "bread",
-                None,
-            ): PageResponse(
-                items=[
-                    _transaction("tx-new", "2026-06-30T09:30:00Z"),
-                    old_transaction,
-                ],
-                next_cursor="next-page",
-            ),
-            ("bread", "next-page"): PageResponse(
-                items=[_transaction("tx-older", "2026-06-30T08:30:00Z")],
-            ),
-        }
-    )
-
-    with _store(tmp_path) as store:
-        store.upsert_transactions("bread", [old_transaction], fetched_at=observed_at)
-        store.mark_item_sync_success(
-            "bread",
-            SyncSummary(
-                pages_fetched=1,
-                transactions_inserted=1,
-                newest_created_at="2026-06-30T09:00:00Z",
-                newest_created_at_epoch=1782810000,
-                newest_transaction_id="tx-old",
-                synced_at=observed_at,
-            ),
-        )
-
-        result = sync_market_data(api, store, order_limit=5, observed_at=observed_at)
-
-        assert result.prices_observed == 1
-        assert result.order_books_observed == 1
-        assert result.pages_fetched == 1
-        assert result.transactions_inserted == 1
-        assert result.items[0].stopped_at_high_water is True
-        assert ("get_transaction_page", ("bread", 100, "next-page")) not in api.calls
-        assert [row["id"] for row in store.transactions_for_window("bread", 0)] == ["tx-old", "tx-new"]
-        assert store.price_observations_for_window("bread", 0)[0]["current_price"] == 3.25
-        assert store.item_production_points() == {"bread": 10.0}
-        assert store.order_book_observations_for_window("bread", 0)[0]["best_bid"] == 3.1
-
-        state = store.get_item_state("bread")
-        assert state is not None
-        assert state.newest_transaction_id == "tx-new"
-        assert state.pages_fetched == 1
-        assert state.transactions_inserted == 1
-
-
-def test_backfill_ignores_high_water_marks_and_dedupes_transactions(tmp_path):
-    observed_at = datetime(2026, 6, 30, 10, 0, tzinfo=timezone.utc)
-    old_transaction = _transaction("tx-old", "2026-06-30T09:00:00Z")
-    api = FakeMarketApi(
-        {
-            (
-                "bread",
-                None,
-            ): PageResponse(
-                items=[
-                    _transaction("tx-new", "2026-06-30T09:30:00Z"),
-                    old_transaction,
-                ],
-                next_cursor="next-page",
-            ),
-            ("bread", "next-page"): PageResponse(
-                items=[_transaction("tx-older", "2026-06-30T08:30:00Z")],
-            ),
-        }
-    )
-
-    with _store(tmp_path) as store:
-        store.upsert_transactions("bread", [old_transaction], fetched_at=observed_at)
-        store.mark_item_sync_success(
-            "bread",
-            SyncSummary(
-                pages_fetched=1,
-                transactions_inserted=1,
-                newest_created_at="2026-06-30T09:00:00Z",
-                newest_created_at_epoch=1782810000,
-                newest_transaction_id="tx-old",
-                synced_at=observed_at,
-            ),
-        )
-
-        result = sync_market_data(
-            api,
-            store,
-            transaction_backfill=True,
-            observed_at=observed_at,
-        )
-
+def test_global_streams_new_codes_individual_orders_and_replay(tmp_path):
+    client = FakeClient({("trading", None): {"items": [trade(code="retiredCode")]},
+        ("itemMarket", None): {"items": [trade("equipment", code="weapon99", kind="itemMarket",
+            buyerId="actor", buyerMuId="mu", buyerCountryId="country", sellerPartyId="party",
+            item={"_id": "instance", "code": "weapon99", "skills": {"newSkill": 0, "attack": 12},
+                  "state": 44, "maxState": 100, "quantity": 1, "lastAcquisitionAt": "2026-09-22T00:00:00Z"})]}})
+    with MarketStore(tmp_path / "db") as store:
+        result = run(store, client)
+        assert result.error_count == 0 and result.transactions_inserted == 2
         assert result.pages_fetched == 2
-        assert result.transactions_inserted == 2
-        assert result.items[0].stopped_at_high_water is False
-        assert ("get_transaction_page", ("bread", 100, "next-page")) in api.calls
-        assert [row["id"] for row in store.transactions_for_window("bread", 0)] == [
-            "tx-older",
-            "tx-old",
-            "tx-new",
-        ]
+        assert store.item_codes() == ["bread", "retiredCode"]
+        row = store.transaction_details("equipment")
+        assert row["participants"][0]["user_id"] == "actor"
+        assert row["participants"][0]["mu_id"] == "mu"
+        assert row["participants"][0]["country_id"] == "country"
+        assert len(row["stats"]) == 2 and row["equipment"][0]["equipment_type"] is None
+        book = store.order_book_observations_for_window("bread", 0)[0]
+        entries = store.order_entries(book["id"])
+        assert [e["order_id"] for e in entries] == ["a", "b"]
+        replay = run(store, client)
+        assert replay.transactions_inserted == 0 and replay.transactions_skipped == 2
+        assert store.stream_status("trading")["progress"]["unchanged"] == 1
+        assert store.transaction_coverage(["retiredCode"])["retiredCode"]
 
 
-def test_incremental_sync_stops_when_duplicate_page_found_without_state(tmp_path):
-    observed_at = datetime(2026, 6, 30, 10, 0, tzinfo=timezone.utc)
-    old_transaction = _transaction("tx-old", "2026-06-30T09:00:00Z")
-    api = FakeMarketApi(
-        {
-            ("bread", None): PageResponse(
-                items=[
-                    _transaction("tx-new", "2026-06-30T09:30:00Z"),
-                    old_transaction,
-                ],
-                next_cursor="next-page",
-            ),
-            ("bread", "next-page"): PageResponse(
-                items=[_transaction("tx-older", "2026-06-30T08:30:00Z")],
-            ),
-        }
-    )
-    messages: list[str] = []
-
-    with _store(tmp_path) as store:
-        store.upsert_transactions("bread", [old_transaction], fetched_at=observed_at)
-
-        result = sync_market_data(
-            api,
-            store,
-            observed_at=observed_at,
-            progress=messages.append,
-        )
-
-        assert result.pages_fetched == 1
-        assert result.transactions_inserted == 1
-        assert result.transactions_skipped == 1
-        assert result.items[0].stopped_at_duplicate is True
-        assert ("get_transaction_page", ("bread", 100, "next-page")) not in api.calls
-        assert any("bread: found 1 duplicate transaction(s) on page 1; stopping" in message for message in messages)
+def test_recent_resync_ignores_duplicates_and_report_window(tmp_path):
+    recent = trade()
+    equal = trade("equal", "2026-09-16T12:00:00Z")
+    client = FakeClient({("trading", None): {"items": [recent, equal], "nextCursor": "opaque"},
+                        ("trading", "opaque"): {"items": [trade("older", "2026-09-16T11:59:59.999Z")], "nextCursor": "unused"}})
+    with MarketStore(tmp_path / "db") as store:
+        store.ingest_transactions([normalize_transaction(recent)])
+        result = run(store, client, resync_market=True, history_scope="7d", lookback_days=1)
+        assert result.error_count == 0 and result.pages_fetched == 5
+        assert store.transaction_details("older")
+        coverage = store.stream_status("trading")["coverage"][0]
+        assert coverage["start_at"] == "2026-09-16T12:00:00Z"
+        assert coverage["completion_reason"] == "history-boundary"
+        assert "opaque" not in str(store.stream_status("trading"))
 
 
-def test_incremental_sync_stops_when_duplicate_page_found_after_stale_state(tmp_path):
-    observed_at = datetime(2026, 6, 30, 10, 0, tzinfo=timezone.utc)
-    state_transaction = _transaction("tx-state", "2026-06-30T09:00:00Z")
-    crashed_transaction = _transaction("tx-crashed", "2026-06-30T09:30:00Z")
-    api = FakeMarketApi(
-        {
-            ("bread", None): PageResponse(
-                items=[
-                    _transaction("tx-new", "2026-06-30T09:45:00Z"),
-                    crashed_transaction,
-                ],
-                next_cursor="next-page",
-            ),
-            ("bread", "next-page"): PageResponse(
-                items=[state_transaction],
-            ),
-        }
-    )
-    messages: list[str] = []
-
-    with _store(tmp_path) as store:
-        store.upsert_transactions("bread", [state_transaction, crashed_transaction], fetched_at=observed_at)
-        store.mark_item_sync_success(
-            "bread",
-            SyncSummary(
-                pages_fetched=1,
-                transactions_inserted=1,
-                newest_created_at="2026-06-30T09:00:00Z",
-                newest_created_at_epoch=1782810000,
-                newest_transaction_id="tx-state",
-                synced_at=observed_at,
-            ),
-        )
-
-        result = sync_market_data(
-            api,
-            store,
-            observed_at=observed_at,
-            progress=messages.append,
-        )
-
-        assert result.pages_fetched == 1
-        assert result.transactions_inserted == 1
-        assert result.transactions_skipped == 1
-        assert result.items[0].stopped_at_duplicate is True
-        assert result.items[0].stopped_at_high_water is False
-        assert ("get_transaction_page", ("bread", 100, "next-page")) not in api.calls
-        assert any("bread: found 1 duplicate transaction(s) on page 1; stopping" in message for message in messages)
+def test_duplicate_without_verified_coverage_and_equal_timestamps_continue(tmp_path):
+    first = trade()
+    client = FakeClient({("trading", None): {"items": [first], "nextCursor": "next"},
+                        ("trading", "next"): {"items": [trade("same-time")]}})
+    with MarketStore(tmp_path / "db") as store:
+        store.ingest_transactions([normalize_transaction(first)])
+        result = run(store, client)
+        assert result.pages_fetched == 3 and result.transactions_inserted == 1
+        assert not result.items[0].stopped_at_duplicate
 
 
-def test_verbose_sync_logs_transaction_page_import_details(tmp_path):
-    observed_at = datetime(2026, 6, 30, 10, 0, tzinfo=timezone.utc)
-    api = FakeMarketApi(
-        {
-            ("bread", None): PageResponse(
-                items=[_transaction("tx-new", "2026-06-30T09:30:00Z")],
-            ),
-        }
-    )
-    messages: list[str] = []
-
-    with _store(tmp_path) as store:
-        sync_market_data(
-            api,
-            store,
-            observed_at=observed_at,
-            progress=messages.append,
-            verbose=True,
-        )
-
-    assert "Observed current prices for 1 item(s) at 2026-06-30T10:00:00Z." in messages
-    assert ("get_top_orders", ("bread", 100)) in api.calls
-    assert any("current order book fetched (1 best bid(s), 1 best ask(s))" in message for message in messages)
-    assert any("bread: fetching transaction page 1 (cursor=first, limit=100)" in message for message in messages)
-    assert any(
-        "bread: page 1 imported 1 transaction(s), inserted 1, skipped 0" in message
-        for message in messages
-    )
-    assert any("bread: stopped because API returned no next cursor." in message for message in messages)
+def test_incremental_stops_only_on_verified_normalized_overlap(tmp_path):
+    rows = [trade(), trade("older", "2026-09-23T09:00:00Z")]
+    with MarketStore(tmp_path / "db") as store:
+        run(store, FakeClient({("trading", None): {"items": rows}}))
+        client = FakeClient({("trading", None): {"items": rows, "nextCursor": "not-followed"}})
+        result = run(store, client)
+        assert result.items[0].stopped_at_high_water
+        assert result.pages_fetched == 2
 
 
-def test_sync_persists_complete_and_partial_run_status(tmp_path):
-    observed_at = datetime(2026, 6, 30, 10, 0, tzinfo=timezone.utc)
-    api = FakeMarketApi({
-        ("bread", None): PageResponse(
-            items=[_transaction("tx-new", "2026-06-30T09:30:00Z")],
-        ),
-    })
+@pytest.mark.parametrize("failure", ["parse", "ordering", "commit", "reject", "transport"])
+def test_failed_pages_do_not_commit_rows_or_coverage(tmp_path, monkeypatch, failure):
+    first = trade()
+    second = trade("second", "2026-09-23T09:00:00Z")
+    pages = {("trading", None): {"items": [first], "nextCursor": "secret-cursor"},
+             ("trading", "secret-cursor"): {"items": [second]}}
+    if failure == "parse":
+        second["money"] = "invalid"
+    if failure == "ordering":
+        second["createdAt"] = "2026-09-23T11:00:00Z"
+    if failure == "transport":
+        pages[("trading", "secret-cursor")] = RuntimeError("URL contains secret-cursor")
+    with MarketStore(tmp_path / "db") as store:
+        if failure == "commit":
+            original = store._write_progress
+            def fail(state):
+                original(state)
+                if state.stream == "trading" and state.pages == 2:
+                    raise RuntimeError("commit failed")
+            monkeypatch.setattr(store, "_write_progress", fail)
+        if failure == "reject":
+            original = store._merge_transaction
+            def reject(fact, fetched):
+                if fact.values["id"] == "second":
+                    raise ValueError("bad child")
+                return original(fact, fetched)
+            monkeypatch.setattr(store, "_merge_transaction", reject)
+        messages = []
+        result = run(store, FakeClient(pages), progress=messages.append, verbose=True)
+        assert result.error_count == 1
+        assert store.transaction_details("new") and store.transaction_details("second") is None
+        state = store.stream_status("trading")
+        assert state["progress"]["pages"] == 1 and state["progress"]["inserted"] == 1
+        assert state["progress"]["status"] == "failed" and not state["coverage"]
+        assert "secret-cursor" not in str(state) + str(messages)
+        assert store.stream_status("itemMarket")["progress"]["status"] == "exhausted"
+        assert store.market_sync_metadata().status == "partial"
 
-    with _store(tmp_path) as store:
-        complete = sync_market_data(api, store, observed_at=observed_at)
-        metadata = store.market_sync_metadata()
 
-        assert complete.error_count == 0
-        assert metadata is not None
-        assert metadata.synced_at == "2026-06-30T10:00:00Z"
-        assert metadata.status == "complete"
-
-        api.get_top_orders = lambda _item_code, _limit: (_ for _ in ()).throw(RuntimeError("down"))
-        partial_at = datetime(2026, 6, 30, 11, 0, tzinfo=timezone.utc)
-        partial = sync_market_data(api, store, observed_at=partial_at)
-        metadata = store.market_sync_metadata()
-
-        assert partial.error_count == 1
-        assert metadata is not None
-        assert metadata.synced_at == "2026-06-30T11:00:00Z"
-        assert metadata.status == "partial"
+def test_failure_recording_preserves_original_exception(tmp_path, monkeypatch):
+    original = RuntimeError("write failed")
+    with MarketStore(tmp_path / "db") as store:
+        def fail(*a, **k):
+            raise original
+        record_original = store.record_stream_progress
+        def record(state):
+            if state.status == "failed":
+                raise ValueError("state failed")
+            record_original(state)
+        monkeypatch.setattr(store, "ingest_transactions", fail)
+        monkeypatch.setattr(store, "record_stream_progress", record)
+        with pytest.raises(RuntimeError) as caught:
+            run(store, FakeClient())
+        assert caught.value is original and original.__notes__
 
 
-def test_failed_sync_does_not_advance_persisted_sync_time(tmp_path):
-    synced_at = datetime(2026, 6, 30, 10, 0, tzinfo=timezone.utc)
-    api = FakeMarketApi({})
+def test_order_failure_does_not_block_transactions(tmp_path):
+    with MarketStore(tmp_path / "db") as store:
+        result = run(store, FakeClient({("trading", None): {"items": [trade()]}}, order_error=True))
+        assert result.error_count == 1 and result.transactions_inserted == 1
+        assert result.order_books_observed == 0
 
-    with _store(tmp_path) as store:
-        store.record_market_sync(synced_at, status="complete")
-        api.get_prices = lambda: (_ for _ in ()).throw(RuntimeError("offline"))
 
-        with pytest.raises(RuntimeError, match="offline"):
-            sync_market_data(api, store, observed_at=synced_at.replace(hour=11))
+def test_page_cap_and_legacy_backfill(tmp_path):
+    client = FakeClient({("trading", None): {"items": [trade()], "nextCursor": "next"},
+                        ("trading", "next"): {"items": [trade("old", "2026-09-01T00:00:00Z")], "nextCursor": "unused"}})
+    with MarketStore(tmp_path / "db") as store:
+        result = run(store, client, history_pages=1)
+        assert result.pages_fetched == 2
+        assert store.stream_status("trading")["progress"]["status"] == "partial"
+        result = run(store, client, transaction_backfill=True, lookback_days=7)
+        assert result.pages_fetched == 3 and store.transaction_details("old")
 
-        metadata = store.market_sync_metadata()
 
-    assert metadata is not None
-    assert metadata.synced_at == "2026-06-30T10:00:00Z"
-    assert metadata.status == "complete"
+@pytest.mark.parametrize("options", [{"transaction_limit": 101}, {"history_scope": "all"},
+    {"resync_market": True}, {"resync_market": True, "history_scope": "7d", "history_pages": 1}])
+def test_invalid_scope_before_any_request(tmp_path, options):
+    client = FakeClient()
+    with MarketStore(tmp_path / "db") as store:
+        with pytest.raises(ValueError):
+            run(store, client, **options)
+    assert not client.calls
+
+
+@pytest.mark.parametrize("failed_endpoint", [PRICES_ENDPOINT, GAME_CONFIG_ENDPOINT])
+def test_current_catalog_failure_does_not_block_global_collection(tmp_path, failed_endpoint):
+    client = FakeClient({("trading", None): {"items": [trade(code="notInCatalog")]}})
+    original = client.get_json
+    def fail(endpoint, **kwargs):
+        if endpoint == failed_endpoint:
+            raise RuntimeError("unavailable")
+        return original(endpoint, **kwargs)
+    client.get_json = fail
+    with MarketStore(tmp_path / "db") as store:
+        result = run(store, client)
+        assert result.error_count == 1 and result.transactions_inserted == 1
+        assert store.transaction_details("new")["item_code"] == "notInCatalog"

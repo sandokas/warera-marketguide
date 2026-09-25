@@ -42,4 +42,7 @@ warera-marketguide = "warera_quant.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-warera_quant = ["py.typed"]
+warera_quant = ["py.typed", "assets/official/*.json", "assets/official/*.png"]
+
+[tool.pytest.ini_options]
+addopts = "-p no:cacheprovider --basetemp=temp_test_dir"

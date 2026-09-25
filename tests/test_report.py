@@ -466,20 +466,17 @@ def test_guide_uses_one_signal_and_only_full_size_execution_fields():
     assert guide.count('>N/A</td>') == 4
     assert 'signed-neutral">&mdash;' in guide
     assert 'Return to 7D reference (%): N/A' not in report
-    assert 'size 100 units; fee 1.5% per side' in report
+    assert 'size 100 units; fee 1.5% per side' not in report
 
 
-def test_trading_guide_omits_prose_while_other_tables_retain_metadata():
+def test_trading_guide_and_activity_omit_method_footers():
     import re
     report = generate_html_report(pd.DataFrame([{'item_name': 'A very long item label with <special> & characters'}]), data_synced_at='2026-09-06T12:00:00Z', assumptions=FlipAssumptions(quantity=250, fee_pct_per_side=0.5))
     tables = re.findall(r'<table .*?</table>', report, flags=re.S)
     assert len(tables) == 2
     assert "<tfoot>" not in tables[0]
-    for table in tables[1:]:
-        footer = table[table.index('<tfoot>'):]
-        assert '2026-09-06 12:00 UTC' in footer
-        assert 'BTC/unit' in footer and '250 units' in footer and '0.5% per side' in footer
-        assert 'N/A = unavailable / insufficient depth' in footer
+    assert 'data-report-table="activity-comparison"' in tables[1]
+    assert '<tfoot>' not in tables[1] and 'Observed:' not in tables[1]
     assert '&lt;special&gt; &amp; characters' in report
     assert '<details' not in report and '<script' not in report
     assert 'overflow-x: auto' not in report and 'text-overflow: ellipsis' not in report

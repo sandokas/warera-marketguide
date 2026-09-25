@@ -20,6 +20,7 @@ class HousekeepingConfig:
     enabled: bool = True
     retention_days: int = 120
     vacuum_interval_days: int = 30
+    transaction_retention_days: int | str | None = None
 
 
 @dataclass(frozen=True)
@@ -76,7 +77,7 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> AppConfig:
     if not isinstance(housekeeping, dict):
         raise ConfigError("[housekeeping] must be a TOML table.")
 
-    allowed_keys = {"enabled", "retention_days", "vacuum_interval_days"}
+    allowed_keys = {"enabled", "retention_days", "vacuum_interval_days", "transaction_retention_days"}
     unknown_keys = set(housekeeping) - allowed_keys
     if unknown_keys:
         names = ", ".join(sorted(unknown_keys))
@@ -89,6 +90,10 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> AppConfig:
         raise ConfigError("housekeeping.enabled must be true or false.")
     _require_int(retention_days, "housekeeping.retention_days", minimum=1)
     _require_int(vacuum_interval_days, "housekeeping.vacuum_interval_days", minimum=0)
+
+    transaction_retention_days = housekeeping.get("transaction_retention_days", retention_days)
+    if transaction_retention_days != "all":
+        _require_int(transaction_retention_days, "housekeeping.transaction_retention_days", minimum=1)
 
     inflation = raw.get("inflation", {})
     if not isinstance(inflation, dict):
@@ -136,6 +141,7 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> AppConfig:
         housekeeping=HousekeepingConfig(
             enabled=enabled,
             retention_days=retention_days,
+            transaction_retention_days=transaction_retention_days,
             vacuum_interval_days=vacuum_interval_days,
         ),
         inflation=InflationConfig(

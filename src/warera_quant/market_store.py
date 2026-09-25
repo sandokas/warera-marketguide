@@ -1,15 +1,17 @@
 from __future__ import annotations
 
-import hashlib
+import math
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from collections.abc import Iterable
 
+from .market_models import TransactionFacts, StreamProgress, StreamCheckpoint, EnrichmentCoverage, OrderLevel, RejectedTransactionPage
 
-LATEST_SCHEMA_VERSION = 4
+
+LATEST_SCHEMA_VERSION = 6
 
 
 class MarketStoreError(RuntimeError):
@@ -23,6 +25,9 @@ class InsertSummary:
     newest_created_at: str | None
     newest_created_at_epoch: int | None
     newest_transaction_id: str | None
+    enriched: int = 0
+    unchanged: int = 0
+    rejected: int = 0
 
 
 @dataclass(frozen=True)
@@ -92,32 +97,55 @@ class MarketStore:
         if self.path != Path(":memory:"):
             self.path.parent.mkdir(parents=True, exist_ok=True)
         connection = self._connect()
-        _ensure_schema_meta(connection)
-        current_version = self.schema_version()
-        if current_version > LATEST_SCHEMA_VERSION:
-            raise MarketStoreError(
-                f"Database schema version {current_version} is newer than supported version {LATEST_SCHEMA_VERSION}."
-            )
-
-        for version in range(current_version + 1, LATEST_SCHEMA_VERSION + 1):
-            migration = MIGRATIONS[version]
-            with connection:
-                migration(connection)
-                connection.execute(
-                    "insert or replace into schema_meta (key, value) values ('version', ?)",
-                    (str(version),),
-                )
+        # DDL and BOTH version markers share one explicit transaction, across all upgrades.
+        # executescript is forbidden here: Python's sqlite driver commits before running it.
+        try:
+            connection.execute("begin immediate")
+            connection.execute("create table if not exists schema_meta (key text primary key, value text not null)")
+            row = connection.execute("select value from schema_meta where key = 'version'").fetchone()
+            current_version = int(row[0]) if row else 0
+            user_version = int(connection.execute("pragma user_version").fetchone()[0])
+            if max(current_version, user_version) > LATEST_SCHEMA_VERSION:
+                raise MarketStoreError("Database schema version is newer than supported version.")
+            if user_version not in (0, current_version):
+                raise MarketStoreError("Database version markers disagree.")
+            for version in range(current_version + 1, LATEST_SCHEMA_VERSION + 1):
+                MIGRATIONS[version](connection)
+                connection.execute("insert or replace into schema_meta values ('version', ?)", (str(version),))
                 connection.execute(f"pragma user_version = {version}")
-        if self.user_version() != self.schema_version():
-            with connection:
-                connection.execute(f"pragma user_version = {self.schema_version()}")
+            connection.execute(f"pragma user_version = {LATEST_SCHEMA_VERSION}")
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
         _backfill_market_sync_metadata(connection)
 
     def schema_version(self) -> int:
         connection = self._connect()
-        _ensure_schema_meta(connection)
         row = connection.execute("select value from schema_meta where key = 'version'").fetchone()
         return int(row["value"]) if row else 0
+
+    def database_inventory(self) -> dict[str, Any]:
+        """Inspect an existing database without initialization or schema mutation."""
+        connection = sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            connection.execute("begin")
+            tables = sorted(row[0] for row in connection.execute(
+                "select name from sqlite_master where type='table' and name not like 'sqlite_%'"))
+            counts = {table: connection.execute(
+                'select count(*) from "' + table.replace('"', '""') + '"').fetchone()[0]
+                for table in tables}
+            return {
+                "schema_version": int(connection.execute(
+                    "select value from schema_meta where key='version'").fetchone()[0]),
+                "user_version": connection.execute("pragma user_version").fetchone()[0],
+                "integrity": [row[0] for row in connection.execute("pragma integrity_check")],
+                "counts": counts,
+                "transactions": [dict(zip(("stream", "count", "oldest", "newest"), row))
+                    for row in connection.execute("select transaction_type,count(*),min(created_at),max(created_at) from transactions group by transaction_type")],
+            }
+        finally:
+            connection.close()
 
     def user_version(self) -> int:
         row = self._connect().execute("pragma user_version").fetchone()
@@ -238,45 +266,526 @@ class MarketStore:
     def upsert_transactions(
         self,
         item_code: str,
-        transactions: list[dict[str, Any]],
+        transactions: Iterable[TransactionFacts | dict[str, Any]],
         *,
         fetched_at: datetime | None = None,
     ) -> InsertSummary:
-        fetched_at_text = _format_datetime(fetched_at or _utc_now())
-        rows = [_transaction_row(item_code, transaction, fetched_at_text) for transaction in transactions]
-        inserted = 0
-        with self._connect():
-            for row in rows:
-                cursor = self._connect().execute(
-                    """
-                    insert or ignore into transactions (
-                        id, item_code, transaction_type, created_at, created_at_epoch,
-                        money, quantity, unit_price, fetched_at
-                    )
-                    values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        row["id"],
-                        row["item_code"],
-                        row["transaction_type"],
-                        row["created_at"],
-                        row["created_at_epoch"],
-                        row["money"],
-                        row["quantity"],
-                        row["unit_price"],
-                        row["fetched_at"],
-                    ),
-                )
-                inserted += cursor.rowcount
+        # Compatibility adapter for existing callers. Source parsing stays at the API boundary.
+        from .warera_api import normalize_transaction
+        facts = []
+        rejected = 0
+        for transaction in transactions:
+            try:
+                facts.append(transaction if isinstance(transaction, TransactionFacts)
+                             else normalize_transaction(transaction, item_code, transaction_type="trading"))
+            except (ValueError, TypeError):
+                rejected += 1
+        return self.ingest_transactions(facts, fetched_at=fetched_at, rejected=rejected)
 
-        newest = max(rows, key=lambda row: (row["created_at_epoch"], row["id"]), default=None)
-        return InsertSummary(
-            inserted=inserted,
-            skipped=len(rows) - inserted,
-            newest_created_at=newest["created_at"] if newest else None,
-            newest_created_at_epoch=newest["created_at_epoch"] if newest else None,
-            newest_transaction_id=newest["id"] if newest else None,
-        )
+    def ingest_transactions(
+        self, transactions: Iterable[TransactionFacts], *, fetched_at: datetime | None = None,
+        progress: StreamProgress | None = None, coverage: EnrichmentCoverage | None = None,
+        rejected: int = 0, strict: bool = False, checkpoint: StreamCheckpoint | None = None,
+        exhaustion_observed_at: str | None = None,
+    ) -> InsertSummary:
+        """Commit a normalized page and progress together; isolate malformed records with savepoints.
+
+        Conflicts require a strictly newer source updated_at. Missing fields never delete facts.
+        Null is retained as presence, but cannot erase a known value without that newer revision.
+        """
+        connection = self._connect()
+        fetched = _format_datetime(fetched_at or _utc_now())
+        counts = {"inserted": 0, "enriched": 0, "unchanged": 0}
+        accepted = []
+        with connection:
+            connection.execute("savepoint market_page")
+            try:
+                for fact in transactions:
+                    connection.execute("savepoint market_record")
+                    try:
+                        outcome = self._merge_transaction(fact, fetched)
+                    except (ValueError, TypeError, sqlite3.IntegrityError, OverflowError):
+                        connection.execute("rollback to market_record")
+                        rejected += 1
+                    else:
+                        counts[outcome] += 1
+                        accepted.append(fact.values)
+                    finally:
+                        connection.execute("release market_record")
+                if strict and rejected:
+                    raise RejectedTransactionPage(rejected)
+                if progress is not None:
+                    progress = replace(progress, **{key: getattr(progress, key) + value for key, value in counts.items()},
+                                       rejected=progress.rejected + rejected)
+                    if rejected and progress.status == "exhausted":
+                        raise ValueError("Rejected rows cannot establish exhaustion")
+                    self._write_progress(progress)
+                if checkpoint is not None:
+                    if (progress is None or checkpoint.stream != progress.stream
+                            or checkpoint.pages != progress.pages
+                            or checkpoint.scan_anchor != progress.scan_anchor):
+                        raise ValueError("Checkpoint must describe the same committed page")
+                    self._write_checkpoint(checkpoint)
+                if coverage is not None:
+                    if rejected:
+                        raise ValueError("Rejected rows cannot establish enrichment coverage")
+                    self._write_coverage(coverage)
+                    if coverage.completion_reason == "api-exhausted":
+                        exhaustion_observed_at = coverage.observed_at
+                if exhaustion_observed_at is not None:
+                    if progress is None or rejected:
+                        raise ValueError("Exhaustion requires accepted page progress")
+                    connection.execute("insert or replace into schema_meta (key,value) values (?,?)",
+                                       (f"market_exhaustion_{progress.stream}", exhaustion_observed_at))
+                connection.execute("release market_page")
+            except BaseException:
+                connection.execute("rollback to market_page")
+                connection.execute("release market_page")
+                raise
+        newest = max(accepted, key=lambda v: (v["created_at_us"], v["id"]), default=None)
+        return InsertSummary(counts["inserted"], counts["enriched"] + counts["unchanged"] + rejected,
+                             newest["created_at"] if newest else None,
+                             newest["created_at_epoch"] if newest else None,
+                             newest["id"] if newest else None,
+                             counts["enriched"], counts["unchanged"], rejected)
+
+    def _merge_transaction(self, fact: TransactionFacts, fetched: str) -> str:
+        c = self._connect()
+        v = fact.values
+        transaction_id = v["id"]
+        if not isinstance(transaction_id, str) or not transaction_id:
+            raise ValueError("Transaction ID must be nonempty text")
+        for number in ("money_decimal", "quantity_decimal"):
+            if number in v:
+                _validate_decimal(v[number])
+        old = c.execute("select * from transactions where id = ?", (transaction_id,)).fetchone()
+        inserted = old is None
+        if not inserted and (old["item_code"] != v["item_code"] or
+                             (old["transaction_type"] and v.get("transaction_type") and
+                              old["transaction_type"] != v["transaction_type"])):
+            raise ValueError("Conflicting transaction identity")
+        if inserted:
+            c.execute("insert into transactions (id,item_code,created_at,created_at_epoch,fetched_at,first_fetched_at,last_fetched_at) values (?,?,?,?,?,?,?)",
+                      (transaction_id, v["item_code"], v["created_at"], v["created_at_epoch"], fetched, fetched, fetched))
+        revision = v.get("updated_at_us")
+        if old:
+            for number in ("money", "quantity"):
+                if (old[number + "_decimal"] is None and old[number] is not None and
+                    v.get(number) is not None and old[number] != v[number] and
+                    not (revision is not None and (old["updated_at_us"] is None or revision > old["updated_at_us"]))):
+                    raise ValueError("Conflicting legacy numeric projection without a newer source revision")
+        changed = False
+
+        def merge(table, keys, field, value, path):
+            nonlocal changed
+            where = " and ".join(k + " = ?" for k in keys)
+            current = c.execute(f"select {field} from {table} where {where}", tuple(keys.values())).fetchone()
+            state = c.execute("select is_null, source_updated_us from transaction_field_state where transaction_id=? and field_path=?",
+                              (transaction_id, path)).fetchone()
+            prior_revision = state["source_updated_us"] if state else (old["updated_at_us"] if old else None)
+            newer = revision is not None and (prior_revision is None or revision > prior_revision)
+            existing = current[0] if current else None
+            # Explicit null from a newer observation also protects against older non-null replay.
+            allowed = newer or (existing is None and (state is None or prior_revision is None))
+            if current is None:
+                columns = list(keys) + [field]
+                c.execute(f"insert into {table} ({','.join(columns)}) values ({','.join('?' for _ in columns)})", (*keys.values(), value))
+            elif existing != value and allowed:
+                c.execute(f"update {table} set {field}=? where {where}", (value, *keys.values()))
+            elif existing != value:
+                return
+            if state is None or existing != value or newer:
+                c.execute("insert into transaction_field_state values (?,?,?,?) on conflict(transaction_id,field_path) do update set is_null=excluded.is_null,source_updated_us=excluded.source_updated_us",
+                          (transaction_id, path, int(value is None), revision))
+                changed = True
+
+        allowed_columns = {"transaction_type", "created_at", "created_at_epoch", "created_at_us", "money", "quantity",
+                           "money_decimal", "quantity_decimal", "money_precision", "quantity_precision", "offer_created_at", "updated_at", "updated_at_us"}
+        for field, value in v.items():
+            if field in allowed_columns:
+                merge("transactions", {"id": transaction_id}, field, value, field)
+        for side, fields in fact.participants.items():
+            for field, value in fields.items():
+                if field not in {"user_id", "mu_id", "country_id", "party_id"}:
+                    raise ValueError("Unknown normalized participant column")
+                merge("transaction_participants", {"transaction_id": transaction_id, "side": side}, field, value, side + "." + field)
+        for field, value in fact.equipment.items():
+            if field not in {"instance_id", "equipment_code", "equipment_type", "state", "max_state", "item_quantity", "last_acquisition_at"}:
+                raise ValueError("Unknown normalized equipment column")
+            merge("transaction_equipment", {"transaction_id": transaction_id}, field, value, "equipment." + field)
+        if fact.stats and not c.execute("select 1 from transaction_equipment where transaction_id=?", (transaction_id,)).fetchone():
+            c.execute("insert or ignore into transaction_equipment (transaction_id) values (?)", (transaction_id,))
+        for skill, value in fact.stats.items():
+            _validate_decimal(value)
+            merge("transaction_equipment_stats", {"transaction_id": transaction_id, "skill_code": skill}, "value_decimal", value, "skill." + skill)
+        for path, is_null in fact.presence.items():
+            state = c.execute("select is_null,source_updated_us from transaction_field_state where transaction_id=? and field_path=?", (transaction_id, path)).fetchone()
+            if state is None or (revision is not None and (state[1] is None or revision > state[1])):
+                c.execute("insert into transaction_field_state values (?,?,?,?) on conflict(transaction_id,field_path) do update set is_null=excluded.is_null,source_updated_us=excluded.source_updated_us", (transaction_id, path, int(is_null), revision))
+                changed = changed or state is None or state[0] != int(is_null)
+        for extra in fact.extras:
+            _validate_scalar(extra.value_type, extra.value)
+            keys = {"transaction_id": transaction_id, "field_path": extra.path}
+            prior = c.execute("select value_type,scalar_value from transaction_extra_fields where transaction_id=? and field_path=?", tuple(keys.values())).fetchone()
+            state = c.execute("select source_updated_us from transaction_field_state where transaction_id=? and field_path=?", (transaction_id, "extra:" + extra.path)).fetchone()
+            newer = revision is not None and (state is None or state[0] is None or revision > state[0])
+            if prior is None or newer:
+                if prior is None or tuple(prior) != (extra.value_type, extra.value):
+                    changed = True
+                c.execute("insert into transaction_extra_fields values (?,?,?,?) on conflict(transaction_id,field_path) do update set value_type=excluded.value_type,scalar_value=excluded.scalar_value",
+                          (transaction_id, extra.path, extra.value_type, extra.value))
+                c.execute("insert into transaction_field_state values (?,?,?,?) on conflict(transaction_id,field_path) do update set is_null=excluded.is_null,source_updated_us=excluded.source_updated_us",
+                          (transaction_id, "extra:" + extra.path, int(extra.value is None), revision))
+        if old and old["normalization_version"] < fact.normalization_version:
+            changed = True
+        if not inserted and not changed:
+            return "unchanged"
+        latest_fetch = fetched
+        if old and old["last_fetched_at"] and _parse_datetime(old["last_fetched_at"], "last_fetched_at") > _parse_datetime(fetched, "fetched_at"):
+            latest_fetch = old["last_fetched_at"]
+        c.execute("update transactions set unit_price=case when quantity>0 then money/quantity else null end, first_fetched_at=coalesce(first_fetched_at,fetched_at), last_fetched_at=?, normalization_version=max(normalization_version,?), normalization_status=case when exists(select 1 from transaction_extra_fields where transaction_id=?) then 'extensions' else 'normalized' end where id=?",
+                  (latest_fetch, fact.normalization_version, transaction_id, transaction_id))
+        return "inserted" if inserted else "enriched" if changed else "unchanged"
+
+    def transaction_details(self, transaction_id: str) -> dict[str, Any] | None:
+        c = self._connect()
+        row = c.execute("select * from transactions where id=?", (transaction_id,)).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        for key, table in (("participants", "transaction_participants"), ("equipment", "transaction_equipment"),
+                           ("stats", "transaction_equipment_stats"), ("extras", "transaction_extra_fields"),
+                           ("presence", "transaction_field_state")):
+            result[key] = [dict(r) for r in c.execute(f"select * from {table} where transaction_id=?", (transaction_id,))]
+        return result
+
+    def participant_history_query(self, start: datetime, end: datetime) -> tuple[str, tuple]:
+        """Source query shared by streaming and EXPLAIN; no ownership rules in SQL.
+
+        Window references select candidates, including ambiguous references. UNION
+        deduplicates history IDs before child joins. Existing reference indexes
+        avoid one history scan per entity. Epoch bounds are coarse index bounds;
+        microsecond predicates enforce the exact half-open window.
+        """
+        if start.tzinfo is None or end.tzinfo is None or start >= end:
+            raise ValueError("Expected aware increasing participant window")
+        columns = ("user_id", "mu_id", "country_id", "party_id")
+        candidates = " union ".join(
+            f"select p.transaction_id from transaction_participants p join "
+            f"(select distinct {column} from active where {column} is not null) a "
+            f"on p.{column}=a.{column}" for column in columns)
+        query = f"""
+            with window_ids as materialized (
+                select id from transactions
+                where transaction_type in ('trading','itemMarket')
+                  and created_at_epoch >= ? and created_at_epoch <= ?
+                  and coalesce(created_at_us,source_timestamp_us(created_at)) >= ?
+                  and coalesce(created_at_us,source_timestamp_us(created_at)) < ?
+            ), active as materialized (
+                select p.* from transaction_participants p join window_ids w
+                on w.id=p.transaction_id
+            ), history_ids as ({candidates} union select id from window_ids)
+            select t.* from history_ids h cross join transactions t on t.id=h.transaction_id
+            where t.transaction_type in ('trading','itemMarket')
+              and coalesce(t.created_at_us,source_timestamp_us(t.created_at)) < ?
+            order by coalesce(t.created_at_us,source_timestamp_us(t.created_at)),t.id
+        """
+        return query, (math.floor(start.timestamp()), math.floor(end.timestamp()),
+                       _datetime_us(start), _datetime_us(end), _datetime_us(end))
+
+    def participant_query_plan(self, start: datetime, end: datetime) -> list[str]:
+        query, parameters = self.participant_history_query(start, end)
+        return [row[3] for row in self._connect().execute("explain query plan " + query, parameters)]
+
+    def iter_participant_history(self, start: datetime, end: datetime, *, batch_size: int = 500):
+        """Yield chronological normalized source batches, bounded to 500 parents.
+
+        One ordered history cursor plus four child reads per batch, never per row.
+        SQLite may spill its candidate deduplication/order to temporary storage.
+        Callers should finish iteration before writing through this connection.
+        """
+        if not 1 <= batch_size <= 500:
+            raise ValueError("batch_size must be between 1 and 500")
+        query, parameters = self.participant_history_query(start, end)
+        yield from self._iter_source_query(query, parameters, batch_size)
+
+    def iter_equipment_sales(self, start: datetime, end: datetime, *, batch_size: int = 500):
+        """Window-only equipment export, independent of commodity report discovery."""
+        _, parameters = self.participant_history_query(start, end)
+        if not 1 <= batch_size <= 500:
+            raise ValueError("batch_size must be between 1 and 500")
+        query = """select * from transactions where transaction_type='itemMarket'
+            and created_at_epoch >= ? and created_at_epoch <= ?
+            and coalesce(created_at_us,source_timestamp_us(created_at)) >= ?
+            and coalesce(created_at_us,source_timestamp_us(created_at)) < ?
+            order by coalesce(created_at_us,source_timestamp_us(created_at)),id"""
+        yield from self._iter_source_query(query, parameters[:4], batch_size)
+
+    def _iter_source_query(self, query, parameters, batch_size):
+        cursor = self._connect().execute(query, parameters)
+        try:
+            while rows := cursor.fetchmany(batch_size):
+                batch = {row["id"]: dict(row) for row in rows}
+                placeholders = ",".join("?" for _ in batch)
+                for key, table in (("participants", "transaction_participants"),
+                                   ("equipment", "transaction_equipment"),
+                                   ("stats", "transaction_equipment_stats"),
+                                   ("presence", "transaction_field_state")):
+                    for row in batch.values():
+                        row[key] = []
+                    for child in self._connect().execute(
+                            f"select * from {table} where transaction_id in ({placeholders})", tuple(batch)):
+                        batch[child["transaction_id"]][key].append(dict(child))
+                yield from batch.values()
+        finally:
+            cursor.close()
+
+    def participant_names(self, keys: Iterable[tuple[str, str]]) -> dict[tuple[str, str], dict]:
+        """Bounded cache lookups; missing names never trigger a network request."""
+        keys = iter(keys)
+        result = {}
+        from itertools import islice
+        while batch := list(islice(keys, 250)):
+            predicate = " or ".join("(entity_kind=? and entity_id=?)" for _ in batch)
+            for row in self._connect().execute(
+                    "select * from market_entities where " + predicate,
+                    tuple(value for key in batch for value in key)):
+                result[(row["entity_kind"], row["entity_id"])] = dict(row)
+        return result
+
+    def _write_progress(self, progress: StreamProgress) -> None:
+        if progress.pages == 0:
+            self._clear_checkpoint(progress.stream)
+            self._connect().execute("delete from schema_meta where key in (?,?)",
+                                    (f"market_exhaustion_{progress.stream}", f"market_elapsed_{progress.stream}"))
+        values = asdict(progress)
+        columns = list(values)
+        self._connect().execute(f"insert into market_ingestion_state ({','.join(columns)}) values ({','.join('?' for _ in columns)}) on conflict(stream) do update set " +
+                                ','.join(f"{k}=excluded.{k}" for k in columns if k != "stream"), tuple(values.values()))
+
+    def record_stream_progress(self, progress: StreamProgress) -> None:
+        with self._connect():
+            self._write_progress(progress)
+
+    def _clear_checkpoint(self, stream: str) -> None:
+        self._connect().execute("delete from schema_meta where key glob ?", (f"market_resume_{stream}_*",))
+
+    def _write_checkpoint(self, checkpoint: StreamCheckpoint) -> None:
+        if (checkpoint.stream not in ("trading", "itemMarket")
+                or checkpoint.phase not in ("history", "history-complete")
+                or checkpoint.normalization_version != 1 or checkpoint.page_size != 100
+                or checkpoint.pages < 1
+                or (checkpoint.phase == "history" and not checkpoint.next_cursor)
+                or (checkpoint.phase == "history-complete" and checkpoint.next_cursor is not None)):
+            raise ValueError("Invalid market checkpoint")
+        self._clear_checkpoint(checkpoint.stream)
+        self._connect().executemany("insert into schema_meta (key,value) values (?,?)",
+            [(f"market_resume_{checkpoint.stream}_{key}", str(value))
+             for key, value in asdict(checkpoint).items() if value is not None])
+
+    def stream_checkpoint(self, stream: str) -> StreamCheckpoint | None:
+        """Private operational continuation; callers must never log opaque cursors."""
+        prefix = f"market_resume_{stream}_"
+        fields = {row["key"][len(prefix):]: row["value"] for row in self._connect().execute(
+            "select key,value from schema_meta where key glob ?", (prefix + "*",))}
+        if not fields:
+            return None
+        for key in ("pages", "normalization_version", "page_size", "previous_oldest_us"):
+            if key in fields:
+                fields[key] = int(fields[key])
+        fields.setdefault("next_cursor", None)
+        fields.setdefault("previous_oldest_us", None)
+        return StreamCheckpoint(**fields)
+
+    def _write_coverage(self, coverage: EnrichmentCoverage) -> None:
+        values = asdict(coverage)
+        if _parse_datetime(coverage.end_at, "end_at") <= _parse_datetime(coverage.start_at, "start_at"):
+            raise ValueError("Coverage must have a positive interval")
+        self._connect().execute(f"insert or ignore into market_enrichment_coverage ({','.join(values)}) values ({','.join('?' for _ in values)})", tuple(values.values()))
+        if coverage.stream == "trading":
+            start = math.ceil(_parse_datetime(coverage.start_at, "start_at").timestamp())
+            end = int(_parse_datetime(coverage.end_at, "end_at").timestamp())
+            if start < end:
+                self._connect().executemany(
+                    "insert or ignore into transaction_coverage (item_code,start_epoch,end_epoch,source) values (?,?,?,?)",
+                    [(code, start, end, coverage.source) for code in self.item_codes(transaction_type="trading")])
+
+    def record_enrichment_coverage(self, coverage: EnrichmentCoverage) -> None:
+        with self._connect():
+            self._write_coverage(coverage)
+
+    def repair_exhaustion_floor(self, stream: str, *, observed_at: str, oldest_at: str) -> int:
+        """Correct former epoch-wide exhaustion coverage using a recorded scan floor.
+
+        Changes coverage metadata only; source history and aggregates are retained.
+        """
+        oldest = _parse_datetime(oldest_at, "oldest_at")
+        if stream not in ("trading", "itemMarket") or oldest >= _parse_datetime(observed_at, "observed_at"):
+            raise ValueError("Invalid observed exhaustion floor")
+        with self._connect() as connection:
+            rows = connection.execute("select * from market_enrichment_coverage where stream=? "
+                "and observed_at=? and completion_reason='api-exhausted' "
+                "and start_at='1970-01-01T00:00:00Z'", (stream, observed_at)).fetchall()
+            for row in rows:
+                connection.execute("update market_enrichment_coverage set start_at=? where stream=? "
+                    "and normalization_version=? and start_at=? and end_at=? and source=?",
+                    (oldest_at, stream, row['normalization_version'], row['start_at'], row['end_at'], row['source']))
+                if stream == "trading":
+                    connection.execute("update transaction_coverage set start_epoch=? where start_epoch=0 "
+                        "and end_epoch=? and source=?", (math.ceil(oldest.timestamp()),
+                        int(_parse_datetime(row['end_at'], "end_at").timestamp()), row['source']))
+        return len(rows)
+
+    def normalized_page_known(self, stream: str, ids: list[str]) -> bool:
+        if not ids:
+            return False
+        rows = self._connect().execute(
+            "select id from transactions where transaction_type=? and normalization_version>=1 "
+            "and id in (" + ",".join("?" for _ in ids) + ")", (stream, *ids))
+        return {row[0] for row in rows} == set(ids)
+
+    def stream_status(self, stream: str) -> dict[str, Any]:
+        c = self._connect()
+        row = c.execute("select * from market_ingestion_state where stream=?", (stream,)).fetchone()
+        return {"progress": dict(row) if row else None,
+                "coverage": [dict(r) for r in c.execute("select * from market_enrichment_coverage where stream=? order by start_at", (stream,))]}
+
+    def record_stream_elapsed(self, stream: str, elapsed: float) -> None:
+        with self._connect() as connection:
+            connection.execute("insert or replace into schema_meta (key,value) values (?,?)",
+                               (f"market_elapsed_{stream}", str(elapsed)))
+
+    def market_sync_status(self) -> dict[str, Any]:
+        streams = {}
+        for stream in ("trading", "itemMarket"):
+            status = self.stream_status(stream)
+            counts = self._connect().execute(
+                "select count(*) as retained, coalesce(sum(normalization_version>=1),0) as normalized "
+                "from transactions where transaction_type=?", (stream,)).fetchone()
+            timing = self._connect().execute("select value from schema_meta where key=?", (f"market_elapsed_{stream}",)).fetchone()
+            status.update(dict(counts))
+            status["elapsed_seconds_last_finished_scan"] = float(timing[0]) if timing else None
+            status["remaining_pages"] = status["eta_seconds"] = None
+            status["api_exhaustion_observed_at"] = [c["observed_at"] for c in status["coverage"] if c["completion_reason"] == "api-exhausted"]
+            exhaustion = self._connect().execute("select value from schema_meta where key=?", (f"market_exhaustion_{stream}",)).fetchone()
+            status["latest_scan_exhausted"] = exhaustion is not None
+            status["latest_scan_exhausted_at"] = exhaustion[0] if exhaustion else None
+            status["unverified_retained"] = counts["retained"] - counts["normalized"]
+            checkpoint = self.stream_checkpoint(stream)
+            status["resume_checkpoint"] = ({"phase": checkpoint.phase, "pages": checkpoint.pages,
+                "scan_anchor": checkpoint.scan_anchor, "continuation_saved": bool(checkpoint.next_cursor)}
+                if checkpoint else None)
+            streams[stream] = status
+        return {"streams": streams, "limitations":
+                "Coverage describes observed API pagination only, not complete game history or known inventory basis. "
+                "Uncovered intervals and failed/running/partial scans remain unverified. "
+                "Without an opted-in checkpoint, restart replays from the head. Saved opaque continuations "
+                "are upstream-dependent; invalid continuations fail visibly and require explicit head replay."}
+
+    def cache_entity_name(self, entity_kind: str, entity_id: str, name: str | None, observed_at: str, lookup_status: str) -> None:
+        attempted = _parse_datetime(observed_at, "observed_at")
+        with self._connect():
+            previous = self.entity_name(entity_kind, entity_id)
+            if previous and attempted < _parse_datetime(previous["lookup_attempted_at"], "lookup_attempted_at"):
+                return
+            name_time = observed_at if name is not None else (previous["name_observed_at"] if previous else None)
+            cached_name = name if name is not None else (previous["name"] if previous else None)
+            self._connect().execute("insert into market_entities (entity_kind,entity_id,name,name_observed_at,lookup_status,lookup_attempted_at) values (?,?,?,?,?,?) on conflict(entity_kind,entity_id) do update set name=excluded.name,name_observed_at=excluded.name_observed_at,lookup_status=excluded.lookup_status,lookup_attempted_at=excluded.lookup_attempted_at",
+                                    (entity_kind, entity_id, cached_name, name_time, lookup_status, observed_at))
+
+    def entity_name(self, entity_kind: str, entity_id: str) -> dict[str, Any] | None:
+        row = self._connect().execute("select * from market_entities where entity_kind=? and entity_id=?", (entity_kind, entity_id)).fetchone()
+        return dict(row) if row else None
+
+    def cache_identity(self, identity, observed_at: str, force_refresh: bool = False) -> None:
+        previous = self.entity_name(identity.entity_kind, identity.entity_id)
+        if not force_refresh and previous and _parse_datetime(observed_at, "observed_at") < _parse_datetime(previous["lookup_attempted_at"], "attempted"):
+            return
+        self.cache_entity_name(identity.entity_kind, identity.entity_id, identity.name, observed_at, "ok")
+        with self._connect():
+            self._connect().execute("update market_entities set image_url=?,country_code=?,level=?,citizenship_id=?,prestige=? where entity_kind=? and entity_id=?",
+                (identity.image_url, identity.country_code, identity.level, identity.citizenship_id, 1 if identity.prestige else 0, identity.entity_kind, identity.entity_id))
+
+    def link_identity_asset(self, url: str) -> None:
+        with self._connect():
+            self._connect().execute("update market_entities set image_cache_url=? where image_url=?", (url, url))
+
+    def cached_asset(self, url: str) -> dict | None:
+        row = self._connect().execute("select * from display_assets where source_url=?", (url,)).fetchone()
+        return dict(row) if row else None
+
+    def cache_asset(self, asset: dict) -> None:
+        previous = self.cached_asset(asset["source_url"])
+        if previous and _parse_datetime(asset["attempted_at"], "attempted") < _parse_datetime(previous["attempted_at"], "attempted"):
+            return
+        fields = ("source_url", "local_path", "sha256", "mime_type", "width", "height", "byte_count", "observed_at", "status", "attempted_at")
+        with self._connect():
+            self._connect().execute("insert into display_assets values (?,?,?,?,?,?,?,?,?,?) on conflict(source_url) do update set "
+                + ",".join(f"{k}=excluded.{k}" for k in fields[1:]), tuple(asset.get(k) for k in fields))
+
+    def cache_equipment_display(self, item: dict, observed_at: str) -> None:
+        fields = ("item_code", "rarity", "tier", "color_scheme", "frame_color", "frame_end", "text_color", "image_url")
+        with self._connect():
+            self._connect().execute("insert into equipment_display values (?,?,?,?,?,?,?,?,?) on conflict(item_code) do update set "
+                + ",".join(f"{k}=excluded.{k}" for k in (*fields[1:], "observed_at")),
+                (*[item[k] for k in fields], observed_at))
+
+    def equipment_display(self) -> dict[str, dict]:
+        return {r["item_code"]: dict(r) for r in self._connect().execute("select * from equipment_display")}
+
+    def backup(self, destination: str | Path) -> Path:
+        """Consistent online snapshot, including committed WAL pages; never overwrites a backup."""
+        target = Path(destination)
+        if target.resolve() == self.path.resolve() or target.exists():
+            raise MarketStoreError("Backup destination must be a new distinct path.")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if self._connect().in_transaction:
+            raise MarketStoreError("Cannot back up an uncommitted transaction.")
+        # Reserve the path exclusively before opening SQLite.
+        with target.open("xb"):
+            pass
+        try:
+            destination_connection = sqlite3.connect(target)
+            try:
+                self._connect().backup(destination_connection)
+            finally:
+                destination_connection.close()
+        except BaseException:
+            target.unlink(missing_ok=True)
+            raise
+        return target
+
+    def restore(self, source: str | Path) -> None:
+        """Restore a validated snapshot through SQLite backup, without copying or deleting WAL files.
+
+        Caller must stop other application writers before restoring.
+        """
+        source = Path(source)
+        if not source.is_file() or source.resolve() == self.path.resolve():
+            raise MarketStoreError("Restore requires a distinct existing backup.")
+        if self._connect().in_transaction:
+            raise MarketStoreError("Cannot restore over an uncommitted transaction.")
+        backup = sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            if backup.execute("pragma integrity_check").fetchone()[0] != "ok":
+                raise MarketStoreError("Backup integrity check failed.")
+            version = int(backup.execute("select value from schema_meta where key='version'").fetchone()[0])
+            if version > LATEST_SCHEMA_VERSION or backup.execute("pragma user_version").fetchone()[0] not in (0, version):
+                raise MarketStoreError("Unsupported backup version markers.")
+            backup.backup(self._connect())
+        finally:
+            backup.close()
+
+    def migrate_with_backup(self) -> Path:
+        if not self.path.is_file():
+            raise MarketStoreError("Migration requires an existing database.")
+        target = self.path.with_name(self.path.name + ".backup-" + _utc_now().strftime("%Y%m%dT%H%M%S%fZ"))
+        self.backup(target)
+        try:
+            self.initialize()
+        except Exception as exc:
+            raise MarketStoreError(f"Migration failed; consistent backup retained at {target}: {exc}") from exc
+        return target
 
     def insert_price_observations(self, prices: dict[str, float], observed_at: datetime) -> None:
         observed_at_text = _format_datetime(observed_at)
@@ -359,6 +868,17 @@ class MarketStore:
                     ),
                 )
                 observation_id = cursor.lastrowid
+                for entry in getattr(orders[item_code], "entries", ()):
+                    values = {"observation_id": observation_id, "side": entry.side, "entry_position": entry.position, **entry.values}
+                    allowed = {"observation_id", "side", "entry_position", "order_id", "item_code", "source_type", "user_id", "mu_id", "country_id", "party_id", "price_decimal", "quantity_decimal", "price_precision", "quantity_precision", "offer_at"}
+                    if not set(values) <= allowed:
+                        raise ValueError("Unknown normalized order column")
+                    connection.execute(f"insert into order_book_entries ({','.join(values)}) values ({','.join('?' for _ in values)})", tuple(values.values()))
+                    for field in entry.presence:
+                        connection.execute("insert into order_entry_field_state values (?,?,?,?,?)", (observation_id, entry.side, entry.position, field, int(entry.values[field] is None)))
+                    for extra in entry.extras:
+                        _validate_scalar(extra.value_type, extra.value)
+                        connection.execute("insert into order_entry_extra_fields values (?,?,?,?,?,?)", (observation_id, entry.side, entry.position, extra.path, extra.value_type, extra.value))
                 level_rows = [
                     (observation_id, side, position, level.price, level.quantity)
                     for side, levels in (("bid", bids), ("ask", asks))
@@ -373,10 +893,20 @@ class MarketStore:
                     level_rows,
                 )
 
+    def order_entries(self, observation_id: int) -> list[dict[str, Any]]:
+        c = self._connect()
+        entries = [dict(r) for r in c.execute("select * from order_book_entries where observation_id=? order by side,entry_position", (observation_id,))]
+        for entry in entries:
+            keys = (observation_id, entry["side"], entry["entry_position"])
+            entry["extras"] = [dict(r) for r in c.execute("select field_path,value_type,scalar_value from order_entry_extra_fields where observation_id=? and side=? and entry_position=?", keys)]
+            entry["presence"] = [dict(r) for r in c.execute("select field_path,is_null from order_entry_field_state where observation_id=? and side=? and entry_position=?", keys)]
+        return entries
+
     def run_housekeeping(
         self,
         *,
         retention_days: int,
+        transaction_retention_days: int | str | None = None,
         vacuum_interval_days: int = 30,
         now: datetime | None = None,
     ) -> HousekeepingSummary:
@@ -389,24 +919,39 @@ class MarketStore:
         ):
             raise ValueError("vacuum_interval_days must be a non-negative integer.")
 
+        transaction_days = retention_days if transaction_retention_days is None else transaction_retention_days
+        if transaction_days != "all" and (isinstance(transaction_days, bool) or not isinstance(transaction_days, int) or transaction_days < 1):
+            raise ValueError("transaction_retention_days must be all or a positive integer.")
         housekeeping_at = _as_utc(now or _utc_now())
         cutoff_at = housekeeping_at - timedelta(days=retention_days)
         cutoff_epoch = _epoch_seconds(cutoff_at)
         connection = self._connect()
         with connection:
-            connection.execute(
-                "insert or replace into schema_meta (key, value) values ('transaction_retention_cutoff_epoch', ?)",
-                (str(cutoff_epoch),),
-            )
-            connection.execute("delete from transaction_coverage where end_epoch <= ?", (cutoff_epoch,))
-            connection.execute(
-                "update transaction_coverage set start_epoch = ? where start_epoch < ?",
-                (cutoff_epoch, cutoff_epoch),
-            )
-            transactions_deleted = connection.execute(
-                "delete from transactions where created_at_epoch < ?",
-                (cutoff_epoch,),
-            ).rowcount
+            transactions_deleted = 0
+            if transaction_days != "all":
+                transaction_cutoff_at = housekeeping_at - timedelta(days=transaction_days)
+                transaction_cutoff_epoch = _epoch_seconds(transaction_cutoff_at)
+                connection.execute(
+                    "insert or replace into schema_meta (key, value) values ('transaction_retention_cutoff_epoch', ?)",
+                    (str(transaction_cutoff_epoch),),
+                )
+                connection.execute("delete from transaction_coverage where end_epoch <= ?", (transaction_cutoff_epoch,))
+                connection.execute(
+                    "update transaction_coverage set start_epoch = ? where start_epoch < ?",
+                    (transaction_cutoff_epoch, transaction_cutoff_epoch),
+                )
+                transactions_deleted = connection.execute(
+                    "delete from transactions where coalesce(created_at_us,created_at_epoch*1000000) < ?",
+                    (transaction_cutoff_epoch * 1000000 + transaction_cutoff_at.microsecond,),
+                ).rowcount
+                cutoff_text = _format_datetime(transaction_cutoff_at)
+                for row in connection.execute("select rowid,* from market_enrichment_coverage").fetchall():
+                    if _parse_datetime(row["start_at"], "start_at") < transaction_cutoff_at:
+                        connection.execute("delete from market_enrichment_coverage where rowid=?", (row["rowid"],))
+                        if _parse_datetime(row["end_at"], "end_at") > transaction_cutoff_at:
+                            self._write_coverage(EnrichmentCoverage(row["stream"], cutoff_text, row["end_at"], row["source"], "retention-pruned", row["observed_at"], row["normalization_version"]))
+                if transactions_deleted:
+                    connection.execute("update market_ingestion_state set status='partial',oldest_at=null,oldest_id=null where oldest_at is not null and julianday(oldest_at)<julianday(?)", (cutoff_text,))
             price_observations_deleted = connection.execute(
                 "delete from price_observations where observed_at_epoch < ?",
                 (cutoff_epoch,),
@@ -438,16 +983,16 @@ class MarketStore:
             vacuumed=vacuumed,
         )
 
-    def transactions_for_window(self, item_code: str, since_epoch: int) -> list[dict[str, Any]]:
+    def transactions_for_window(self, item_code: str, since_epoch: int, *, transaction_type: str = "trading") -> list[dict[str, Any]]:
         rows = self._connect().execute(
             """
             select id, item_code, transaction_type, created_at, created_at_epoch,
                    money, quantity, unit_price, fetched_at
             from transactions
-            where item_code = ? and created_at_epoch >= ?
+            where item_code = ? and transaction_type = ? and created_at_epoch >= ?
             order by created_at_epoch asc, id asc
             """,
-            (item_code, since_epoch),
+            (item_code, transaction_type, since_epoch),
         ).fetchall()
         return [_dict_from_row(row) for row in rows]
 
@@ -507,6 +1052,7 @@ class MarketStore:
             "sum(quantity) as quantity, sum(unit_price * quantity) as turnover, "
             "count(*) as trade_count, max(created_at_epoch) as last_trade_epoch "
             f"from transactions where item_code in ({placeholders}) "
+            "and transaction_type = 'trading' "
             "and created_at_epoch >= ? and created_at_epoch < ? "
             "and unit_price > 0 and unit_price < 1e308 and quantity > 0 and quantity < 1e308 "
             "group by item_code, day_epoch order by day_epoch, item_code",
@@ -536,6 +1082,7 @@ class MarketStore:
                    money, quantity, unit_price, fetched_at
             from transactions
             where item_code in ({placeholders})
+              and transaction_type = 'trading'
               and created_at_epoch >= ?
               and created_at_epoch < ?
             order by item_code asc, created_at_epoch asc, id asc
@@ -626,17 +1173,18 @@ class MarketStore:
             observation["levels_available"] = bool(levels)
         return observations
 
-    def item_codes(self) -> list[str]:
-        rows = self._connect().execute(
-            """
-            select item_code from transactions
-            union
-            select item_code from price_observations
-            union
-            select item_code from order_book_observations
-            order by item_code
-            """
-        ).fetchall()
+    def item_codes(self, *, transaction_type: str | None = "trading") -> list[str]:
+        """Discover a market scope; None includes all types and unclassified legacy facts."""
+        c = self._connect()
+        if transaction_type is None:
+            query = "select item_code from transactions"
+            params = ()
+        else:
+            query = "select item_code from transactions where transaction_type=?"
+            params = (transaction_type,)
+        if transaction_type in (None, "trading"):
+            query += " union select item_code from price_observations union select item_code from order_book_observations"
+        rows = c.execute(query + " order by item_code", params).fetchall()
         return [row["item_code"] for row in rows]
 
     def latest_price_observations(self) -> dict[str, dict[str, Any]]:
@@ -730,6 +1278,10 @@ class MarketStore:
             connection = sqlite3.connect(self.path, timeout=30.0)
             try:
                 connection.row_factory = sqlite3.Row
+                # Legacy rows retain source subsecond precision in timestamp text
+                # even before enrichment fills created_at_us. IDs are not clocks.
+                connection.create_function("source_timestamp_us", 1,
+                    lambda value: _datetime_us(_parse_datetime(value, "created_at")), deterministic=True)
                 connection.execute("pragma foreign_keys = on")
                 # Readers can keep their snapshot while sync commits new pages.
                 connection.execute("pragma journal_mode = wal").fetchone()
@@ -741,7 +1293,7 @@ class MarketStore:
 
 
 def migrate_to_v1(connection: sqlite3.Connection) -> None:
-    connection.executescript(
+    _execute_statements(connection,
         """
         create table if not exists transactions (
             id text primary key,
@@ -801,7 +1353,7 @@ def migrate_to_v1(connection: sqlite3.Connection) -> None:
 
 
 def migrate_to_v2(connection: sqlite3.Connection) -> None:
-    connection.executescript(
+    _execute_statements(connection,
         """
         create table order_book_levels (
             id integer primary key autoincrement,
@@ -821,7 +1373,7 @@ def migrate_to_v2(connection: sqlite3.Connection) -> None:
 
 
 def migrate_to_v3(connection: sqlite3.Connection) -> None:
-    connection.executescript(
+    _execute_statements(connection,
         """
         create table item_production_config (
             item_code text primary key,
@@ -840,24 +1392,155 @@ def migrate_to_v4(connection: sqlite3.Connection) -> None:
     )
 
 
+def _execute_statements(connection: sqlite3.Connection, script: str) -> None:
+    """Execute static DDL without executescript's implicit COMMIT."""
+    for statement in script.split(";"):
+        if statement.strip():
+            connection.execute(statement)
+
+
+def migrate_to_v5(connection: sqlite3.Connection) -> None:
+    for column in (
+        "offer_created_at text", "updated_at text", "created_at_us integer", "updated_at_us integer",
+        "first_fetched_at text", "last_fetched_at text", "money_decimal text", "quantity_decimal text",
+        "money_precision text check(money_precision in ('decimal','decoded_float'))",
+        "quantity_precision text check(quantity_precision in ('decimal','decoded_float'))",
+        "normalization_version integer not null default 0 check(normalization_version>=0)",
+        "normalization_status text not null default 'legacy' check(normalization_status in ('legacy','normalized','extensions','error'))",
+    ):
+        connection.execute("alter table transactions add column " + column)
+    # No decimal or identity backfill: legacy REAL projections cannot recover source facts.
+    connection.execute("update transactions set first_fetched_at=fetched_at,last_fetched_at=fetched_at")
+    _execute_statements(connection, """
+        create index idx_transactions_type_time on transactions(transaction_type,created_at_epoch,id);
+        create table transaction_participants (
+            transaction_id text not null references transactions(id) on delete cascade,
+            side text not null check(side in ('buy','sell')),
+            user_id text, mu_id text, country_id text, party_id text,
+            primary key(transaction_id,side)
+        );
+        create table transaction_equipment (
+            transaction_id text not null primary key references transactions(id) on delete cascade,
+            instance_id text, equipment_code text, equipment_type text, state text, max_state text,
+            item_quantity text, last_acquisition_at text
+        );
+        create index idx_equipment_instance on transaction_equipment(instance_id,transaction_id);
+        create table transaction_equipment_stats (
+            transaction_id text not null references transaction_equipment(transaction_id) on delete cascade,
+            skill_code text not null, value_decimal text,
+            primary key(transaction_id,skill_code)
+        );
+        create table transaction_field_state (
+            transaction_id text not null references transactions(id) on delete cascade,
+            field_path text not null, is_null integer not null check(is_null in (0,1)), source_updated_us integer,
+            primary key(transaction_id,field_path)
+        );
+        create table transaction_extra_fields (
+            transaction_id text not null references transactions(id) on delete cascade,
+            field_path text not null, value_type text not null check(value_type in ('null','string','number','boolean')),
+            scalar_value text, check((value_type='null' and scalar_value is null) or (value_type!='null' and scalar_value is not null)),
+            primary key(transaction_id,field_path)
+        );
+        create table order_book_entries (
+            observation_id integer not null references order_book_observations(id) on delete cascade,
+            side text not null check(side in ('bid','ask')), entry_position integer not null check(entry_position>=0),
+            order_id text, item_code text not null, source_type text,
+            user_id text, mu_id text, country_id text, party_id text,
+            price_decimal text not null, quantity_decimal text not null, offer_at text,
+            price_precision text check(price_precision in ('decimal','decoded_float')),
+            quantity_precision text check(quantity_precision in ('decimal','decoded_float')),
+            primary key(observation_id,side,entry_position)
+        );
+        create index idx_order_entry_id on order_book_entries(observation_id,order_id);
+        create table order_entry_field_state (
+            observation_id integer not null, side text not null, entry_position integer not null,
+            field_path text not null, is_null integer not null check(is_null in (0,1)),
+            primary key(observation_id,side,entry_position,field_path),
+            foreign key(observation_id,side,entry_position) references order_book_entries(observation_id,side,entry_position) on delete cascade
+        );
+        create table order_entry_extra_fields (
+            observation_id integer not null, side text not null, entry_position integer not null,
+            field_path text not null, value_type text not null check(value_type in ('null','string','number','boolean')),
+            scalar_value text, check((value_type='null' and scalar_value is null) or (value_type!='null' and scalar_value is not null)),
+            primary key(observation_id,side,entry_position,field_path),
+            foreign key(observation_id,side,entry_position) references order_book_entries(observation_id,side,entry_position) on delete cascade
+        );
+        create table market_entities (
+            entity_kind text not null check(entity_kind in ('user','mu','country','party')),
+            entity_id text not null, name text, name_observed_at text, lookup_status text not null, lookup_attempted_at text not null,
+            image_url text, country_code text, image_cache_url text, level integer, citizenship_id text, prestige integer default 0,
+            primary key(entity_kind,entity_id)
+        );
+        create table market_ingestion_state (
+            stream text not null primary key check(stream in ('trading','itemMarket')),
+            normalization_version integer not null check(normalization_version>0),
+            scan_mode text not null check(scan_mode in ('incremental','resync','backfill')),
+            scan_anchor text, oldest_at text, oldest_id text, newest_at text, newest_id text,
+            attempted_at text, status text not null check(status in ('running','partial','complete','failed','exhausted')),
+            attempts integer not null check(attempts>=0),
+            pages integer not null check(pages>=0), inserted integer not null check(inserted>=0),
+            enriched integer not null check(enriched>=0), unchanged integer not null check(unchanged>=0),
+            rejected integer not null check(rejected>=0), last_error text
+        );
+        create table market_enrichment_coverage (
+            stream text not null check(stream in ('trading','itemMarket')),
+            normalization_version integer not null check(normalization_version>0),
+            start_at text not null, end_at text not null, source text not null,
+            completion_reason text not null, observed_at text not null,
+            primary key(stream,normalization_version,start_at,end_at,source)
+        );
+    """)
+    for kind in ("user", "mu", "country", "party"):
+        connection.execute(f"create index idx_participant_{kind} on transaction_participants({kind}_id,transaction_id)")
+
+
+def _validate_decimal(value: str | None) -> None:
+    from decimal import Decimal, InvalidOperation
+    if value is None:
+        return
+    try:
+        if not isinstance(value, str) or not Decimal(value).is_finite():
+            raise ValueError("Expected finite decimal text")
+    except InvalidOperation as exc:
+        raise ValueError("Expected decimal text") from exc
+
+
+def _validate_scalar(value_type: str, value: str | None) -> None:
+    if value_type not in {"string", "number", "boolean", "null"}:
+        raise ValueError("Unknown scalar type")
+    if (value_type == "null") != (value is None) or (value is not None and not isinstance(value, str)):
+        raise ValueError("Invalid scalar value")
+    if value_type == "number":
+        _validate_decimal(value)
+    if value_type == "boolean" and value not in {"true", "false"}:
+        raise ValueError("Invalid boolean value")
+
+
+def migrate_to_v6(connection: sqlite3.Connection) -> None:
+    connection.execute("alter table market_entities add column image_url text")
+    connection.execute("alter table market_entities add column country_code text")
+    connection.execute("alter table market_entities add column image_cache_url text")
+    connection.execute("alter table market_entities add column level integer")
+    connection.execute("alter table market_entities add column citizenship_id text")
+    connection.execute("alter table market_entities add column prestige integer default 0")
+    connection.execute("""create table display_assets (
+        source_url text primary key, local_path text, sha256 text, mime_type text,
+        width integer, height integer, byte_count integer, observed_at text,
+        status text not null, attempted_at text not null)""")
+    connection.execute("""create table equipment_display (
+        item_code text primary key, rarity text not null, tier integer not null,
+        color_scheme text not null, frame_color text not null, frame_end text not null,
+        text_color text not null, image_url text not null, observed_at text not null)""")
+
+
 MIGRATIONS = {
     1: migrate_to_v1,
     2: migrate_to_v2,
     3: migrate_to_v3,
     4: migrate_to_v4,
+    5: migrate_to_v5,
+    6: migrate_to_v6,
 }
-
-
-def _ensure_schema_meta(connection: sqlite3.Connection) -> None:
-    with connection:
-        connection.execute(
-            """
-            create table if not exists schema_meta (
-                key text primary key,
-                value text not null
-            )
-            """
-        )
 
 
 def _backfill_market_sync_metadata(connection: sqlite3.Connection) -> None:
@@ -907,58 +1590,25 @@ def _vacuum_is_due(
     return housekeeping_at - last_vacuum_at >= timedelta(days=vacuum_interval_days)
 
 
-def _transaction_row(item_code: str, transaction: dict[str, Any], fetched_at: str) -> dict[str, Any]:
-    created_at = _required_string(
-        _first_present(transaction, "created_at", "createdAt"),
-        "created_at",
-    )
-    created_at_epoch = _epoch_seconds(_parse_datetime(created_at, "created_at"))
-    transaction_type = _optional_string(_first_present(transaction, "transaction_type", "transactionType", "type"))
-    money = _optional_float(transaction.get("money"))
-    quantity = _optional_float(transaction.get("quantity"))
-    unit_price = (money / quantity) if money is not None and quantity and quantity > 0 else None
-    transaction_id = _optional_string(_first_present(transaction, "id", "_id", "transaction_id", "transactionId"))
-    if transaction_id is None:
-        transaction_id = _derive_transaction_id(item_code, created_at, transaction_type, money, quantity)
-
-    return {
-        "id": transaction_id,
-        "item_code": item_code,
-        "transaction_type": transaction_type,
-        "created_at": _format_datetime(_parse_datetime(created_at, "created_at")),
-        "created_at_epoch": created_at_epoch,
-        "money": money,
-        "quantity": quantity,
-        "unit_price": unit_price,
-        "fetched_at": fetched_at,
-    }
-
-
-def _derive_transaction_id(
-    item_code: str,
-    created_at: str,
-    transaction_type: str | None,
-    money: float | None,
-    quantity: float | None,
-) -> str:
-    raw = "".join(
-        (
-            item_code,
-            _format_datetime(_parse_datetime(created_at, "created_at")),
-            transaction_type or "",
-            _number_for_hash(money),
-            _number_for_hash(quantity),
-        )
-    )
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-
 def _normalized_order_book(payload: Any) -> tuple[list[Any], list[Any], dict[str, float | None]]:
     try:
         buy_orders = list(payload.buy_orders)
         sell_orders = list(payload.sell_orders)
     except (AttributeError, TypeError) as exc:
         raise ValueError("Expected normalized order data with buy_orders and sell_orders.") from exc
+    if getattr(payload, "entries", ()):
+        buy_orders, sell_orders = [], []
+        for entry in payload.entries:
+            for key in ("price_decimal", "quantity_decimal"):
+                _validate_decimal(entry.values[key])
+                if entry.values[key] is None:
+                    raise ValueError("Order numerics cannot be null")
+            price, quantity = float(entry.values["price_decimal"]), float(entry.values["quantity_decimal"])
+            if price < 0 or quantity < 0 or not all(math.isfinite(n) for n in (price, quantity)):
+                raise ValueError("Order numerics must be finite and non-negative")
+            if price == 0 or quantity == 0:
+                continue
+            (buy_orders if entry.side == "bid" else sell_orders).append(OrderLevel(price, quantity))
     bids = _aggregate_levels(buy_orders, reverse=True)
     asks = _aggregate_levels(sell_orders, reverse=False)
     best_bid = bids[0].price if bids else None
@@ -1016,25 +1666,6 @@ def _dict_from_row(row: sqlite3.Row) -> dict[str, Any]:
     return dict(row)
 
 
-def _first_present(mapping: dict[str, Any], *keys: str) -> Any:
-    for key in keys:
-        if key in mapping:
-            return mapping[key]
-    return None
-
-
-def _required_string(value: Any, field_name: str) -> str:
-    if not isinstance(value, str) or not value:
-        raise ValueError(f"Expected {field_name} to be a non-empty string.")
-    return value
-
-
-def _optional_string(value: Any) -> str | None:
-    if value is None:
-        return None
-    return str(value)
-
-
 def _required_float(value: Any, field_name: str) -> float:
     try:
         return float(value)
@@ -1049,13 +1680,9 @@ def _required_positive_float(value: Any, field_name: str) -> float:
     return result
 
 
-def _optional_float(value: Any) -> float | None:
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("Expected numeric value.") from exc
+def _datetime_us(value: datetime) -> int:
+    delta = value - datetime(1970, 1, 1, tzinfo=timezone.utc)
+    return (delta.days * 86400 + delta.seconds) * 1000000 + delta.microseconds
 
 
 def _parse_datetime(value: str, field_name: str) -> datetime:
@@ -1089,7 +1716,3 @@ def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
-
-
-def _number_for_hash(value: float | None) -> str:
-    return "" if value is None else f"{value:.12g}"

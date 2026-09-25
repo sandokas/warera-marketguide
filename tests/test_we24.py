@@ -174,7 +174,7 @@ def test_database_index_uses_transactions_without_sync_metadata(tmp_path, monkey
     facts.extend(dict(item_code=code,day_epoch=prior,quantity=10,turnover=100) for code in WE24_COMPONENTS)
     with MarketStore(tmp_path/'market.db') as store:
         monkeypatch.setattr(store, 'completed_daily_facts', lambda *args: facts)
-        monkeypatch.setattr(store, 'item_codes', lambda: list(WE24_COMPONENTS))
+        monkeypatch.setattr(store, 'item_codes', lambda **kwargs: list(WE24_COMPONENTS))
         monkeypatch.setattr(store, 'transaction_coverage', lambda *args: (_ for _ in ()).throw(AssertionError('Index must not read sync metadata')))
         result = build_we24_market_index(store, as_of=end.to_pydatetime())
     assert result['coverage_status'] == 'complete'
@@ -248,7 +248,7 @@ def test_unknown_membership_clears_changes_and_series(tmp_path, monkeypatch):
     facts.extend(dict(item_code=code, day_epoch=prior, quantity=10, turnover=100) for code in WE24_COMPONENTS)
     with MarketStore(tmp_path/'market.db') as store:
         monkeypatch.setattr(store, 'completed_daily_facts', lambda *args: facts)
-        monkeypatch.setattr(store, 'item_codes', lambda: [*WE24_COMPONENTS, 'unknown'])
+        monkeypatch.setattr(store, 'item_codes', lambda **kwargs: [*WE24_COMPONENTS, 'unknown'])
         result = build_we24_market_index(store, as_of=end.to_pydatetime())
     assert result['latest_level'] is None
     assert result['change_1d_pct'] is None

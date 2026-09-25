@@ -42,6 +42,16 @@ Raw API payloads are parsed at the API boundary. They are not stored as JSON or 
 
 Dependency constraints are defined in [AGENTS.md](../AGENTS.md).
 
+`scripts/market_rollout.py` is unattended orchestration around the same CLI and
+store methods. It saves job stages, uses an OS lock per database to reject duplicate
+runner processes, records sanitized request counters, and runs catch-up/publication
+only after verified exhaustion. Re-running its job resumes the saved stage and
+fixed report snapshot/cutoff. Durable page continuations are opt-in via
+`--resume-market` and remain owned by `sync.py` / `market_store.py`, not the script.
+`scripts/verify_market_publication.py` checks the inventory, all nine boards, table
+geometry, commodity-only cards and normalized equipment exports using read models.
+No runner imports SQLite or duplicates endpoint/pagination/accounting logic.
+
 ## Database
 
 The default database is:
@@ -51,6 +61,17 @@ data/warera_market.sqlite3
 ```
 
 Use `--market-db PATH` to select another file. `MarketStore.initialize()` creates the parent directory, initializes `schema_meta`, and applies ordered migrations through `LATEST_SCHEMA_VERSION`.
+
+Schema v5 additions, constraints, merge rules, and offline migration/restore are
+documented in [Market schema v5](market-schema-v5.md). The definitions below show
+the retained compatibility baseline.
+
+`MarketStore.database_inventory()` opens an existing file read-only, without
+initialization or migration. A consistent read transaction returns schema markers,
+integrity results, per-table counts and per-stream source date bounds. Missing
+paths fail rather than creating empty databases. Rollout evidence belongs in the
+[implementation log](market-participants-implementation-log.md); schema migration
+alone does not establish normalized history coverage.
 
 ### `transactions`
 
@@ -70,7 +91,7 @@ create table transactions (
 );
 ```
 
-`unit_price` is `money / quantity` when quantity is positive. The upstream transaction ID is preferred. If it is absent, the store hashes the normalized item code, timestamp, transaction type, money, and quantity. `insert or ignore` makes repeated and overlapping fetches safe.
+`unit_price` is `money / quantity` when quantity is positive. The upstream transaction ID is preferred. If it is absent, API-boundary normalization retains the historical fallback hash of item code, timestamp, transaction type, money, and quantity. Presence-aware enrichment now replaces duplicate-ignore-only behavior; newer source revisions can correct supplied fields without deleting omitted facts.
 
 ### `price_observations`
 
@@ -181,3 +202,31 @@ run in mind; stored game-calculated endpoint prices remain excluded from analyti
 - Order `quantity` is assumed to represent remaining open quantity when aggregate depth is calculated.
 
 These assumptions should be revalidated if the WarEra API changes.
+
+## Participant publication contract (phase 5)
+
+CLI orchestration passes `load_participant_report(..., as_of=...)` into
+`generate_html_report` / `write_outputs`. Equipment detail read models feed only
+CSV exports. No rendering layer performs API or database reads. The existing
+commodity query scope continues to supply shared items, cards, charts and WE24.
+
+Nine stable `participants-{kind}-{board}` table identifiers map to PNGs under
+`participant_rankings_7d/`; coverage and explanation companions use the same
+kind namespace. Tables own their method/window/units/coverage footers, so generic
+commodity quote/fee notes cannot be appended. Export geometry checks cover the
+complete table and every cell; capture is at 2x CSS resolution. Published HTML
+replaces tables with static images. Companion explanations retain full equipment
+stats/condition and top buy/sell money, quantity, share, count and other totals.
+
+Ranking CSV keys include entity kind, ID, board and rank. Breakdown/stat keys
+include entity kind, ID, side and category index; equipment stat keys include
+transaction ID and skill code. CSVs are explicitly registered in the asset
+inventory using current-report metadata, never directory globbing. Decimal
+exports do not pass through float. Formula escaping is an output-only transform.
+See the README's seven-day participant section for exact filenames and CLI use.
+
+`--as-of` accepts an aware ISO timestamp, normalized to UTC once. Participant and
+equipment windows are half-open; costing consumes earlier history. This does not
+reconstruct historical current-order snapshots or historical cached names. No
+new money, fee or equipment-lineage evidence is inferred by publication. Unknown
+results remain unavailable; partial matched results are never total account P&L.

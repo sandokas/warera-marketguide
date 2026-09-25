@@ -1,0 +1,449 @@
+{
+  "observed_at": "2026-09-22",
+  "requests": [
+    {
+      "label": "trading-1",
+      "at": "2026-09-22T20:35:42.273722+00:00",
+      "endpoint": "/transaction.getPaginatedTransactions",
+      "input": {
+        "transactionType": "trading",
+        "limit": 100
+      },
+      "cursor_supplied": false,
+      "status": 200,
+      "count": 100,
+      "newest": "2026-09-22T20:35:42.095Z",
+      "oldest": "2026-09-22T20:34:41.312Z",
+      "descending": true,
+      "has_cursor": true,
+      "types": [
+        "trading"
+      ]
+    },
+    {
+      "label": "trading-2",
+      "at": "2026-09-22T20:35:42.569267+00:00",
+      "endpoint": "/transaction.getPaginatedTransactions",
+      "input": {
+        "transactionType": "trading",
+        "limit": 5
+      },
+      "cursor_supplied": true,
+      "status": 200,
+      "count": 5,
+      "newest": "2026-09-22T20:34:41.038Z",
+      "oldest": "2026-09-22T20:34:37.624Z",
+      "descending": true,
+      "has_cursor": true,
+      "types": [
+        "trading"
+      ]
+    },
+    {
+      "label": "trading-summary",
+      "scalar_paths": [
+        "__v",
+        "_id",
+        "buyerCountryId",
+        "buyerId",
+        "buyerMuId",
+        "createdAt",
+        "itemCode",
+        "money",
+        "offerCreatedAt",
+        "quantity",
+        "sellerCountryId",
+        "sellerId",
+        "sellerMuId",
+        "transactionType",
+        "updatedAt"
+      ],
+      "selected": 5,
+      "page_overlap": 0,
+      "boundary_descending": true,
+      "repeated_equipment_ids": null
+    },
+    {
+      "label": "itemMarket-1",
+      "at": "2026-09-22T20:35:43.693962+00:00",
+      "endpoint": "/transaction.getPaginatedTransactions",
+      "input": {
+        "transactionType": "itemMarket",
+        "limit": 100
+      },
+      "cursor_supplied": false,
+      "status": 200,
+      "count": 100,
+      "newest": "2026-09-22T20:35:41.478Z",
+      "oldest": "2026-09-22T20:32:20.468Z",
+      "descending": true,
+      "has_cursor": true,
+      "types": [
+        "itemMarket"
+      ]
+    },
+    {
+      "label": "itemMarket-2",
+      "at": "2026-09-22T20:35:44.767832+00:00",
+      "endpoint": "/transaction.getPaginatedTransactions",
+      "input": {
+        "transactionType": "itemMarket",
+        "limit": 5
+      },
+      "cursor_supplied": true,
+      "status": 200,
+      "count": 5,
+      "newest": "2026-09-22T20:32:19.046Z",
+      "oldest": "2026-09-22T20:31:49.588Z",
+      "descending": true,
+      "has_cursor": true,
+      "types": [
+        "itemMarket"
+      ]
+    },
+    {
+      "label": "itemMarket-summary",
+      "scalar_paths": [
+        "__v",
+        "_id",
+        "buyerId",
+        "createdAt",
+        "item._id",
+        "item.code",
+        "item.lastAcquisitionAt",
+        "item.maxState",
+        "item.quantity",
+        "item.skills.armor",
+        "item.skills.attack",
+        "item.skills.criticalChance",
+        "item.skills.criticalDamages",
+        "item.skills.dodge",
+        "item.skills.precision",
+        "item.state",
+        "item.type",
+        "itemCode",
+        "money",
+        "offerCreatedAt",
+        "quantity",
+        "sellerId",
+        "transactionType",
+        "updatedAt"
+      ],
+      "selected": 5,
+      "page_overlap": 0,
+      "boundary_descending": true,
+      "repeated_equipment_ids": 0
+    },
+    {
+      "label": "type-array",
+      "at": "2026-09-22T20:35:45.834849+00:00",
+      "endpoint": "/transaction.getPaginatedTransactions",
+      "input": {
+        "transactionType": [
+          "trading",
+          "itemMarket"
+        ],
+        "limit": 3
+      },
+      "cursor_supplied": false,
+      "status": 200,
+      "count": 3,
+      "newest": "2026-09-22T20:35:46.326Z",
+      "oldest": "2026-09-22T20:35:45.847Z",
+      "descending": true,
+      "has_cursor": true,
+      "types": [
+        "itemMarket",
+        "trading"
+      ]
+    },
+    {
+      "label": "steel-orders",
+      "at": "2026-09-22T20:35:46.916672+00:00",
+      "endpoint": "/tradingOrder.getTopOrders",
+      "input": {
+        "itemCode": "steel",
+        "limit": 3
+      },
+      "cursor_supplied": false,
+      "status": 200
+    }
+  ],
+  "public_assets": [
+    {
+      "url": "https://app.warera.io/_next/static/chunks/pages/_app-a1535bfe9f68148d.js",
+      "status": 200,
+      "sha256": "c7a315828efda85e450cbdd340d314baf3759b2e4c58599cb8e66eb057325977"
+    },
+    {
+      "url": "https://app.warera.io/_next/static/chunks/8147-049cb22c60d08627.js",
+      "status": 200,
+      "sha256": "d92c00da00b490b7cbc96613cd59691412b16fcfa5b1da3296c862c82e4addaa"
+    },
+    {
+      "url": "https://app.warera.io/_next/static/chunks/pages/market-9a4406c9208b8b85.js",
+      "status": 200,
+      "sha256": "b87687636daa5ddc250af01ab63867541762a81c39228b3f54c9b5ec5fb15561"
+    },
+    {
+      "url": "https://app.warera.io/_next/static/d88vhlzaJYP486NJ15SZf/_buildManifest.js",
+      "status": 200,
+      "sha256": "72ed619eff7378a73def2054eb9c81946faac7a598d7572cd51281937a83f144"
+    },
+    {
+      "url": "https://app.warera.io/_next/static/chunks/pages/market/equipments-2d19f68208077040.js",
+      "status": 200,
+      "sha256": "3a8f27bba470386bc7a01c01b786f49027427ff1cae3c1f0da6f4f734ec6bab4"
+    }
+  ],
+  "openapi": {
+    "url": "https://api2.warera.io/docs/swagger-ui-init.js",
+    "sha256": "ee8880748b318e170f1b83ac0dae871a1579816252891fa6ee4b818670e5d292",
+    "version": "0.17.4-beta",
+    "operations": {
+      "/country.getCountryById": {
+        "post": {
+          "tags": [
+            "country"
+          ],
+          "description": "Retrieves detailed information about a specific country",
+          "summary": "Get country by ID",
+          "operationId": "country.getCountryById",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "countryId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "The unique identifier of the country"
+                    }
+                  },
+                  "required": [
+                    "countryId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/tradingOrder.getTopOrders": {
+        "post": {
+          "tags": [
+            "tradingOrder"
+          ],
+          "description": "Retrieves the best orders for an item",
+          "summary": "Get best orders for an item",
+          "operationId": "tradingOrder.getTopOrders",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "itemCode": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "The item code to get orders for"
+                    },
+                    "limit": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 100,
+                      "default": 10,
+                      "description": "The limit of orders to get"
+                    }
+                  },
+                  "required": [
+                    "itemCode"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/user.getUserLite": {
+        "post": {
+          "tags": [
+            "user"
+          ],
+          "description": "Retrieves basic public information about a user including username, skills, and rankings",
+          "summary": "Get user profile (lite)",
+          "operationId": "user.getUserLite",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "userId": {
+                      "type": "string",
+                      "pattern": "^[a-f\\d]{24}$",
+                      "description": "The unique identifier of the user"
+                    }
+                  },
+                  "required": [
+                    "userId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/mu.getById": {
+        "post": {
+          "tags": [
+            "mu"
+          ],
+          "description": "Retrieves detailed information about a specific military unit",
+          "summary": "Get military unit by ID",
+          "operationId": "mu.getById",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "muId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "muId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "/transaction.getPaginatedTransactions": {
+        "post": {
+          "tags": [
+            "transaction"
+          ],
+          "description": "Retrieves a paginated list of transactions",
+          "summary": "Get paginated transactions",
+          "operationId": "transaction.getPaginatedTransactions",
+          "responses": {
+            "200": {
+              "description": ""
+            }
+          },
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "limit": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 100,
+                      "default": 10,
+                      "description": "The limit of transactions to get"
+                    },
+                    "cursor": {
+                      "type": "string",
+                      "description": "The cursor to get the next transactions"
+                    },
+                    "userId": {
+                      "type": "string",
+                      "description": "The user ID to get transactions for"
+                    },
+                    "muId": {
+                      "type": "string",
+                      "description": "The MU ID to get transactions for"
+                    },
+                    "countryId": {
+                      "type": "string",
+                      "description": "The country ID to get transactions for"
+                    },
+                    "partyId": {
+                      "type": "string",
+                      "description": "The party ID to get transactions for"
+                    },
+                    "itemCode": {
+                      "type": "string",
+                      "description": "The item code to get transactions for"
+                    },
+                    "transactionType": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "applicationFee",
+                            "trading",
+                            "itemMarket",
+                            "wage",
+                            "donation",
+                            "articleTip",
+                            "openCase",
+                            "craftItem",
+                            "dismantleItem",
+                            "battleLoot",
+                            "countryMoneyTransfer"
+                          ]
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "applicationFee",
+                              "trading",
+                              "itemMarket",
+                              "wage",
+                              "donation",
+                              "articleTip",
+                              "openCase",
+                              "craftItem",
+                              "dismantleItem",
+                              "battleLoot",
+                              "countryMoneyTransfer"
+                            ]
+                          }
+                        }
+                      ],
+                      "description": "The type of transactions to get"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

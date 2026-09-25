@@ -1,5 +1,37 @@
 # Market Data Semantics
 
+## Participant accounting and source history
+
+See the [historical query-scope correction](market-history-query-scope-spec.md).
+Broad-query exhaustion does not establish all available history. A filtered
+commodity diagnostic reached September 16 with continuation; the server-default
+explanation remains unverified. Scope-aware acquisition, checkpoints and coverage
+are requirements for further work, not claims about the current implementation.
+
+
+Participant reports use normalized source decimals and independent buyer/seller
+references from schema v5. A single MU or country reference identifies that side's
+economic account; the user remains its actor. Different account kinds across the
+two sides are valid. Conflicting institutions remain unresolved per side.
+
+The common aware UTC `as_of` defines `[as_of - 7 days, as_of)`. Earlier observed
+buys and sells feed commodity FIFO. Equipment retains each sale's instance,
+condition and full skill vector, but unverified instance continuity cannot supply
+cost basis. Historical gross/net money and fees remain unverified for both market
+streams: participant turnover is **source-money**, unknown fees are not zero, and
+unsupported gross/net profit stays unavailable. Existing commodity quote/guidance
+fee conventions below are not evidence of historical transaction settlement.
+
+Reports distinguish matched basis, unmatched sale value, unknown fees and
+unattributed sides; these flags overlap. Any supported partial matched-sale P&L
+is not complete account profit. API exhaustion describes observed pagination,
+not all historical inventory, nonmarket acquisitions/dispositions or equipment
+lineage. Legacy rows remain normalization version 0 until source enrichment.
+
+The shared item list/cards/tables and commodity charts select `trading` history.
+Equipment sales contribute to participant activity and the equipment sale/stat
+CSVs, with no dedicated equipment presentation or pending-listing collection.
+
 ## Price authority
 
 The model keeps completed transactions and current order-book prices distinct:
