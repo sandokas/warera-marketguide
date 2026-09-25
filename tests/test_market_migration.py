@@ -62,7 +62,7 @@ def test_upgrade_preserves_all_original_columns_and_reopen(tmp_path, version):
     store = legacy_database(path, version)
     before = contents(store)
     store.initialize()
-    assert store.schema_version() == store.user_version() == 7
+    assert store.schema_version() == store.user_version() == 6
     after = contents(store)
     for table, rows in before.items():
         if table == "schema_meta":
@@ -107,7 +107,7 @@ def test_failed_upgrade_rolls_back_ddl_rows_and_both_markers(tmp_path, monkeypat
     assert reopened._connect().execute("pragma integrity_check").fetchone()[0] == "ok"
     monkeypatch.setitem(MIGRATIONS, 5, real_migration)
     reopened.initialize()
-    assert reopened.schema_version() == reopened.user_version() == 7
+    assert reopened.schema_version() == reopened.user_version() == 6
     assert reopened.transaction_details("old")["money"] == before["transactions"][0][5]
     reopened.close()
 

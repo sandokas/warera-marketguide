@@ -52,7 +52,7 @@ def refresh_display_cache(api: WarEraMarketApi, store: MarketStore, identities,
                     store.cache_entity_name(kind, entity_id, None, stamp, "unavailable")
                     result["errors"].append(f"{kind} {entity_id}: {type(exc).__name__}")
                 cached = store.entity_name(kind, entity_id)
-        if kind == "user" and cached and cached.get("citizenship_id"):
+        if cached and cached.get("citizenship_id"):
             country_key = ("country", cached["citizenship_id"])
             if country_key not in queued:
                 queued.add(country_key)

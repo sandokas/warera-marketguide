@@ -11,7 +11,7 @@ from collections.abc import Iterable
 from .market_models import TransactionFacts, StreamProgress, StreamCheckpoint, EnrichmentCoverage, OrderLevel, RejectedTransactionPage
 
 
-LATEST_SCHEMA_VERSION = 7
+LATEST_SCHEMA_VERSION = 6
 
 
 class MarketStoreError(RuntimeError):

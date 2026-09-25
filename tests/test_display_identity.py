@@ -117,7 +117,7 @@ def test_v5_additive_migration_preserves_names_and_rolls_back(tmp_path, monkeypa
     store.initialize()
     store.initialize()
     assert store.entity_name('user', 'u')['name'] == 'Retained'
-    assert store.schema_version() == store.user_version() == 7
+    assert store.schema_version() == store.user_version() == 6
     store.close()
 
 

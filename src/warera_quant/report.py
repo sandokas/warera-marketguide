@@ -2309,6 +2309,8 @@ def _identity_html(row):
         level = identity.get("level")
         if type(level) is int and level >= 0:
             badges += f'<span class="identity-level" aria-label="Level {level}">{level}</span>'
+    # Display citizenship flag for both users and MUs
+    if row.get("entity_kind") in {"user", "mu"}:
         badges += _display_image(identity.get("citizenship_image_src"),
             identity.get("citizenship_name") or "Citizenship", "identity-citizenship")
     from urllib.parse import quote

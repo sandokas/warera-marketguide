@@ -84,6 +84,10 @@ class WarEraMarketApi:
                 raise WarEraApiError("Invalid citizenship country")
             # Check for prestige - skull symbol (💀) in username or separate prestige field
             prestige = "💀" in name or bool(data.get("prestige"))
+        elif kind == "mu":
+            citizenship = data.get("country")
+            if citizenship is not None and (not isinstance(citizenship, str) or not citizenship):
+                raise WarEraApiError("Invalid MU citizenship country")
         return DisplayIdentity(kind, entity_id, name, image_url or None, code, level, citizenship, prestige or False)
 
     def get_item_display(self) -> list[dict]:

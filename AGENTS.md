@@ -79,3 +79,72 @@ Forbidden dependencies:
 Raw API responses are parsed at the API boundary. They should not be persisted as JSON or passed between normal application layers. SQLite is the source of truth for market history.
 
 When adding features, prefer adding one reusable method to the correct layer instead of copying similar logic into a caller. If behavior seems needed in two places, extract it before wiring the second caller.
+
+## Database Schema Migrations
+
+**NEVER manually manipulate database schema or version markers.** Always use the migration system in `market_store.py`.
+
+### When Schema Changes Are Needed
+
+1. **Increment `LATEST_SCHEMA_VERSION`** in `market_store.py`
+2. **Create a new migration function** (e.g., `migrate_to_v7`) that performs the schema changes
+3. **Add the migration to the `MIGRATIONS` dictionary** with the version number as key
+4. **Update tests** to expect the new schema version (update version assertions in test files)
+5. **Let `MarketStore.initialize()` handle the migration** - never execute migrations manually
+
+### Migration Function Requirements
+
+- Must accept a single `sqlite3.Connection` parameter
+- Should use `connection.execute()` for DDL statements
+- All schema changes and version markers must be atomic in one transaction
+- Include both schema changes and any data migrations needed
+
+### Example Migration
+
+```python
+def migrate_to_v7(connection: sqlite3.Connection) -> None:
+    """Add new_column to table_name for feature X."""
+    connection.execute("alter table table_name add column new_column text")
+    # Additional schema changes as needed
+```
+
+Then add to migrations dictionary:
+```python
+MIGRATIONS = {
+    1: migrate_to_v1,
+    # ... existing migrations
+    6: migrate_to_v6,
+    7: migrate_to_v7,  # New migration
+}
+```
+
+### Version Markers
+
+The database maintains two version markers that must always stay synchronized:
+- `schema_meta.version` (application-controlled)
+- `PRAGMA user_version` (SQLite-controlled)
+
+The `initialize()` method automatically keeps these in sync. Never manually set either marker.
+
+### Testing Schema Changes
+
+- Update test assertions to expect the new version number
+- Ensure migration tests cover the new schema changes
+- Test both fresh installations and upgrades from previous versions
+
+### Forbidden Practices
+
+- **NEVER** execute DDL (CREATE/ALTER/DROP) or DML (INSERT/UPDATE/DELETE) commands directly on production databases
+- **NEVER** manually modify `schema_meta` table
+- **NEVER** manually set `PRAGMA user_version`
+- **NEVER** bypass `MarketStore.initialize()` for schema changes
+- **NEVER** have inconsistent version numbers between code and tests
+
+### Allowed Read Operations
+
+The following are **SAFE** for debugging and investigation:
+- SELECT queries to inspect data state
+- PRAGMA commands to check schema and database metadata
+- Reading from existing tables for debugging purposes
+
+These read operations are essential for troubleshooting and understanding database state, but should never be used to modify schema or data.
