@@ -52,10 +52,15 @@ def test_shared_turnover_and_complete_breakdown(kind):
     assert '/'.join(['1.123456789'] * 30) in html
     assert 'stats:' not in html and 'Participant activity:' not in html
     # Check that new item-based breakdown columns are present
-    assert 'Buy (qty @ avg)' in html
-    assert 'Sell (qty @ avg)' in html
+    assert 'Buy Qty' in html
+    assert 'Buy Avg' in html
+    assert 'Buy Total BTC' in html
+    assert 'Sell Qty' in html
+    assert 'Sell Avg' in html
+    assert 'Sell Total BTC' in html
     assert 'Profit/Unit' in html
     assert 'Total Profit BTC' in html
+    assert 'Net Unmatched' in html
     assert report['rankings'][kind]['profits']  # diagnostics preserved
     assert '2026-09-16T00:00:00+00:00' not in html
 
@@ -93,9 +98,15 @@ def test_all_categories_missingness_and_top_ten(kind, side):
     for item in winner.get('top_items', []):
         assert item['item_code'] in detail
     # Check that new columns exist
-    assert 'Buy (qty @ avg)' in detail
-    assert 'Sell (qty @ avg)' in detail
+    assert 'Buy Qty' in detail
+    assert 'Buy Avg' in detail
+    assert 'Buy Total BTC' in detail
+    assert 'Sell Qty' in detail
+    assert 'Sell Avg' in detail
+    assert 'Sell Total BTC' in detail
     assert 'Profit/Unit' in detail
+    assert 'Total Profit BTC' in detail
+    assert 'Net Unmatched' in detail
     assert 'commodity0' in detail
     # Missing data should still be handled properly
     assert 'condition' not in html
@@ -146,6 +157,10 @@ def test_precise_exports_full_stats_formula_protection_and_source_unchanged(tmp_
     assert 'profit_loss_btc' in helmet_item
     assert 'buy_quantity' in helmet_item
     assert 'sell_quantity' in helmet_item
+    # Check that net_unmatched replaced individual unmatched fields
+    assert 'net_unmatched' in helmet_item
+    assert 'unmatched_buy_quantity' not in helmet_item
+    assert 'unmatched_sell_quantity' not in helmet_item
     # Legacy breakdown should still exist for compatibility
     category = next(r for r in read('participant_trade_breakdown_7d.csv') if r['item_code'] == 'helmet')
     assert category['state'] == '0' and category['max_state'] == '100'

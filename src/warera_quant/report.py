@@ -1417,6 +1417,9 @@ def _is_number_column(column: str) -> bool:
             "volume", "liquidity", "spread %", "units", "trades", "rank",
             "range", "activity", "avg price", "average price",
             "7d turnover btc", "7d value btc",
+            "buy qty", "buy avg", "buy total btc",
+            "sell qty", "sell avg", "sell total btc",
+            "profit/unit", "total profit btc", "net unmatched",
         }
         or label.endswith("trades")
         or label.endswith("momentum %")
@@ -2479,21 +2482,22 @@ def _participant_html(report, verbose: bool = False):
                 profit_per_unit = _fmt_report_value(item['profit_loss_per_unit'], column='profit per unit')
                 profit_total = _fmt_report_value(item['profit_loss_btc'], column='total profit')
                 
-                # Format remaining inventory
-                remaining_buy = _participant_amount(item['unmatched_buy_quantity'], None, 0)
-                remaining_sell = _participant_amount(item['unmatched_sell_quantity'], None, 0)
+                # Format remaining inventory - merge unmatched buy/sell, sell as negative
+                net_unmatched = _participant_amount(
+                    float(item['unmatched_buy_quantity'] or 0) - float(item['unmatched_sell_quantity'] or 0), 
+                    None, 0
+                )
                 
                 details.append([name, _category_html(item),
-                    f"{buy_qty} @ {buy_avg}", buy_total,
-                    f"{sell_qty} @ {sell_avg}", sell_total,
+                    buy_qty, buy_avg, buy_total,
+                    sell_qty, sell_avg, sell_total,
                     profit_per_unit, profit_total,
-                    f"+{remaining_buy}" if float(item['unmatched_buy_quantity'] or 0) > 0 else remaining_buy,
-                    f"+{remaining_sell}" if float(item['unmatched_sell_quantity'] or 0) > 0 else remaining_sell])
+                    net_unmatched])
         
         blocks.append(table(f'participants-{kind}-volume', f'{label} - monetary turnover',
             ['Rank', {'user': 'User', 'mu': 'MU', 'country': 'Country'}[kind], '7D Turnover BTC', 'Bought', 'Sold'], rows))
         blocks.append(table(f'participants-{kind}-explanations', f'{label} - item breakdown (buy/sell combined)',
-            [{'user': 'User', 'mu': 'MU', 'country': 'Country'}[kind], 'Item', 'Buy (qty @ avg)', 'Buy Total BTC', 'Sell (qty @ avg)', 'Sell Total BTC', 'Profit/Unit', 'Total Profit BTC', 'Unmatched Buy', 'Unmatched Sell'], details))
+            [{'user': 'User', 'mu': 'MU', 'country': 'Country'}[kind], 'Item', 'Buy Qty', 'Buy Avg', 'Buy Total BTC', 'Sell Qty', 'Sell Avg', 'Sell Total BTC', 'Profit/Unit', 'Total Profit BTC', 'Net Unmatched'], details))
     return ''.join(blocks)
 
 
@@ -2542,6 +2546,8 @@ def _write_participant_exports(out, report, equipment_details):
                 sig = item['category']
                 # Create a compatible category dict for description function
                 category_for_desc = {'category': sig, 'item_code': item['item_code']}
+                # Calculate net unmatched (buy - sell, sell as negative)
+                net_unmatched = float(item['unmatched_buy_quantity'] or 0) - float(item['unmatched_sell_quantity'] or 0)
                 item_row = {**common, **key, 'name':row.get('name') or row['entity_id'],
                     'item_code':item['item_code'], 'market_type':item['market_type'],
                     'buy_quantity':item['buy_quantity'], 'buy_avg_price':item['buy_avg_price'], 'buy_total_value':item['buy_total_value'],
@@ -2549,7 +2555,7 @@ def _write_participant_exports(out, report, equipment_details):
                     'sell_quantity':item['sell_quantity'], 'sell_avg_price':item['sell_avg_price'], 'sell_total_value':item['sell_total_value'],
                     'sell_trade_count':item['sell_trade_count'], 'sell_missing_money_count':item['sell_missing_money_count'], 'sell_missing_quantity_count':item['sell_missing_quantity_count'],
                     'profit_loss_per_unit':item['profit_loss_per_unit'], 'profit_loss_btc':item['profit_loss_btc'],
-                    'matched_quantity':item['matched_quantity'], 'unmatched_buy_quantity':item['unmatched_buy_quantity'], 'unmatched_sell_quantity':item['unmatched_sell_quantity'],
+                    'matched_quantity':item['matched_quantity'], 'net_unmatched':net_unmatched,
                     'signature_version':sig[0], 'state':sig[3] if len(sig)>2 else None, 'max_state':sig[4] if len(sig)>2 else None,
                     'description':_category_description(category_for_desc, include_condition=True)}
                 item_breakdown.append(item_row)

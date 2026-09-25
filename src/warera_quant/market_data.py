@@ -1799,8 +1799,10 @@ def enrich_participant_display(store: MarketStore, result: dict, *, force_refres
         for categories in [*row["categories"].values(), row["top_buy"], row["top_sell"]]:
             for category in categories:
                 category["display"] = equipment.get(category["item_code"], {})
-        # Also enrich the new item_categories
+        # Also enrich the new item_categories and top_items
         for item in row.get("item_categories", []):
+            item["display"] = equipment.get(item["item_code"], {})
+        for item in row.get("top_items", []):
             item["display"] = equipment.get(item["item_code"], {})
 
 
