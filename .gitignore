@@ -11,3 +11,5 @@ output/*
 dist/
 build/
 display-assets/
+.pytest-tmp/
+temp_test_dir/
