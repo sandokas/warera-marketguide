@@ -42,9 +42,15 @@ def frame():
 def test_shared_turnover_and_complete_breakdown(kind):
     import re
     report = participant_fixture()
+    for entity_id, profit in (('0', Decimal('5')), ('1', Decimal('-3'))):
+        participant = next(row for row in report['rankings'][kind]['volume']
+                           if row['entity_id'] == entity_id)
+        participant['top_items'][0]['profit_loss_btc'] = profit
     html = generate_html_report(frame(), participant_report=report, as_of=NOW)
     tables = re.findall(r'<table[^>]*data-table-id="participants-' + kind + r'-.*?</table>', html, re.S)
     assert len(tables) == 2
+    turnover_table = next(table for table in tables if 'participants-' + kind + '-volume' in table)
+    assert re.search(r'<td class="col-7d-turnover-btc number">[\d,]+\.\d{3}</td>', turnover_table)
     for table in tables:
         assert '<tfoot>' not in table
         assert all(text not in table for text in ('Coverage', 'P&L', 'Result', 'condition', 'Other categories', 'Observed:'))
@@ -62,6 +68,13 @@ def test_shared_turnover_and_complete_breakdown(kind):
     assert 'Profit/Unit' in html
     assert 'Total Profit BTC' in html
     assert 'Net Unmatched Qty' in html
+    assert '99.123456789' not in html
+    assert '>99.123</td>' in html
+    assert '>15.000</td>' in html
+    assert re.search(r'<td class="[^"]*profit-positive">5\.000</td>', html)
+    assert re.search(r'<td class="[^"]*profit-negative">-3\.000</td>', html)
+    assert re.search(r'<td class="col-net-unmatched-qty number">', html)
+    assert not re.search(r'<td class="[^"]*net-(?:positive|negative)', html)
     assert report['rankings'][kind]['profits']  # diagnostics preserved
     assert '2026-09-16T00:00:00+00:00' not in html
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
+from fractions import Fraction
 from html import escape
 from pathlib import Path
 import re
@@ -69,15 +71,22 @@ def combine_market_rows_with_metrics(source: pd.DataFrame, metrics: Iterable[Mar
 def _fmt(value: object, decimals: int = 3) -> str:
     if value is None or pd.isna(value):
         return "N/A"
-    if isinstance(value, (int, float)):
+    if isinstance(value, (int, float, Decimal)):
         return f"{value:.{decimals}f}"
+    if isinstance(value, Fraction):
+        return f"{float(value):.{decimals}f}"
     return str(value)
 
 
 def _fmt_report_value(value: object, *, column: str | None = None) -> str:
     if value is None or pd.isna(value):
         return "N/A"
-    if isinstance(value, (int, float)):
+    if isinstance(value, str):
+        try:
+            value = Decimal(value)
+        except InvalidOperation:
+            return value
+    if isinstance(value, (int, float, Decimal, Fraction)):
         label = str(column or "").lower()
         # Quantities and counts: whole numbers
         if (
@@ -1423,7 +1432,7 @@ def _is_number_column(column: str) -> bool:
             "7d turnover btc", "7d value btc",
             "buy qty", "buy avg", "buy total btc",
             "sell qty", "sell avg", "sell total btc",
-            "profit/unit", "total profit btc", "net unmatched",
+            "profit/unit", "total profit btc", "net unmatched", "net unmatched qty",
         }
         or label.endswith("trades")
         or label.endswith("momentum %")
@@ -2329,7 +2338,7 @@ def _participant_amount(amount, missing, count, is_btc=True):
     if amount is None or (missing and missing == count):
         return "Unknown"
     decimals = 3 if is_btc else 0
-    text = format(amount, f",.{decimals}f").rstrip("0").rstrip(".") if is_btc else format(amount, ",.0f")
+    text = format(amount, f",.{decimals}f") if is_btc else format(amount, ",.0f")
     text = text or "0"
     return f"{text} known ({missing} missing)" if missing else text
 
@@ -2476,17 +2485,15 @@ def _participant_html(report, verbose: bool = False):
             for i, c in enumerate(row):
                 column_name = str(headers[i])
                 cell_class = _column_classes(column_name)
-                # Add emphasis classes for specific columns
+                # Add emphasis and sign coloring to total profit only.
                 if "Total Profit" in column_name:
                     cell_class += " col-total-profit"
-                if "Net Unmatched" in column_name:
-                    # Apply color coding based on value
                     try:
-                        value = float(str(c).replace("N/A", "0").replace(",", "").replace(" known", "").split()[0])
+                        value = float(str(c).replace(",", ""))
                         if value > 0:
-                            cell_class += " net-positive"
+                            cell_class += " profit-positive"
                         elif value < 0:
-                            cell_class += " net-negative"
+                            cell_class += " profit-negative"
                     except (ValueError, IndexError):
                         pass
                 row_cells.append(f'<td class="{cell_class}">{c if isinstance(c, _DisplayHtml) else escape(str(c))}</td>')
@@ -2504,8 +2511,8 @@ def _participant_html(report, verbose: bool = False):
               '.participant-table th.number,.participant-table td.number {text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}'
               '.participant-table th:not(.number),.participant-table td:not(.number) {text-align:left}'
               '.participant-table .col-total-profit {font-weight:700}'
-              '.participant-table .net-positive {color:var(--good);font-weight:600}'
-              '.participant-table .net-negative {color:var(--bad);font-weight:600}'
+              '.participant-table .profit-positive {color:var(--good);font-weight:600}'
+              '.participant-table .profit-negative {color:var(--bad);font-weight:600}'
               '.identity-link{display:inline-flex;align-items:center;gap:10px;color:inherit;text-decoration:none}'
               '.identity-avatar{position:relative;display:inline-block;flex-shrink:0;width:44px;height:44px;margin:4px 0 6px 10px}'
               '.identity-image{width:44px;height:44px;object-fit:contain;vertical-align:middle;border-radius:4px}'
