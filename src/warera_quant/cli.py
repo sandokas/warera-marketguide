@@ -23,6 +23,8 @@ from .market_data import (
     load_price_action_history,
     load_market_rows,
     load_participant_report,
+    displayed_identity_keys,
+    enrich_participant_display,
     iter_equipment_sale_details,
     opportunity_fields,
 )
@@ -39,8 +41,21 @@ from .metrics import (
     select_highlighted_items,
 )
 from .report import combine_market_rows_with_metrics, write_outputs, export_report_assets
-from .sync import sync_market_data
+from .sync import sync_market_data, refresh_display_cache
 from .warera_api import WarEraMarketApi
+
+
+def _refresh_participant_display(store, report, *, verbose=False):
+    """Complete the displayed population before attaching data for rendering."""
+    if not report:
+        return
+    summary = refresh_display_cache(WarEraMarketApi(WarEraApiClient()), store,
+        displayed_identity_keys(report), asset_dir=store.path.resolve().parent / "display-assets",
+        max_profiles=100, max_assets=100, max_age_hours=0, force_refresh=True,
+        equipment=False, verbose=verbose)
+    if summary["errors"] or summary["deferred"]:
+        raise RuntimeError("Participant display refresh incomplete: " + json.dumps(summary))
+    enrich_participant_display(store, report, verbose=verbose)
 
 
 def _parse_param(value: str) -> tuple[str, str]:
@@ -228,9 +243,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print detailed importer progress for each global stream and transaction page.",
     )
     parser.add_argument("--as-of", type=_parse_as_of, help="Reproducible report boundary (ISO timestamp with timezone)")
-    parser.add_argument("--refresh-identities", action="store_true", help="Refresh displayed profiles/assets only, then exit; no history collection")
-    parser.add_argument("--identity-limit", type=int, default=30, help="Maximum profile attempts (0-100)")
-    parser.add_argument("--asset-limit", type=int, default=35, help="Maximum image attempts (0-100)")
+    parser.add_argument("--refresh-identities", action="store_true", help="Refresh displayed profiles/assets; with --from-db, also generate the report")
+    parser.add_argument("--identity-limit", type=int, default=100, help="Maximum profile attempts (0-100)")
+    parser.add_argument("--asset-limit", type=int, default=100, help="Maximum image attempts (0-100)")
     parser.add_argument("--identity-max-age-hours", type=float, default=24, help="Display-cache refresh age")
     return parser
 
@@ -241,7 +256,7 @@ def main() -> None:
     report_as_of = args.as_of or datetime.now(timezone.utc)
     participant_report = None
     equipment_details = None
-    if args.refresh_identities:
+    if args.refresh_identities and not args.from_db:
         if any((args.from_db, args.live, args.sync, args.housekeeping, args.api_endpoint,
                 args.migrate_db, args.market_sync_status, args.transaction_backfill, args.resync_market,
                 args.history_scope, args.resume_market)):
@@ -393,6 +408,7 @@ def main() -> None:
                 we24 = build_we24_market_index(store, as_of=report_as_of, display_days=max(args.we24_days, args.research_days or 0))
                 action_cost_results = load_action_cost_results(store, as_of=report_as_of)
                 participant_report = load_participant_report(store, as_of=report_as_of, verbose=args.verbose)
+                _refresh_participant_display(store, participant_report, verbose=args.verbose)
                 equipment_details = list(iter_equipment_sale_details(store, as_of=report_as_of))
         if not args.quiet:
             print(
@@ -429,6 +445,8 @@ def main() -> None:
             we24 = build_we24_market_index(store, as_of=report_as_of, display_days=max(args.we24_days, args.research_days or 0))
             action_cost_results = load_action_cost_results(store, as_of=report_as_of)
             participant_report = load_participant_report(store, as_of=report_as_of, verbose=args.verbose)
+            if args.refresh_identities:
+                _refresh_participant_display(store, participant_report, verbose=args.verbose)
             equipment_details = list(iter_equipment_sale_details(store, as_of=report_as_of))
         df_in = pd.DataFrame(rows)
     elif args.api_endpoint:

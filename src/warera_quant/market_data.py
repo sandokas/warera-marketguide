@@ -1662,7 +1662,7 @@ def _participant_trade_input(source: dict) -> dict:
         "equipment": equipment, "presence": presence}
 
 
-def load_participant_report(store: MarketStore, *, as_of: datetime, batch_size: int = 500, force_refresh_identities: bool = True, verbose: bool = False) -> dict:
+def load_participant_report(store: MarketStore, *, as_of: datetime, batch_size: int = 500, verbose: bool = False) -> dict:
     """Offline phase-4 read model; phase 5 renders/exports this domain result."""
     from .metrics import calculate_participant_rankings, participant_utc
     as_of = participant_utc(as_of)
@@ -1671,7 +1671,7 @@ def load_participant_report(store: MarketStore, *, as_of: datetime, batch_size: 
     with closing(store.iter_participant_history(start, as_of, batch_size=batch_size)) as history:
         trades = (_participant_trade_input(row) for row in history)
         result = calculate_participant_rankings(trades, as_of=as_of, sources=sources)
-    enrich_participant_display(store, result, force_refresh=force_refresh_identities, verbose=verbose)
+    enrich_participant_display(store, result, verbose=verbose)
     return result
 
 
@@ -1681,29 +1681,8 @@ def displayed_identity_keys(report: dict) -> list[tuple[str, str]]:
         for boards in report["rankings"].values() for row in boards["volume"]))
 
 
-def enrich_participant_display(store: MarketStore, result: dict, *, force_refresh: bool = False, verbose: bool = False) -> None:
+def enrich_participant_display(store: MarketStore, result: dict, *, verbose: bool = False) -> None:
     from .display_assets import asset_data_uri, bundled_item_display
-    from .warera_api import WarEraMarketApi
-    from .api_client import WarEraApiClient
-    from .sync import refresh_display_cache
-    
-    if verbose:
-        print(f"[VERBOSE] enrich_participant_display: Starting with force_refresh={force_refresh}")
-    
-    # Force refresh identities from API if requested
-    # Only refresh entities that will be displayed in rankings, not all trading entities
-    if force_refresh:
-        api = WarEraMarketApi(WarEraApiClient())
-        # Get only the entities that appear in the published rankings (top volume per category)
-        displayed_entities = [(row["entity_kind"], row["entity_id"]) 
-                            for boards in result["rankings"].values() 
-                            for row in boards["volume"]]
-        if verbose:
-            print(f"[VERBOSE] enrich_participant_display: Refreshing {len(displayed_entities)} displayed entities (from {len(result['entities'])} total trading entities)")
-        refresh_display_cache(api, store, displayed_entities, 
-                            asset_dir=Path(__file__).parent.parent.parent / "display-assets",
-                            force_refresh=True, max_profiles=100, max_age_hours=0, verbose=verbose)
-    
     names = store.participant_names((row["entity_kind"], row["entity_id"]) for row in result["entities"])
     
     if verbose:

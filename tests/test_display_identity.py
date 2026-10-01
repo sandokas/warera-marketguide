@@ -18,6 +18,18 @@ from warera_quant.warera_api import WarEraMarketApi, WarEraApiError, normalize_t
 NOW = datetime(2026, 9, 24, tzinfo=timezone.utc)
 
 
+def test_official_flag_filter_primitives_are_supported():
+    content = b'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 20">
+      <defs><filter id="shadow"><feFlood flood-opacity="0"/>
+        <feColorMatrix in="SourceAlpha" type="matrix"/>
+        <feOffset dy="1"/><feBlend in="SourceGraphic"/>
+      </filter></defs><path d="M0 0h28v20H0z" filter="url(#shadow)"/>
+    </svg>'''
+    assert normalize_image(content, 'image/svg+xml') == (content, 'image/svg+xml', 28, 20)
+    with pytest.raises(ValueError, match='External SVG reference'):
+        normalize_image(content.replace(b'url(#shadow)', b'url(https://example.com/filter)'), 'image/svg+xml')
+
+
 class Client:
     def __init__(self):
         self.calls = []
@@ -92,6 +104,84 @@ def test_bounded_refresh_backoff_and_last_success_survive_failures(tmp_path):
         client.url = 'https://media.warera.io/replacement.png'
         refresh_display_cache(api, store, [('user', 'u')], now=NOW+timedelta(days=4), **kwargs)
         assert store.entity_name('user', 'u')['image_cache_url'] == original['image_url']
+
+
+@pytest.mark.parametrize('verbose', [False, True])
+def test_refresh_saves_profiles_images_and_citizenship_with_verbose_logging(tmp_path, verbose):
+    class CitizenshipClient(Client):
+        def get_json(self, endpoint, *, params=None):
+            response = super().get_json(endpoint, params=params)
+            if endpoint != '/country.getCountryById':
+                response['result']['data']['country'] = 'country'
+            return response
+
+    client = CitizenshipClient()
+    with MarketStore(tmp_path/'cache.db') as store:
+        result = refresh_display_cache(WarEraMarketApi(client), store,
+            [('user', 'u'), ('mu', 'm')], asset_dir=tmp_path/'assets',
+            equipment=False, now=NOW, force_refresh=True, verbose=verbose)
+        assert result['errors'] == []
+        assert result['profiles_attempted'] == 3
+        for kind, entity_id in [('user', 'u'), ('mu', 'm')]:
+            cached = store.entity_name(kind, entity_id)
+            assert cached['lookup_status'] == 'ok'
+            assert cached['citizenship_id'] == 'country'
+            assert asset_data_uri(store.cached_asset(cached['image_url']))
+        country = store.entity_name('country', 'country')
+        assert asset_data_uri(store.cached_asset(country['image_url']))
+
+
+@pytest.mark.parametrize('verbose', [False, True])
+def test_first_report_refresh_completes_all_thirty_profiles_from_empty_cache(tmp_path, monkeypatch, verbose):
+    from warera_quant import cli
+    from warera_quant.metrics import calculate_participant_rankings
+
+    class FullPopulationClient(Client):
+        def get_json(self, endpoint, *, params=None):
+            response = super().get_json(endpoint, params=params)
+            data = response['result']['data']
+            entity_id = data['_id']
+            data['avatarUrl'] = f'https://media.warera.io/avatars/{entity_id}.png'
+            data['code'] = entity_id
+            if endpoint != '/country.getCountryById':
+                data['country'] = 'citizenship-' + entity_id
+            return response
+
+    client = FullPopulationClient()
+    monkeypatch.setattr(cli, 'WarEraApiClient', lambda: client)
+    trades = [dict(id=f'{kind}-{i}', created_at=NOW-timedelta(hours=1),
+        transaction_type='trading', item_code='steel', money='10', quantity='1',
+        participants={'buy': {kind+'_id': f'{kind}-{i}'}, 'sell': {}})
+        for kind in ('user', 'mu', 'country') for i in range(10)]
+    report = calculate_participant_rankings(sorted(trades, key=lambda t: t['id']), as_of=NOW)
+    with MarketStore(tmp_path/'empty.db') as store:
+        assert store.participant_names(displayed_identity_keys(report)) == {}
+        cli._refresh_participant_display(store, report, verbose=verbose)
+        for kind, boards in report['rankings'].items():
+            assert len(boards['volume']) == 10
+            for row in boards['volume']:
+                assert row['identity']['image_src'].startswith('data:image/')
+                if kind in ('user', 'mu'):
+                    assert row['identity']['citizenship_image_src'].startswith('data:image/')
+        # Twenty avatars, ten country images, twenty additional citizenship flags.
+        assert sum(endpoint == 'image' for endpoint, _ in client.calls) == 50
+        html = _participant_html(report)
+        assert html.count('class="identity-image"') == 60
+        assert html.count('class="identity-citizenship"') == 40
+
+
+@pytest.mark.parametrize('summary', [
+    {'errors': [], 'deferred': 1},
+    {'errors': ['asset failed'], 'deferred': 0},
+])
+def test_incomplete_refresh_cannot_silently_publish(tmp_path, monkeypatch, summary):
+    from warera_quant import cli
+    from test_participant_report import participant_fixture
+    monkeypatch.setattr(cli, 'WarEraApiClient', Client)
+    monkeypatch.setattr(cli, 'refresh_display_cache', lambda *a, **k: summary)
+    with MarketStore(tmp_path/'empty.db') as store:
+        with pytest.raises(RuntimeError, match='Participant display refresh incomplete'):
+            cli._refresh_participant_display(store, participant_fixture())
 
 
 def test_v5_additive_migration_preserves_names_and_rolls_back(tmp_path, monkeypatch):

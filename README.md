@@ -316,6 +316,19 @@ assets and may include headings. All item rows are retained; `--top` is a compat
 
 ## Seven-day participant reports
 
+To fetch current profile names, images, and citizenship flags and generate the report
+in one run, use:
+
+```powershell
+.venv\Scripts\warera-marketguide --from-db --refresh-identities --market-db data/warera_market.sqlite3 --output output
+```
+
+This refresh covers the displayed rankings and their citizenship countries before
+rendering, with capacity for 100 profiles and 100 images. If downloads fail or work
+is deferred, report generation stops with the refresh summary instead of silently
+publishing incomplete identities. Plain `--from-db` remains offline and uses cached
+identities. `--refresh-identities` alone refreshes the cache without generating a report.
+
 DB reports now include independent top-ten loss, profit and monetary-turnover
 boards for users, MUs and countries. Use a timezone-aware cutoff to reproduce the
 participant window and equipment exports from the same database:

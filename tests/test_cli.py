@@ -272,6 +272,44 @@ def test_as_of_offline_participant_and_equipment_exports(monkeypatch, tmp_path):
     assert 'participants-user-volume' in html
 
 
+def test_from_db_refreshes_identities_before_first_output(monkeypatch, tmp_path):
+    from test_participant_market_data import fact, ingest, NOW
+    from test_display_identity import Client
+    from warera_quant.market_models import DisplayIdentity
+    path = tmp_path / 'market.db'
+    with MarketStore(path) as store:
+        ingest(store, [fact('inside', -1)])
+
+    class Api:
+        def __init__(self, client):
+            self.client = client
+
+        def get_identity(self, kind, entity_id):
+            return DisplayIdentity(kind, entity_id, 'Fetched ' + entity_id,
+                'https://media.warera.io/avatar.png',
+                citizenship_id='citizenship' if kind != 'country' else None)
+
+    monkeypatch.setattr(cli_module, 'WarEraApiClient', Client)
+    monkeypatch.setattr(cli_module, 'WarEraMarketApi', Api)
+    captured = []
+
+    def write(df, output_dir, **kwargs):
+        rows = kwargs['participant_report']['rankings']['user']['volume']
+        assert rows
+        for row in rows:
+            assert row['identity']['display_name'].startswith('Fetched ')
+            assert row['identity']['image_src'].startswith('data:image/')
+            assert row['identity']['citizenship_image_src'].startswith('data:image/')
+        captured.append(True)
+        return output_dir/'x.csv', output_dir/'x.html'
+
+    monkeypatch.setattr(cli_module, 'write_outputs', write)
+    monkeypatch.setattr(sys, 'argv', ['warera-marketguide', '--from-db', '--refresh-identities',
+        '--market-db', str(path), '--output', str(tmp_path/'out'), '--as-of', NOW.isoformat(), '--quiet'])
+    main()
+    assert captured == [True]
+
+
 @pytest.mark.parametrize('value', ['2026-09-23', 'not-a-date'])
 def test_as_of_requires_timezone(value):
     with pytest.raises(SystemExit):

@@ -56,7 +56,7 @@ def refresh_display_cache(api: WarEraMarketApi, store: MarketStore, identities,
                 try:
                     identity = api.get_identity(kind, entity_id)
                     if verbose:
-                        citizenship_info = f"citizenship={identity.citizenship}" if kind in ("user", "mu") else "no citizenship"
+                        citizenship_info = f"citizenship={identity.citizenship_id}" if kind in ("user", "mu") else "no citizenship"
                         print(f"[VERBOSE] refresh_display_cache: Fetched identity for {kind} {entity_id}: {citizenship_info}")
                     store.cache_identity(identity, stamp, force_refresh=force_refresh)
                 except Exception as exc:

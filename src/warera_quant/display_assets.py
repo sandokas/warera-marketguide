@@ -23,7 +23,8 @@ def normalize_image(content: bytes, mime: str) -> tuple[bytes, str, int, int]:
         if root.tag.split("}")[-1] != "svg":
             raise ValueError("Expected SVG root")
         allowed = {"svg", "g", "path", "rect", "circle", "ellipse", "polygon", "polyline",
-                   "line", "defs", "clipPath", "mask", "linearGradient", "radialGradient", "stop", "use"}
+                   "line", "defs", "clipPath", "mask", "linearGradient", "radialGradient", "stop", "use",
+                   "filter", "feBlend", "feColorMatrix", "feFlood", "feOffset"}
         for node in root.iter():
             if node.tag.split("}")[-1] not in allowed:
                 raise ValueError("Unsupported SVG element")
