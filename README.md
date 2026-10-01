@@ -178,6 +178,7 @@ Useful sync options:
 - `--history-pages N` caps transaction pages per global stream; `0` means no page cap.
 - `--exclude-item-code CODE` excludes current commodity price/order collection and may be repeated; it never restricts global transaction ingestion. It is incompatible with `--resync-market`.
 - `--quiet` suppresses sync progress; committed page details are shown by default.
+- Report preparation prints stage start/completion times and a heartbeat every five seconds during long operations. `--verbose` adds per-good history queries, forecast counts, participant counts, and profile/image refresh details; `--quiet` suppresses preparation progress. A final timing summary identifies expensive stages. Sync-only runs return before report preparation.
 - `--min-tick` changes the price increment removed from the raw spread when calculating trading attractiveness. It defaults to `0.001`.
 
 ## Database housekeeping

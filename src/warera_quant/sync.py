@@ -17,7 +17,7 @@ from .warera_api import WarEraMarketApi, timestamp_us
 def refresh_display_cache(api: WarEraMarketApi, store: MarketStore, identities,
                           *, asset_dir: str | Path, max_profiles: int = 30,
                           max_assets: int = 35, max_age_hours: float = 24,
-                          now: datetime | None = None, equipment: bool = True, force_refresh: bool = False, verbose: bool = False) -> dict:
+                          now: datetime | None = None, equipment: bool = True, force_refresh: bool = False, verbose: bool = False, progress=None) -> dict:
     """Refresh only the explicit displayed population, never market history.
 
     Limits count attempts, including failures. Profile age uses last attempt to
@@ -42,7 +42,9 @@ def refresh_display_cache(api: WarEraMarketApi, store: MarketStore, identities,
 
     pending = list(dict.fromkeys(identities))
     queued = set(pending)
-    for kind, entity_id in pending:
+    for profile_number, (kind, entity_id) in enumerate(pending, 1):
+        if progress:
+            progress.detail(f"Identity refresh: profile {profile_number}/{len(pending)} (country lookups may extend total)")
         cached = store.entity_name(kind, entity_id)
         if verbose:
             print(f"[VERBOSE] refresh_display_cache: Processing {kind} {entity_id}, cached={cached is not None}")
@@ -79,6 +81,16 @@ def refresh_display_cache(api: WarEraMarketApi, store: MarketStore, identities,
             country_cached = store.entity_name("country", cached["citizenship_id"])
             if country_cached and country_cached.get("image_url"):
                 urls.add(country_cached["image_url"])
+    if progress:
+        for kind, entity_id in pending:
+            if kind != "user":
+                continue
+            user = store.entity_name(kind, entity_id) or {}
+            country = store.entity_name("country", user["citizenship_id"]) if user.get("citizenship_id") else None
+            progress.detail(f"Player: {user.get('name') or 'Name unavailable'}; "
+                            f"nationality: {(country or {}).get('name') or 'unavailable'}; "
+                            f"https://app.warera.io/user/{entity_id}")
+        progress.detail(f"Identity refresh: {result['profiles_attempted']} requests; {len(result['errors'])} errors")
     if equipment:
         existing = store.equipment_display()
         if not existing or any(now - datetime.fromisoformat(r["observed_at"]) >= timedelta(hours=max_age_hours) for r in existing.values()):
@@ -88,7 +100,9 @@ def refresh_display_cache(api: WarEraMarketApi, store: MarketStore, identities,
             except Exception as exc:
                 result["errors"].append(f"equipment: {type(exc).__name__}")
         urls.update(row["image_url"] for row in store.equipment_display().values())
-    for url in sorted(urls):
+    for asset_number, url in enumerate(sorted(urls), 1):
+        if progress:
+            progress.detail(f"Image refresh: asset {asset_number}/{len(urls)}")
         cached = store.cached_asset(url)
         valid_file = bool(asset_data_uri(cached))
         if valid_file:
@@ -114,6 +128,9 @@ def refresh_display_cache(api: WarEraMarketApi, store: MarketStore, identities,
         except Exception as exc:
             store.cache_asset({**(cached or {}), "source_url": url, "status": "unavailable", "attempted_at": stamp})
             result["errors"].append(f"asset {url}: {type(exc).__name__}")
+    if progress:
+        progress.detail(f"Display refresh completed: {result['profiles_attempted']} profile requests, "
+                        f"{result['assets_attempted']} image requests, {len(result['errors'])} errors, {result['deferred']} deferred")
     return result
 
 
@@ -264,7 +281,7 @@ def sync_market_data(
                  f"scan API exhaustion observed={status['latest_scan_exhausted']}; "
                  f"error={state['last_error'] or 'none'}")
         _log(progress, "API exhaustion does not establish complete game history or known inventory basis.")
-    _log(progress, f"Market sync elapsed {time.monotonic() - started:.1f}s; remaining pages/ETA unknown")
+    _log(progress, f'Market sync finished in {time.monotonic() - started:.1f}s; status={"partial" if result.error_count or any(r.status == "partial" for r in results) else "complete"}')
     return result
 
 
@@ -315,10 +332,12 @@ def _sync_stream(api, store, stream, *, anchor, boundary, mode, limit, page_cap,
             start = None
             # Verified interval AND an entire normalized page, strictly past the
             # previous head, are required. Equal-time pages continue normally.
-            if mode == "incremental" and oldest and prior["progress"]:
-                head = prior["progress"].get("newest_at")
-                overlap = bool(head and oldest["created_at_us"] < timestamp_us(head)
-                    and any(c["normalization_version"] == 1
+            if mode == "incremental" and oldest and newest:
+                # Coverage is durable evidence that this complete page was
+                # previously traversed. Do not also depend on newest_at from
+                # the last attempt: a failed zero-page attempt legitimately
+                # replaces that operational progress with null bounds.
+                overlap = bool(any(c["normalization_version"] == 1
                             and timestamp_us(c["start_at"]) <= oldest["created_at_us"]
                             and newest["created_at_us"] < timestamp_us(c["end_at"])
                             for c in prior["coverage"])

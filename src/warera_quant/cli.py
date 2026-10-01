@@ -9,6 +9,7 @@ from pathlib import Path
 import pandas as pd
 from dotenv import load_dotenv
 
+from .progress import ProgressReporter
 from .api_client import WarEraApiClient
 from .charts import (
     render_we24_chart,
@@ -45,14 +46,14 @@ from .sync import sync_market_data, refresh_display_cache
 from .warera_api import WarEraMarketApi
 
 
-def _refresh_participant_display(store, report, *, verbose=False):
+def _refresh_participant_display(store, report, *, verbose=False, progress=None):
     """Complete the displayed population before attaching data for rendering."""
     if not report:
         return
     summary = refresh_display_cache(WarEraMarketApi(WarEraApiClient()), store,
         displayed_identity_keys(report), asset_dir=store.path.resolve().parent / "display-assets",
         max_profiles=100, max_assets=100, max_age_hours=0, force_refresh=True,
-        equipment=False, verbose=verbose)
+        equipment=False, verbose=verbose, progress=progress)
     if summary["errors"] or summary["deferred"]:
         raise RuntimeError("Participant display refresh incomplete: " + json.dumps(summary))
     enrich_participant_display(store, report, verbose=verbose)
@@ -393,8 +394,25 @@ def main() -> None:
                 **({"resync_market": True, "history_scope": args.history_scope} if args.resync_market else {}),
                 **({"resume_market": True} if args.resume_market else {}),
             )
-            rows = load_market_rows(
+            if not args.quiet:
+                print(
+                    f"Synced {sync_result.prices_observed} price(s), "
+                    f"{sync_result.order_books_observed} order book(s), "
+                    f"{sync_result.pages_fetched} transaction page(s), "
+                    f"{sync_result.transactions_inserted} new transaction(s), "
+                    f"{sync_result.transactions_enriched} enriched, "
+                    f"{sync_result.transactions_unchanged} unchanged, "
+                    f"{sync_result.transactions_rejected} rejected, "
+                    f"{sync_result.error_count} error(s) "
+                    f"to {args.market_db}.",
+                    flush=True,
+                )
+            if args.sync:
+                return
+            preparation = ProgressReporter(None if args.quiet else lambda message: print(message, flush=True), verbose=args.verbose)
+            rows = preparation.call("Market rows", load_market_rows,
                 store,
+                progress=preparation,
                 windows=("1D", "7D", "30D"),
                 now=report_as_of,
                 forecast_horizon_hours=args.forecast_horizon_hours,
@@ -403,36 +421,24 @@ def main() -> None:
                 min_tick=args.min_tick,
                 flip_assumptions=assumptions,
             )
-            data_sync_metadata = store.market_sync_metadata()
+            data_sync_metadata = preparation.call("Sync metadata", store.market_sync_metadata)
             if args.live and not args.sync:
-                we24 = build_we24_market_index(store, as_of=report_as_of, display_days=max(args.we24_days, args.research_days or 0))
-                action_cost_results = load_action_cost_results(store, as_of=report_as_of)
-                participant_report = load_participant_report(store, as_of=report_as_of, verbose=args.verbose)
-                _refresh_participant_display(store, participant_report, verbose=args.verbose)
-                equipment_details = list(iter_equipment_sale_details(store, as_of=report_as_of))
-        if not args.quiet:
-            print(
-                f"Synced {sync_result.prices_observed} price(s), "
-                f"{sync_result.order_books_observed} order book(s), "
-                f"{sync_result.pages_fetched} transaction page(s), "
-                f"{sync_result.transactions_inserted} new transaction(s), "
-                f"{sync_result.transactions_enriched} enriched, "
-                f"{sync_result.transactions_unchanged} unchanged, "
-                f"{sync_result.transactions_rejected} rejected, "
-                f"{sync_result.error_count} error(s) "
-                f"to {args.market_db}.",
-                flush=True,
-            )
-        if args.sync:
-            return
+                we24 = preparation.call("WE24 index", build_we24_market_index, store, as_of=report_as_of, display_days=max(args.we24_days, args.research_days or 0))
+                action_cost_results = preparation.call("Action costs", load_action_cost_results, store, as_of=report_as_of)
+                participant_report = preparation.call("Participant rankings", load_participant_report, store, as_of=report_as_of, verbose=args.verbose, progress=preparation)
+                preparation.call("Identity and image refresh", _refresh_participant_display, store, participant_report, verbose=args.verbose, progress=preparation)
+                equipment_details = preparation.call("Equipment sale details", lambda: list(iter_equipment_sale_details(store, as_of=report_as_of, progress=preparation)))
+            preparation.summary()
         # Database read models are already normalized and include structured
         # order-book levels.  Keep those nested values intact for report
         # rendering instead of flattening them like an arbitrary JSON payload.
         df_in = pd.DataFrame(rows)
     elif args.from_db:
         with MarketStore(args.market_db) as store:
-            rows = load_market_rows(
+            preparation = ProgressReporter(None if args.quiet else lambda message: print(message, flush=True), verbose=args.verbose)
+            rows = preparation.call("Market rows", load_market_rows,
                 store,
+                progress=preparation,
                 windows=("1D", "7D", "30D"),
                 now=report_as_of,
                 forecast_horizon_hours=args.forecast_horizon_hours,
@@ -441,13 +447,14 @@ def main() -> None:
                 min_tick=args.min_tick,
                 flip_assumptions=assumptions,
             )
-            data_sync_metadata = store.market_sync_metadata()
-            we24 = build_we24_market_index(store, as_of=report_as_of, display_days=max(args.we24_days, args.research_days or 0))
-            action_cost_results = load_action_cost_results(store, as_of=report_as_of)
-            participant_report = load_participant_report(store, as_of=report_as_of, verbose=args.verbose)
+            data_sync_metadata = preparation.call("Sync metadata", store.market_sync_metadata)
+            we24 = preparation.call("WE24 index", build_we24_market_index, store, as_of=report_as_of, display_days=max(args.we24_days, args.research_days or 0))
+            action_cost_results = preparation.call("Action costs", load_action_cost_results, store, as_of=report_as_of)
+            participant_report = preparation.call("Participant rankings", load_participant_report, store, as_of=report_as_of, verbose=args.verbose, progress=preparation)
             if args.refresh_identities:
-                _refresh_participant_display(store, participant_report, verbose=args.verbose)
-            equipment_details = list(iter_equipment_sale_details(store, as_of=report_as_of))
+                preparation.call("Identity and image refresh", _refresh_participant_display, store, participant_report, verbose=args.verbose, progress=preparation)
+            equipment_details = preparation.call("Equipment sale details", lambda: list(iter_equipment_sale_details(store, as_of=report_as_of, progress=preparation)))
+            preparation.summary()
         df_in = pd.DataFrame(rows)
     elif args.api_endpoint:
         client = WarEraApiClient(min_interval_seconds=args.min_interval)

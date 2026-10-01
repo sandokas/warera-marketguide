@@ -221,7 +221,9 @@ def test_recent_enrichment_command_wires_scope_independently(tmp_path, monkeypat
         captured.update(kwargs)
         return SimpleNamespace()
     monkeypatch.setattr(cli_module, "sync_market_data", sync)
-    monkeypatch.setattr(cli_module, "load_market_rows", lambda *a, **k: [])
+    def unexpected_report_work(*args, **kwargs):
+        pytest.fail("Sync-only command started report preparation")
+    monkeypatch.setattr(cli_module, "load_market_rows", unexpected_report_work)
     monkeypatch.setattr(sys, "argv", ["warera-marketguide", "--sync", "--resync-market",
         "--history-scope", scope, "--lookback-days", "30", "--market-db", str(tmp_path / "db"), "--quiet"])
     main()

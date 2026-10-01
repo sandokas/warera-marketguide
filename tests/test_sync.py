@@ -111,6 +111,29 @@ def test_incremental_stops_only_on_verified_normalized_overlap(tmp_path):
         assert result.pages_fetched == 2
 
 
+def test_incremental_uses_verified_coverage_after_zero_page_failure(tmp_path):
+    rows = [trade(), trade("older", "2026-09-23T09:00:00Z")]
+    with MarketStore(tmp_path / "db") as store:
+        run(store, FakeClient({("trading", None): {"items": rows}}))
+        failed = run(store, FakeClient({("trading", None): RuntimeError("unavailable")}))
+        assert failed.error_count == 1
+        failed_progress = store.stream_status("trading")["progress"]
+        assert failed_progress["newest_at"] is None
+
+        client = FakeClient({
+            ("trading", None): {"items": rows, "nextCursor": "not-followed"},
+        })
+        recovered = run(store, client)
+
+        assert recovered.items[0].stopped_at_high_water
+        assert recovered.pages_fetched == 2
+        assert not any(
+            payload.get("cursor") == "not-followed"
+            for endpoint, payload in client.calls
+            if endpoint == TRANSACTIONS_ENDPOINT
+        )
+
+
 @pytest.mark.parametrize("failure", ["parse", "ordering", "commit", "reject", "transport"])
 def test_failed_pages_do_not_commit_rows_or_coverage(tmp_path, monkeypatch, failure):
     first = trade()

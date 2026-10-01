@@ -10,6 +10,7 @@ from contextlib import closing
 from typing import Any
 from pathlib import Path
 
+from .progress import ProgressReporter
 from .market_store import MarketStore
 from .metrics import (
     DEFAULT_INFLATION_MINIMUM_COVERAGE_PCT,
@@ -705,6 +706,7 @@ def evaluate_item_forecast(
     min_samples: int = 30,
     quantity: float = 1.0,
     min_tick: float = 0.001,
+    progress: ProgressReporter | None = None,
 ) -> ForecastValidationResult:
     if not math.isfinite(horizon_hours) or horizon_hours <= 0:
         raise ValueError("horizon_hours must be positive.")
@@ -715,7 +717,8 @@ def evaluate_item_forecast(
     # Validate quantity before a sparse history can bypass sweep calculation.
     calculate_book_sweep([], side="buy", quantity=quantity)
 
-    observations = store.order_book_history_with_levels(item_code)
+    progress = progress or ProgressReporter()
+    observations = progress.call(f"{item_code}: forecast order history", store.order_book_history_with_levels, item_code)
     if not observations:
         return summarize_forecast_evaluations(
             item_code=item_code,
@@ -725,8 +728,9 @@ def evaluate_item_forecast(
             min_samples=min_samples,
         )
     earliest_epoch = int(observations[0]["observed_at_epoch"]) - FORECAST_TRAILING_SECONDS
-    transactions = store.transactions_for_window(item_code, earliest_epoch)
-    features = build_forecast_features(observations, transactions)
+    transactions = progress.call(f"{item_code}: forecast transaction history", store.transactions_for_window, item_code, earliest_epoch)
+    features = progress.call(f"{item_code}: forecast features", build_forecast_features, observations, transactions, progress=progress)
+    progress.detail(f"{item_code}: evaluating {len(features):,} forecast features")
 
     newest_observation = observations[-1]
     current_feature = next(
@@ -782,6 +786,7 @@ def evaluate_item_forecast(
             gross_flip_return_pct=gross_flip_return,
         ))
 
+    progress.detail(f"{item_code}: {len(evaluated):,} evaluable forecast samples")
     return summarize_forecast_evaluations(
         item_code=item_code,
         horizon_hours=horizon_hours,
@@ -794,7 +799,7 @@ def evaluate_item_forecast(
 
 
 def build_forecast_features(
-    observations: list[dict[str, Any]], transactions: list[dict[str, Any]]
+    observations: list[dict[str, Any]], transactions: list[dict[str, Any]], *, progress: ProgressReporter | None = None
 ) -> list[dict[str, Any]]:
     """Build chronological seven-day features without reading beyond each feature time."""
     ordered_observations = sorted(
@@ -805,7 +810,9 @@ def build_forecast_features(
     )
     transaction_epochs = [int(row["created_at_epoch"]) for row in ordered_transactions]
     features: list[dict[str, Any]] = []
-    for observation in ordered_observations:
+    for observation_number, observation in enumerate(ordered_observations, 1):
+        if progress and (observation_number == 1 or observation_number % 100 == 0):
+            progress.detail(f"Forecast observations: {observation_number:,}/{len(ordered_observations):,}", periodic=True)
         best_bid = _positive_float(observation.get("best_bid"))
         best_ask = _positive_float(observation.get("best_ask"))
         if best_bid is None or best_ask is None:
@@ -953,10 +960,12 @@ def load_market_rows(
     forecast_quantity: float = 1.0,
     min_tick: float = 0.001,
     flip_assumptions: FlipAssumptions | None = None,
+    progress: ProgressReporter | None = None,
 ) -> list[dict[str, Any]]:
     if lookback_days is not None and lookback_days < 0:
         raise ValueError("lookback_days cannot be negative.")
 
+    progress = progress or ProgressReporter()
     report_windows = _resolve_windows(windows, lookback_days)
     now = _as_utc(now or datetime.now(timezone.utc))
     assumptions = flip_assumptions or FlipAssumptions(
@@ -970,15 +979,18 @@ def load_market_rows(
     display_since_epoch = int((now - timedelta(days=DISPLAY_HISTORY_DAYS)).timestamp())
     earliest_since_epoch = min(*since_epochs.values(), display_since_epoch)
 
+    progress.detail("Loading latest prices, order books, and production points")
     latest_prices = store.latest_price_observations()
     latest_books = store.latest_order_book_observations()
     production_points = store.item_production_points()
 
     rows: list[dict[str, Any]] = []
-    for item_code in store.item_codes(transaction_type="trading"):
-        trades = store.transactions_for_window(item_code, earliest_since_epoch)
-        price_observations = store.price_observations_for_window(item_code, earliest_since_epoch)
-        order_observations = store.order_book_observations_for_window(item_code, earliest_since_epoch)
+    codes = store.item_codes(transaction_type="trading")
+    for item_number, item_code in enumerate(codes, 1):
+        progress.detail(f"{_display_name(item_code)}: item {item_number}/{len(codes)}; history since epoch {earliest_since_epoch}")
+        trades = progress.call(f"{item_code}: transaction history", store.transactions_for_window, item_code, earliest_since_epoch)
+        price_observations = progress.call(f"{item_code}: price history", store.price_observations_for_window, item_code, earliest_since_epoch)
+        order_observations = progress.call(f"{item_code}: order history", store.order_book_observations_for_window, item_code, earliest_since_epoch)
         latest_price = latest_prices.get(item_code, {})
         latest_book = latest_books.get(item_code, {})
 
@@ -1010,6 +1022,7 @@ def load_market_rows(
             "depth_imbalance_pct": depth_imbalance_pct,
         }
 
+        progress.detail(f"{item_code}: calculating window statistics and trends")
         window_stats: dict[str, dict[str, Any]] = {}
         for window in report_windows:
             stats = _window_stats(
@@ -1049,8 +1062,10 @@ def load_market_rows(
         row["trend_path_30d_start_epoch"] = since_epochs.get("30D")
         row["trend_path_30d_end_epoch"] = int(now.timestamp()) if "30D" in since_epochs else None
         _add_legacy_metric_fields(row, report_windows, window_stats)
-        forecast = evaluate_item_forecast(
+        progress.detail(f"{item_code}: window statistics and trends completed")
+        forecast = progress.call(f"{item_code}: forecast", evaluate_item_forecast,
             store,
+            progress=progress,
             item_code=item_code,
             horizon_hours=assumptions.forecast_horizon_hours,
             target_max_lag_hours=forecast_target_max_lag_hours,
@@ -1147,6 +1162,7 @@ def load_market_rows(
             guidance, quote_age_minutes=quote_age_minutes, assumptions=assumptions,
         ))
         rows.append(row)
+        progress.detail(f"{item_code}: guidance completed; {item_number}/{len(codes)} goods prepared")
 
     return rows
 
@@ -1662,15 +1678,26 @@ def _participant_trade_input(source: dict) -> dict:
         "equipment": equipment, "presence": presence}
 
 
-def load_participant_report(store: MarketStore, *, as_of: datetime, batch_size: int = 500, verbose: bool = False) -> dict:
+def load_participant_report(store: MarketStore, *, as_of: datetime, batch_size: int = 500, verbose: bool = False, progress: ProgressReporter | None = None) -> dict:
     """Offline phase-4 read model; phase 5 renders/exports this domain result."""
     from .metrics import calculate_participant_rankings, participant_utc
     as_of = participant_utc(as_of)
     start = as_of - timedelta(days=7)
+    progress = progress or ProgressReporter()
+    progress.detail("Reading participant coverage and normalization status")
     sources = store.market_sync_status()
+    progress.detail("Reading seven-day participant history and calculating rankings")
     with closing(store.iter_participant_history(start, as_of, batch_size=batch_size)) as history:
-        trades = (_participant_trade_input(row) for row in history)
+        def counted_trades():
+            count = 0
+            for count, row in enumerate(history, 1):
+                if count == 1 or count % 5000 == 0:
+                    progress.detail(f"Participant history: {count:,} rows processed", periodic=True)
+                yield _participant_trade_input(row)
+            progress.detail(f"Participant history: {count:,} rows read; finalizing rankings")
+        trades = counted_trades()
         result = calculate_participant_rankings(trades, as_of=as_of, sources=sources)
+    progress.detail(f"Participant rankings: {len(result['entities']):,} entities; attaching cached display data")
     enrich_participant_display(store, result, verbose=verbose)
     return result
 
@@ -1785,7 +1812,7 @@ def enrich_participant_display(store: MarketStore, result: dict, *, verbose: boo
             item["display"] = equipment.get(item["item_code"], {})
 
 
-def iter_equipment_sale_details(store: MarketStore, *, as_of: datetime, batch_size: int = 500):
+def iter_equipment_sale_details(store: MarketStore, *, as_of: datetime, batch_size: int = 500, progress: ProgressReporter | None = None):
     """Separate streamed sale-detail export input, with no commodity signals.
 
     Each row includes its own condition/full stats and actor/source references.
@@ -1794,7 +1821,9 @@ def iter_equipment_sale_details(store: MarketStore, *, as_of: datetime, batch_si
     """
     from .metrics import participant_utc
     as_of = participant_utc(as_of)
-    for source in store.iter_equipment_sales(as_of - timedelta(days=7), as_of, batch_size=batch_size):
+    for count, source in enumerate(store.iter_equipment_sales(as_of - timedelta(days=7), as_of, batch_size=batch_size), 1):
+        if progress and (count == 1 or count % 5000 == 0):
+            progress.detail(f"Equipment sales: {count:,} rows processed", periodic=True)
         result = _participant_trade_input(source)
         result.update(as_of=as_of, window_start=as_of - timedelta(days=7),
                       net_realized_pnl=None, basis_status="unverified_equipment_lineage",
