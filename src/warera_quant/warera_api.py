@@ -90,6 +90,21 @@ class WarEraMarketApi:
                 raise WarEraApiError("Invalid MU citizenship country")
         return DisplayIdentity(kind, entity_id, name, image_url or None, code, level, citizenship, prestige or False)
 
+    def search_users(self, name: str) -> list[DisplayIdentity]:
+        """Return exact username matches from WarEra's public search."""
+        data = _trpc_data(self.client.get_json(
+            "/search.searchUsers", params=_input_params({"searchText": name})))
+        if not isinstance(data, list):
+            raise WarEraApiError("User search returned an invalid result")
+        matches = []
+        for entity_id in data[:25]:
+            if not isinstance(entity_id, str) or not entity_id:
+                continue
+            identity = self.get_identity("user", entity_id)
+            if identity.name.casefold() == name.casefold():
+                matches.append(identity)
+        return matches
+
     def get_item_display(self) -> list[dict]:
         """Normalize official icon mappings using the game's item-image rule."""
         data = _trpc_data(self.client.get_json(GAME_CONFIG_ENDPOINT))

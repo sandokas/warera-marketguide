@@ -24,6 +24,99 @@ def test_order_book_sync_defaults_to_api_maximum():
     assert args.order_limit == 100
 
 
+def test_player_summary_prints_one_user_without_writing_report(monkeypatch, tmp_path, capsys):
+    from test_participant_market_data import NOW, fact, ingest
+
+    path = tmp_path / "market.db"
+    with MarketStore(path) as store:
+        ingest(store, [fact("buy", -2, buyer="player-id", seller="seller", money="12", quantity="3")])
+        store.cache_entity_name("user", "player-id", "Example Player", NOW.isoformat(), "found")
+
+    monkeypatch.setattr(cli_module, "write_outputs",
+                        lambda *args, **kwargs: pytest.fail("player summary wrote the normal report"))
+    monkeypatch.setattr(sys, "argv", [
+        "warera-marketguide", "--player-summary", "example player",
+        "--market-db", str(path), "--as-of", NOW.isoformat(), "--quiet",
+    ])
+
+    main()
+
+    output = capsys.readouterr().out
+    assert "Example Player - 7-day market summary" in output
+    assert "Player ID: player-id" in output
+    assert "Total turnover: 12.000 BTC (source-money)" in output
+    assert "never-in-price-list" in output
+
+
+def test_player_summary_reports_ambiguous_cached_name(monkeypatch, tmp_path):
+    from test_participant_market_data import NOW
+
+    path = tmp_path / "market.db"
+    with MarketStore(path) as store:
+        store.cache_entity_name("user", "one", "Shared Name", NOW.isoformat(), "found")
+        store.cache_entity_name("user", "two", "Shared Name", NOW.isoformat(), "found")
+
+    monkeypatch.setattr(sys, "argv", [
+        "warera-marketguide", "--player-summary", "shared name",
+        "--market-db", str(path), "--as-of", NOW.isoformat(), "--quiet",
+    ])
+
+    with pytest.raises(SystemExit, match="ambiguous") as exc:
+        main()
+    assert "one" in str(exc.value) and "two" in str(exc.value)
+
+
+def test_player_summary_resolves_uncached_interface_name_live(monkeypatch, tmp_path, capsys):
+    from test_participant_market_data import NOW, fact, ingest
+    from warera_quant.market_models import DisplayIdentity
+
+    path = tmp_path / "market.db"
+    with MarketStore(path) as store:
+        facts = [fact("buy", -2, buyer="live-id", seller="target-seller")]
+        facts.extend(fact(f"higher-{index}", -2, buyer=f"higher-{index}",
+                          seller=f"seller-{index}", money=str(100 + index))
+                     for index in range(11))
+        ingest(store, facts)
+
+    class Api:
+        def __init__(self, _client):
+            pass
+
+        def search_users(self, name):
+            assert name == "Interface Name"
+            return [DisplayIdentity("user", "live-id", "Interface Name")]
+
+    monkeypatch.setattr(cli_module, "WarEraApiClient", lambda: object())
+    monkeypatch.setattr(cli_module, "WarEraMarketApi", Api)
+    monkeypatch.setattr(sys, "argv", [
+        "warera-marketguide", "--player-summary", "Interface Name",
+        "--market-db", str(path), "--as-of", NOW.isoformat(), "--quiet",
+    ])
+
+    main()
+
+    output = capsys.readouterr().out
+    assert "Interface Name - 7-day market summary" in output
+    assert "Player ID: live-id" in output
+    assert "Total turnover: 10.000 BTC" in output
+
+
+def test_player_summary_distinguishes_known_inactive_player(monkeypatch, tmp_path):
+    from test_participant_market_data import NOW
+
+    path = tmp_path / "market.db"
+    with MarketStore(path) as store:
+        store.cache_entity_name("user", "inactive", "Inactive Player", NOW.isoformat(), "found")
+
+    monkeypatch.setattr(sys, "argv", [
+        "warera-marketguide", "--player-summary", "Inactive Player",
+        "--market-db", str(path), "--as-of", NOW.isoformat(), "--quiet",
+    ])
+
+    with pytest.raises(SystemExit, match="No observed seven-day activity"):
+        main()
+
+
 def test_table_pngs_is_opt_in():
     assert build_parser().parse_args([]).table_pngs is False
     assert build_parser().parse_args(["--table-pngs"]).table_pngs is True

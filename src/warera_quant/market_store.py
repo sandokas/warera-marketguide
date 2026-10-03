@@ -553,6 +553,17 @@ class MarketStore:
                 result[(row["entity_kind"], row["entity_id"])] = dict(row)
         return result
 
+    def find_users(self, value: str) -> list[dict]:
+        """Find cached users by exact ID or case-insensitive display name."""
+        rows = self._connect().execute(
+            """select * from market_entities
+               where entity_kind='user'
+                 and (entity_id=? or name=? collate nocase)
+               order by entity_id""",
+            (value, value),
+        )
+        return [dict(row) for row in rows]
+
     def _write_progress(self, progress: StreamProgress) -> None:
         if progress.pages == 0:
             self._clear_checkpoint(progress.stream)

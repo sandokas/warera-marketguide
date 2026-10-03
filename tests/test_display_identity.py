@@ -69,6 +69,20 @@ def test_verified_profile_boundary(kind, endpoint, key, name):
         assert result.image_url == 'https://media.warera.io/images/flags/bo.svg?v=16'
 
 
+def test_user_search_keeps_only_exact_verified_names():
+    class SearchClient(Client):
+        def get_json(self, endpoint, *, params=None):
+            if endpoint == "/search.searchUsers":
+                assert json.loads(params["input"]) == {"searchText": "Forkill"}
+                return {"result": {"data": ["exact", "partial"]}}
+            entity_id = json.loads(params["input"])["userId"]
+            name = "Forkill" if entity_id == "exact" else "Forkill Junior"
+            return {"result": {"data": {"_id": entity_id, "username": name}}}
+
+    result = WarEraMarketApi(SearchClient()).search_users("Forkill")
+    assert [(row.entity_id, row.name) for row in result] == [("exact", "Forkill")]
+
+
 @pytest.mark.parametrize('payload', [None, {}, {'_id': 'wrong', 'username': 'Name'},
                                     {'_id': 'id', 'username': None}])
 def test_bad_profiles_cannot_poison_cache(payload):

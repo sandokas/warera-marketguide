@@ -2566,6 +2566,67 @@ def _participant_html(report, verbose: bool = False):
     return ''.join(blocks)
 
 
+def format_player_summary(report: dict, player: dict) -> str:
+    """Render one seven-day participant summary as plain console text."""
+    from tabulate import tabulate
+
+    def number(value, *, places=3):
+        if value is None:
+            return "Unknown"
+        return f"{float(value):,.{places}f}"
+
+    identity = player.get("identity") or {}
+    name = identity.get("display_name") or player.get("name") or player["entity_id"]
+    basis = "gross" if report["turnover_basis"] == "gross" else "source-money"
+    trade_count = sum(category["trade_count"]
+                      for categories in player["categories"].values()
+                      for category in categories)
+    lines = [
+        f"{name} - 7-day market summary",
+        f"Period: {report['window_start'].strftime('%Y-%m-%d %H:%M UTC')} to "
+        f"{report['as_of'].strftime('%Y-%m-%d %H:%M UTC')} (end excluded)",
+        f"Player ID: {player['entity_id']}",
+    ]
+    if identity.get("citizenship_name"):
+        lines.append(f"Citizenship: {identity['citizenship_name']}")
+    prefix = "gross" if report["turnover_basis"] == "gross" else "source"
+    pnl = player.get("matched_net_pnl")
+    lines.extend([
+        "",
+        f"Buy turnover:   {number(player[prefix + '_buy_value'])} BTC",
+        f"Sell turnover:  {number(player[prefix + '_sell_value'])} BTC",
+        f"Total turnover: {number(player[prefix + '_turnover'])} BTC ({basis})",
+        f"Trades:         {trade_count:,}",
+        f"Realized P&L:   {number(pnl) if pnl is not None else 'Unknown'}"
+        + (" BTC" if pnl is not None else ""),
+        "",
+    ])
+    rows = []
+    for item in player.get("item_categories", []):
+        signature = item["category"]
+        item_label = str(item.get("item_code") or "Unknown")
+        if signature[0] == "equipment-v1":
+            stats = signature[2]
+            if stats is None:
+                item_label += "; unknown stats"
+            elif stats:
+                item_label += "; " + ", ".join(f"{code}={value}" for code, value in stats)
+        rows.append([
+            item_label,
+            number(item.get("buy_quantity")),
+            number(item.get("buy_avg_price")),
+            number(item.get("sell_quantity")),
+            number(item.get("sell_avg_price")),
+            number(item.get("profit_loss_btc")),
+        ])
+    if rows:
+        lines.append(tabulate(rows, headers=("Item", "Buy Qty", "Buy Avg", "Sell Qty", "Sell Avg", "Profit BTC"),
+                              tablefmt="plain", disable_numparse=True))
+    else:
+        lines.append("No qualifying observed activity in this period.")
+    return "\n".join(lines)
+
+
 def _write_participant_exports(out, report, equipment_details):
     """Flatten domain results; spreadsheet protection only at the output boundary."""
     import csv

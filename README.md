@@ -317,6 +317,20 @@ assets and may include headings. All item rows are retained; `--top` is a compat
 
 ## Seven-day participant reports
 
+To print a standalone seven-day summary for one player without generating or
+overwriting the normal report, pass a cached player name or exact player ID:
+
+```powershell
+.venv\Scripts\warera-marketguide --player-summary "Player Name" --market-db data/warera_market.sqlite3
+```
+
+Cached names are matched case-insensitively. When a name is not cached, the
+command uses WarEra's public user search and accepts only an exact username match;
+market history still comes exclusively from SQLite. If a name is ambiguous, the
+command lists matching IDs. `--as-of` may be supplied to reproduce the
+`[as_of - 7 days, as_of)` window. The result is printed to the console and no HTML,
+CSV, PNG, or asset-inventory files are written.
+
 To fetch current profile names, images, and citizenship flags and generate the report
 in one run, use:
 

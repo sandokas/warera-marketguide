@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from warera_quant.metrics import calculate_participant_rankings
-from warera_quant.report import generate_html_report, write_outputs
+from warera_quant.report import format_player_summary, generate_html_report, write_outputs
 
 NOW = datetime(2026, 9, 23, tzinfo=timezone.utc)
 
@@ -84,6 +84,35 @@ def test_empty_and_legacy_are_not_zero_results():
     html = generate_html_report(frame(), participant_report=report)
     assert html.count('No qualifying observed activity.') == 6
     assert 'participants-' not in generate_html_report(frame())
+
+
+def test_console_summary_combines_buy_and_sell_only_for_exact_equipment_signature():
+    def equipment(attack):
+        return {"equipment_code": "helmet4", "state": "100", "max_state": "100",
+                "stats": {"attack": attack, "armor": "2"}}
+
+    trades = [
+        {"id": "buy-matched", "created_at": NOW - timedelta(days=3),
+         "transaction_type": "itemMarket", "item_code": "helmet4", "money": "50", "quantity": "1",
+         "participants": {"buy": {"user_id": "player"}, "sell": {}}, "equipment": equipment("3")},
+        {"id": "sell-matched", "created_at": NOW - timedelta(days=2),
+         "transaction_type": "itemMarket", "item_code": "helmet4", "money": "60", "quantity": "1",
+         "participants": {"buy": {}, "sell": {"user_id": "player"}}, "equipment": equipment("3")},
+        {"id": "buy-other-stats", "created_at": NOW - timedelta(days=1),
+         "transaction_type": "itemMarket", "item_code": "helmet4", "money": "70", "quantity": "1",
+         "participants": {"buy": {"user_id": "player"}, "sell": {}}, "equipment": equipment("4")},
+    ]
+    report = calculate_participant_rankings(trades, as_of=NOW)
+    player = next(row for row in report["entities"] if row["entity_id"] == "player")
+
+    assert len(player["item_categories"]) == 2
+    matched = next(item for item in player["item_categories"] if ("attack", "3") in item["category"][2])
+    assert matched["buy_quantity"] == matched["sell_quantity"] == 1
+    console = format_player_summary(report, player)
+    assert "helmet4; armor=2, attack=3" in console
+    assert "helmet4; armor=2, attack=4" in console
+    assert "stats:" not in console
+    assert "condition" not in console
 
 
 @pytest.mark.parametrize('kind', ['user', 'mu', 'country'])

@@ -1702,6 +1702,31 @@ def load_participant_report(store: MarketStore, *, as_of: datetime, batch_size: 
     return result
 
 
+def select_player_summary(store: MarketStore, report: dict, value: str) -> tuple[dict | None, list[dict]]:
+    """Resolve one user by cached display name or entity ID.
+
+    The returned candidates allow the CLI to report ambiguous names without
+    guessing. A cached user with no activity is a valid match but has no summary.
+    """
+    value = value.strip()
+    cached = store.find_users(value)
+    exact_id = next((row for row in cached if row["entity_id"] == value), None)
+    if exact_id is not None:
+        matching_ids = [exact_id["entity_id"]]
+    else:
+        matching_ids = [row["entity_id"] for row in cached]
+
+    # IDs without cached identity data remain directly addressable.
+    if not matching_ids:
+        matching_ids = [row["entity_id"] for row in report["entities"]
+                        if row["entity_kind"] == "user" and row["entity_id"] == value]
+    if len(matching_ids) != 1:
+        return None, cached
+    summary = next((row for row in report["entities"]
+                    if row["entity_kind"] == "user" and row["entity_id"] == matching_ids[0]), None)
+    return summary, cached
+
+
 def displayed_identity_keys(report: dict) -> list[tuple[str, str]]:
     """Both published tables draw exclusively from these volume populations."""
     return list(dict.fromkeys((row["entity_kind"], row["entity_id"])
