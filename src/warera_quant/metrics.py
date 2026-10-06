@@ -2110,6 +2110,21 @@ def _participant_decimal_output(value):
 
 
 def calculate_participant_rankings(trades, *, as_of, sources=None, window_end_exclusive=None, accounting_mode="window"):
+    return _reduce_participant_activity(trades, as_of=as_of, sources=sources,
+        window_end_exclusive=window_end_exclusive, accounting_mode=accounting_mode)
+
+
+def calculate_entity_activity(trades, *, entity_kind, entity_id, as_of, sources=None,
+                              window_end_exclusive=None, accounting_mode="window"):
+    """Reuse participant accounting and categories without constructing leaderboards."""
+    if entity_kind not in ("user", "mu", "country") or not entity_id.strip():
+        raise ValueError("Expected user, mu or country and a nonempty entity ID")
+    return _reduce_participant_activity(trades, as_of=as_of, sources=sources,
+        window_end_exclusive=window_end_exclusive, accounting_mode=accounting_mode,
+        entity_key=(entity_kind, entity_id))
+
+
+def _reduce_participant_activity(trades, *, as_of, sources=None, window_end_exclusive=None, accounting_mode="window", entity_key=None):
     """Reduce chronological (timestamp, opaque ID) domain history incrementally.
 
     Only explicit full-fifo replays inventory; window mode aggregates activity.
@@ -2340,6 +2355,8 @@ def calculate_participant_rankings(trades, *, as_of, sources=None, window_end_ex
                     reasons = coverage["unassigned_reasons"]
                     reasons[resolved["reason"]] = reasons.get(resolved["reason"], 0) + 1
                 continue
+            if entity_key is not None and key != entity_key:
+                continue
             row = entity(key) if in_window else None
             gross, settled = settlements[side]
             lot_key = (key, ("equipment", instance) if equipment else ("commodity", trade.get("item_code")))
@@ -2470,7 +2487,7 @@ def calculate_participant_rankings(trades, *, as_of, sources=None, window_end_ex
     # One money basis per report: never compare mixed gross/source totals.
     turnover_field = "gross_turnover" if verified_gross else "source_turnover"
     rankings = {}
-    for kind in ("user", "mu", "country"):
+    for kind in (() if entity_key is not None else ("user", "mu", "country")):
         rows = [row for row in entities.values() if row["entity_kind"] == kind]
         def pnl_order(row, sign):
             return (sign * row["matched_net_pnl"], -row[turnover_field], row["entity_id"])

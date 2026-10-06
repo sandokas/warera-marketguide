@@ -495,6 +495,48 @@ class MarketStore:
             (math.floor(start.timestamp()), math.floor(end.timestamp()),
              _datetime_us(start), _datetime_us(end)), batch_size)
 
+    def entity_activity_query(self, entity_kind: str, entity_id: str, start: datetime,
+                              end: datetime, *, accounting_mode: str = "window") -> tuple[str, tuple]:
+        """Reference candidates only; economic ownership is resolved by the reducer."""
+        if entity_kind not in ("user", "mu", "country") or not entity_id.strip():
+            raise ValueError("Expected user, mu or country and a nonempty entity ID")
+        if start.tzinfo is None or end.tzinfo is None or start >= end:
+            raise ValueError("Expected aware increasing participant window")
+        if accounting_mode not in ("window", "full-fifo"):
+            raise ValueError("Unsupported participant accounting mode")
+        lower = "" if accounting_mode == "full-fifo" else """
+            and t.created_at_epoch >= ?
+            and coalesce(t.created_at_us,source_timestamp_us(t.created_at)) >= ?"""
+        query = f"""with candidate_ids as (
+            select distinct transaction_id from transaction_participants
+            where {entity_kind}_id=?
+        ) select t.* from candidate_ids c cross join transactions t on t.id=c.transaction_id
+          where t.transaction_type in ('trading','itemMarket')
+            and t.created_at_epoch <= ?
+            and coalesce(t.created_at_us,source_timestamp_us(t.created_at)) < ?
+            {lower}
+          order by coalesce(t.created_at_us,source_timestamp_us(t.created_at)),t.id"""
+        parameters = (entity_id, math.floor(end.timestamp()), _datetime_us(end))
+        if accounting_mode == "window":
+            parameters += (math.floor(start.timestamp()), _datetime_us(start))
+        return query, parameters
+
+    def iter_entity_activity(self, entity_kind: str, entity_id: str, start: datetime,
+                             end: datetime, *, accounting_mode: str = "window", batch_size: int = 500):
+        """Stream targeted parents and the shared four batched child reads."""
+        if not 1 <= batch_size <= 500:
+            raise ValueError("batch_size must be between 1 and 500")
+        query, parameters = self.entity_activity_query(entity_kind, entity_id, start, end,
+                                                       accounting_mode=accounting_mode)
+        yield from self._iter_source_query(query, parameters, batch_size)
+
+    def has_entity_reference(self, entity_kind: str, entity_id: str) -> bool:
+        """ID existence without materializing parents or calculating activity."""
+        if entity_kind not in ("user", "mu", "country"):
+            raise ValueError("Unsupported entity kind")
+        return self._connect().execute(f"select 1 from transaction_participants where {entity_kind}_id=? limit 1",
+                                      (entity_id,)).fetchone() is not None
+
     def participant_history_query(self, start: datetime, end: datetime) -> tuple[str, tuple]:
         """Source query shared by streaming and EXPLAIN; no ownership rules in SQL.
 

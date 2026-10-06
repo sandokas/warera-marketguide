@@ -1734,6 +1734,10 @@ def _participant_trade_input(source: dict) -> dict:
         "equipment": equipment, "presence": presence}
 
 
+def _empty_participant_report(context: ReportContext, mode: str) -> dict:
+    return {"as_of": None, "window_start": None, "entities": [], "rankings": {}, "coverage": {}, "sources": {}, "source_coverage": {}, "limitations": ["No stored market data"], "method": "unavailable", "accounting_mode": mode, "accounting_status": "not_calculated", "turnover_basis": "source-money", "context": context.to_dict()}
+
+
 def load_participant_report(store: MarketStore, *, as_of: datetime | None = None, context: ReportContext | None = None, batch_size: int = 500, verbose: bool = False, progress: ProgressReporter | None = None, accounting_mode: str | None = None) -> dict:
     """Offline activity read model; mode overrides context, otherwise inherits it."""
     from .metrics import calculate_participant_rankings, participant_utc
@@ -1744,7 +1748,7 @@ def load_participant_report(store: MarketStore, *, as_of: datetime | None = None
     context = replace(context, accounting_mode=mode)
     as_of = context.analysis_as_of
     if as_of is None:
-        return {"as_of": None, "window_start": None, "entities": [], "rankings": {}, "coverage": {}, "sources": {}, "source_coverage": {}, "limitations": ["No stored market data"], "method": "unavailable", "accounting_mode": mode, "accounting_status": "not_calculated", "turnover_basis": "source-money", "context": context.to_dict()}
+        return _empty_participant_report(context, mode)
     as_of = participant_utc(as_of)
     start = as_of - timedelta(days=7)
     progress = progress or ProgressReporter()
@@ -1768,29 +1772,59 @@ def load_participant_report(store: MarketStore, *, as_of: datetime | None = None
     return result
 
 
-def select_player_summary(store: MarketStore, report: dict, value: str) -> tuple[dict | None, list[dict]]:
-    """Resolve one user by cached display name or entity ID.
-
-    The returned candidates allow the CLI to report ambiguous names without
-    guessing. A cached user with no activity is a valid match but has no summary.
-    """
+def resolve_player_identity(store: MarketStore, value: str) -> tuple[str | None, list[dict]]:
+    """Exact cached/referenced ID precedes exact NOCASE cached names; no analysis."""
     value = value.strip()
-    cached = store.find_users(value)
-    exact_id = next((row for row in cached if row["entity_id"] == value), None)
-    if exact_id is not None:
-        matching_ids = [exact_id["entity_id"]]
-    else:
-        matching_ids = [row["entity_id"] for row in cached]
+    exact = store.entity_name("user", value)
+    if exact is not None or store.has_entity_reference("user", value):
+        return value, [exact or {"entity_id": value, "name": None}]
+    candidates = store.find_users(value)
+    return (candidates[0]["entity_id"] if len(candidates) == 1 else None), candidates
 
-    # IDs without cached identity data remain directly addressable.
-    if not matching_ids:
-        matching_ids = [row["entity_id"] for row in report["entities"]
-                        if row["entity_kind"] == "user" and row["entity_id"] == value]
-    if len(matching_ids) != 1:
-        return None, cached
+
+def load_entity_activity(store: MarketStore, entity_kind: str, entity_id: str, *,
+                         as_of: datetime | None = None, context: ReportContext | None = None,
+                         accounting_mode: str | None = None, batch_size: int = 500,
+                         verbose: bool = False, progress: ProgressReporter | None = None) -> dict:
+    """Same participant/display contracts, one economic account, no leaderboards.
+
+    Coverage describes reference candidates, not the entire market population.
+    Cached identities and actors never override historical economic ownership.
+    """
+    from .metrics import calculate_entity_activity
+    if entity_kind not in ("user", "mu", "country") or not entity_id.strip():
+        raise ValueError("Expected user, mu or country and a nonempty entity ID")
+    if not 1 <= batch_size <= 500:
+        raise ValueError("batch_size must be between 1 and 500")
+    context = context or store.resolve_report_context(as_of)
+    mode = context.accounting_mode if accounting_mode is None else accounting_mode
+    if mode not in ("window", "full-fifo"):
+        raise ValueError("Unsupported participant accounting mode")
+    context = replace(context, accounting_mode=mode)
+    if context.analysis_as_of is None:
+        result = _empty_participant_report(context, mode)
+        result["rankings"] = {}
+    else:
+        with closing(store.iter_entity_activity(entity_kind, entity_id, context.window_start(),
+                context.window_end_exclusive, accounting_mode=mode, batch_size=batch_size)) as rows:
+            result = calculate_entity_activity((_participant_trade_input(row) for row in rows),
+                as_of=context.analysis_as_of, window_end_exclusive=context.window_end_exclusive,
+                sources=store.market_sync_status(), accounting_mode=mode,
+                entity_kind=entity_kind, entity_id=entity_id)
+        result["context"] = context.to_dict()
+        enrich_participant_display(store, result, verbose=verbose)
+    result.update(entity_kind=entity_kind, entity_id=entity_id, coverage_scope="entity-reference-candidates")
+    return result
+
+
+def select_player_summary(store: MarketStore, report: dict, value: str) -> tuple[dict | None, list[dict]]:
+    """Compatibility selector for an already prepared report; CLI resolves first."""
+    entity_id, candidates = resolve_player_identity(store, value)
+    # Domain-only prepared reports can still address uncached IDs directly.
+    entity_id = entity_id or (value.strip() if not candidates else None)
     summary = next((row for row in report["entities"]
-                    if row["entity_kind"] == "user" and row["entity_id"] == matching_ids[0]), None)
-    return summary, cached
+                    if row["entity_kind"] == "user" and row["entity_id"] == entity_id), None)
+    return summary, candidates
 
 
 def displayed_identity_keys(report: dict) -> list[tuple[str, str]]:

@@ -25,7 +25,8 @@ from .market_data import (
     load_price_action_history,
     load_market_rows,
     load_participant_report,
-    select_player_summary,
+    resolve_player_identity,
+    load_entity_activity,
     displayed_identity_keys,
     enrich_participant_display,
     iter_equipment_sale_details,
@@ -271,39 +272,32 @@ def main(*, report_context: ReportContext | None = None) -> None:
             raise SystemExit("Market database does not exist.")
         progress = ProgressReporter(None if args.quiet else lambda message: print(message, flush=True), verbose=args.verbose)
         with MarketStore(args.market_db) as store:
-            report = load_participant_report(store, as_of=report_as_of, accounting_mode=args.participant_accounting, verbose=args.verbose, progress=progress)
-            player, candidates = select_player_summary(store, report, args.player_summary)
-        live_matches = []
-        if player is None and not candidates:
-            try:
-                live_matches = WarEraMarketApi(WarEraApiClient()).search_users(args.player_summary.strip())
-            except Exception as exc:
-                raise SystemExit(
-                    f"Player was not found in the local identity cache, and live WarEra name lookup failed: {exc}"
-                ) from exc
-            if len(live_matches) == 1:
+            player_id, candidates = resolve_player_identity(store, args.player_summary)
+            identity = None
+            if player_id is None and len(candidates) > 1:
+                choices = "\n".join(f"  {row.get('name') or '(unnamed)'} - {row['entity_id']}" for row in candidates)
+                raise SystemExit(f"Player name is ambiguous; rerun with an exact player ID:\n{choices}")
+            if player_id is None:
+                try:
+                    live_matches = WarEraMarketApi(WarEraApiClient()).search_users(args.player_summary.strip())
+                except Exception as exc:
+                    raise SystemExit(f"Player was not found in the local identity cache, and live WarEra name lookup failed: {exc}") from exc
+                if len(live_matches) > 1:
+                    choices = "\n".join(f"  {item.name} - {item.entity_id}" for item in live_matches)
+                    raise SystemExit(f"Player name is ambiguous; rerun with an exact player ID:\n{choices}")
+                if not live_matches:
+                    raise SystemExit(f"Player not found in the cached identities or seven-day activity: {args.player_summary}")
                 identity = live_matches[0]
                 player_id = identity.entity_id
-                player = next((row for row in report["entities"]
-                               if row["entity_kind"] == "user" and row["entity_id"] == player_id), None)
-                if player is not None:
-                    player = {**player, "name": identity.name,
-                              "identity": {**(player.get("identity") or {}),
-                                           "display_name": identity.name}}
-            elif len(live_matches) > 1:
-                choices = "\n".join(f"  {identity.name} - {identity.entity_id}" for identity in live_matches)
-                raise SystemExit(f"Player name is ambiguous; rerun with an exact player ID:\n{choices}")
-        if len(candidates) > 1 and player is None:
-            choices = "\n".join(f"  {row.get('name') or '(unnamed)'} - {row['entity_id']}" for row in candidates)
-            raise SystemExit(f"Player name is ambiguous; rerun with an exact player ID:\n{choices}")
-        if player is None:
-            if candidates:
-                matched = candidates[0]
-                raise SystemExit(f"No observed seven-day activity for {matched.get('name') or matched['entity_id']} ({matched['entity_id']}).")
-            if live_matches:
-                matched = live_matches[0]
-                raise SystemExit(f"No observed seven-day activity for {matched.name} ({matched.entity_id}).")
-            raise SystemExit(f"Player not found in the cached identities or seven-day activity: {args.player_summary}")
+            report = load_entity_activity(store, "user", player_id, as_of=report_as_of,
+                accounting_mode=args.participant_accounting, verbose=args.verbose, progress=progress)
+            player = next(iter(report["entities"]), None)
+            if player is None:
+                name = identity.name if identity else (candidates[0].get("name") or player_id)
+                raise SystemExit(f"No observed seven-day activity for {name} ({player_id}).")
+            if identity is not None:
+                player = {**player, "name": identity.name,
+                          "identity": {**(player.get("identity") or {}), "display_name": identity.name}}
         print(format_player_summary(report, player))
         return
     if args.refresh_identities and not args.from_db:

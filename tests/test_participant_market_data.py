@@ -305,3 +305,155 @@ def test_publication_context_restores_accounting_mode(tmp_path, mode):
         assert restored == context
         assert load_participant_report(store, context=restored)['accounting_mode'] == mode
         assert resolve_publication_context(store, {'accounting_mode':mode}).accounting_mode == mode
+
+
+@pytest.mark.parametrize("kind,target,extra", [
+    ("user", "U", {}), ("mu", "M", {"buyerMuId": "M", "sellerMuId": "M"}),
+    ("country", "C", {"buyerCountryId": "C", "sellerCountryId": "C"})])
+@pytest.mark.parametrize("mode", ["window", "full-fifo"])
+def test_targeted_matches_complete_entity_and_batches(tmp_path, monkeypatch, kind, target, extra, mode):
+    from warera_quant.market_data import load_entity_activity
+    import warera_quant.market_data as data
+    import warera_quant.metrics as metrics
+    with MarketStore(tmp_path / "target.db") as store:
+        buy_extra = {k: v for k, v in extra.items() if k.startswith("buyer")}
+        sell_extra = {k: v for k, v in extra.items() if k.startswith("seller")}
+        ingest(store, [fact("old-buy", -30, money="100", quantity="10", **buy_extra),
+            fact("old-sale", -20, buyer="V", seller="U", money="40", quantity="4", **sell_extra),
+            fact("start", -7, money="0.000000000000000003", quantity="0.000000000000000001", **buy_extra),
+            fact("sale", -1, buyer="V", seller="U", money="120", quantity="8", **sell_extra),
+            fact("unrelated", -1, buyer="X", seller="Y"), fact("end", 0, **buy_extra)])
+        missing = normalize_transaction({"_id": "missing", "createdAt": (NOW-timedelta(days=2)).isoformat(),
+            "transactionType": "trading", "itemCode": "missing", "buyerId": "U", "sellerId": "V", **buy_extra})
+        ingest(store, [missing])
+        context = store.resolve_report_context(NOW)
+        complete = load_participant_report(store, context=context, accounting_mode=mode)
+        expected = next(r for r in complete["entities"] if (r["entity_kind"], r["entity_id"]) == (kind,target))
+        processed = []
+        original = data._participant_trade_input
+        def observe(row):
+            processed.append(row["id"])
+            return original(row)
+        monkeypatch.setattr(data, "_participant_trade_input", observe)
+        monkeypatch.setattr(metrics, "calculate_participant_rankings", lambda *a, **k: pytest.fail("global ranking"))
+        monkeypatch.setattr(store, "iter_participant_history", lambda *a, **k: pytest.fail("global history"))
+        monkeypatch.setattr(store, "iter_participant_window", lambda *a, **k: pytest.fail("global window"))
+        queries = []
+        store._connect().set_trace_callback(queries.append)
+        result = load_entity_activity(store, kind, target, context=context, accounting_mode=mode, batch_size=2)
+        assert result["entities"] == [expected]
+        assert result["rankings"] == {}
+        assert result["context"] == complete["context"]
+        assert processed == (["start", "missing", "sale"] if mode == "window" else ["old-buy", "old-sale", "start", "missing", "sale"])
+        child_queries = [q for q in queries if "where transaction_id in (" in q]
+        assert len(child_queries) == (8 if mode == "window" else 12)
+        assert all("unrelated" not in q and "end" not in q for q in child_queries)
+        assert expected["missing_money_count"] == 1
+
+
+def test_targeted_reference_ownership_diagnostics_and_resolution(tmp_path, monkeypatch):
+    from warera_quant.market_data import load_entity_activity, resolve_player_identity
+    with MarketStore(tmp_path / "owners.db") as store:
+        ingest(store, [fact("mu", -6, buyer="actor", buyerMuId="M", sellerCountryId="C"),
+            fact("conflict", -5, buyer="actor", buyerMuId="M", buyerCountryId="C"),
+            fact("self", -4, buyer="actor", seller="other", buyerMuId="M", sellerMuId="M"),
+            fact("inactive", -30, buyer="uncached-inactive")])
+        store.cache_entity_name("user", "named", "actor", NOW.isoformat(), "found")
+        store.cache_entity_name("user", "one", "Shared", NOW.isoformat(), "found")
+        store.cache_entity_name("user", "two", "SHARED", NOW.isoformat(), "found")
+        assert resolve_player_identity(store, "actor")[0] == "actor"
+        assert resolve_player_identity(store, "uncached-inactive")[0] == "uncached-inactive"
+        assert resolve_player_identity(store, "shared")[0] is None
+        assert len(resolve_player_identity(store, "shared")[1]) == 2
+        assert resolve_player_identity(store, "missing") == (None, [])
+        actor = load_entity_activity(store, "user", "actor", as_of=NOW)
+        assert actor["entities"] == []
+        assert actor["coverage"]["unassigned_count"] == 1
+        assert actor["coverage"]["self_trade_count"] == 1
+        mu = load_entity_activity(store, "mu", "M", as_of=NOW)
+        assert mu["entities"][0]["actor_ids"] == ["actor"]
+        assert mu["entities"][0]["source_turnover"] == 10
+        assert load_entity_activity(store, "user", "uncached-inactive", as_of=NOW)["entities"] == []
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_targeted_precision_and_frozen_cutoffs(tmp_path, legacy):
+    from warera_quant.market_data import load_entity_activity
+    with MarketStore(tmp_path / "precision.db") as store:
+        start = NOW - timedelta(days=7)
+        points = [("before", start-timedelta(microseconds=1)), ("start", start),
+                  ("inside", NOW-timedelta(microseconds=1)), ("end", NOW)]
+        ingest(store, [normalize_transaction({"_id": id, "transactionType": "trading",
+            "createdAt": at.isoformat(), "itemCode": "exact", "buyerId": "U", "sellerId": "V",
+            "money": Decimal("0.000000000000000003"), "quantity": Decimal("0.000000000000000001")})
+            for id, at in points])
+        if legacy:
+            # Isolated legacy fixture only; retain source timestamp precision.
+            store._connect().execute("update transactions set created_at_us=null")
+        for request, count in [(None, 3), (NOW, 2), (NOW+timedelta(days=10), 3)]:
+            context = store.resolve_report_context(request)
+            targeted = load_entity_activity(store, "user", "U", context=context)
+            complete = load_participant_report(store, context=context)
+            assert targeted["context"] == complete["context"]
+            assert targeted["entities"] == [next(r for r in complete["entities"] if r["entity_id"] == "U")]
+            assert targeted["entities"][0]["source_turnover"] == Decimal("0.000000000000000003")*count
+            assert targeted["entities"][0]["item_categories"][0]["buy_avg_price"] == 3
+
+
+def test_targeted_growth_avoids_unrelated_materialization(tmp_path, monkeypatch):
+    from warera_quant.market_data import load_entity_activity
+    import warera_quant.market_data as data
+    with MarketStore(tmp_path / "growth.db") as store:
+        ingest(store, [fact("target", -1)])
+        context = store.resolve_report_context()
+        before = load_entity_activity(store, "user", "U", context=context)
+        ingest(store, [fact(f"old-{i}", -30) for i in range(1000)] +
+                     [fact(f"other-{i}", -1, buyer="X", seller="Y") for i in range(1000)])
+        rows, queries = [], []
+        original = data._participant_trade_input
+        def observe(row):
+            rows.append(row["id"])
+            return original(row)
+        monkeypatch.setattr(data, "_participant_trade_input", observe)
+        store._connect().set_trace_callback(queries.append)
+        after = load_entity_activity(store, "user", "U", context=context)
+        assert after["entities"] == before["entities"]
+        assert rows == ["target"]
+        assert len([q for q in queries if "where transaction_id in (" in q]) == 4
+        query, params = store.entity_activity_query("user", "U", context.window_start(), context.window_end_exclusive)
+        plan = [r[3] for r in store._connect().execute("explain query plan " + query, params)]
+        assert any("SEARCH" in step and "transactions" in step for step in plan)
+
+
+@pytest.mark.parametrize("kwargs", [{"entity_kind": "party"}, {"entity_id": " "},
+    {"accounting_mode": "invalid"}, {"batch_size": 0}, {"batch_size": 501}])
+def test_targeted_invalid_contracts_on_empty_database(tmp_path, kwargs):
+    from warera_quant.market_data import load_entity_activity
+    with MarketStore(tmp_path / "empty.db") as store:
+        options = {"entity_kind": "user", "entity_id": "U", **kwargs}
+        with pytest.raises(ValueError):
+            load_entity_activity(store, **options)
+
+
+def test_targeted_full_fifo_replays_only_target_acquisitions_and_dispositions(tmp_path, monkeypatch):
+    from warera_quant.market_data import load_entity_activity
+    with MarketStore(tmp_path / "fifo.db") as store:
+        ingest(store, [fact("buy", -30, quantity="10", money="100"),
+            fact("sale-old", -20, buyer="V", seller="U", quantity="4", money="40"),
+            fact("sale", -1, buyer="V", seller="U", quantity="8", money="120"),
+            fact("other", -1, buyer="X", seller="Y")])
+        import warera_quant.market_data as data
+        original = data._participant_trade_input
+        def verified_fixture(row):
+            result = original(row)
+            result["settlement"] = {side: {"verified": True, "money_role": "gross", "fee": "0"}
+                                    for side in ("buy", "sell")}
+            return result
+        monkeypatch.setattr(data, "_participant_trade_input", verified_fixture)
+        report = load_entity_activity(store, "user", "U", as_of=NOW, accounting_mode="full-fifo")
+        row = report["entities"][0]
+        assert row["matched_quantity"] == 6
+        assert row["uncosted_quantity"] == 2
+        assert row["matched_net_pnl"] == 30
+        assert row["source_turnover"] == 120
+        assert report["accounting_status"] == "calculated"

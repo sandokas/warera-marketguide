@@ -629,14 +629,72 @@ def test_participant_accounting_cli_mode_reaches_read_model(monkeypatch, tmp_pat
     with MarketStore(path) as store:
         ingest(store, [fact("old", -30), fact("recent", -1)])
     calls = []
-    original = cli_module.load_participant_report
+    original = cli_module.load_entity_activity
     def observe(*args, **kwargs):
         result = original(*args, **kwargs)
         calls.append(result["accounting_mode"])
         return result
-    monkeypatch.setattr(cli_module, "load_participant_report", observe)
+    monkeypatch.setattr(cli_module, "load_entity_activity", observe)
     monkeypatch.setattr(sys, "argv", ["warera-marketguide", "--player-summary", "U",
         "--market-db", str(path), "--quiet", "--participant-accounting", mode])
     main()
     assert calls == [mode]
     assert build_parser().parse_args([]).participant_accounting == "window"
+
+
+@pytest.mark.parametrize("value,active", [("U", True), ("old-user", False), ("actor", False)])
+def test_summary_uncached_ids_avoid_global_analysis_and_network(monkeypatch, tmp_path, capsys, value, active):
+    from test_participant_market_data import NOW, fact, ingest
+    path = tmp_path / "ids.db"
+    with MarketStore(path) as store:
+        ingest(store, [fact("recent", -1), fact("old", -30, buyer="old-user"),
+                      fact("actor", -1, buyer="actor", buyerMuId="M")])
+        store.cache_entity_name("user", "wrong", "U", NOW.isoformat(), "found")
+    monkeypatch.setattr(cli_module, "load_participant_report", lambda *a, **k: pytest.fail("global analysis"))
+    monkeypatch.setattr(cli_module, "WarEraApiClient", lambda: pytest.fail("unexpected network"))
+    monkeypatch.setattr(cli_module, "write_outputs", lambda *a, **k: pytest.fail("artifact writes"))
+    output = tmp_path / "output"
+    monkeypatch.setattr(sys, "argv", ["warera-marketguide", "--player-summary", value,
+        "--market-db", str(path), "--output", str(output), "--quiet"])
+    if active:
+        main()
+        assert "Player ID: U" in capsys.readouterr().out
+    else:
+        with pytest.raises(SystemExit, match="No observed seven-day activity"):
+            main()
+    assert not output.exists()
+
+
+def test_ambiguous_summary_exits_before_participant_analysis(monkeypatch, tmp_path):
+    from test_participant_market_data import NOW
+    path = tmp_path / "ambiguity.db"
+    with MarketStore(path) as store:
+        for id in ("one", "two"):
+            store.cache_entity_name("user", id, "Shared", NOW.isoformat(), "found")
+    monkeypatch.setattr(cli_module, "load_entity_activity", lambda *a, **k: pytest.fail("analysis before resolution"))
+    monkeypatch.setattr(cli_module, "WarEraApiClient", lambda: pytest.fail("network for cached name"))
+    monkeypatch.setattr(sys, "argv", ["warera-marketguide", "--player-summary", "SHARED", "--market-db", str(path), "--quiet"])
+    with pytest.raises(SystemExit, match="ambiguous"):
+        main()
+
+
+@pytest.mark.parametrize("matches,message", [(0, "Player not found"), (1, "No observed seven-day activity"), (2, "ambiguous")])
+def test_public_summary_lookup_resolves_before_activity(monkeypatch, tmp_path, matches, message):
+    from warera_quant.market_models import DisplayIdentity
+    path = tmp_path / "public.db"
+    with MarketStore(path):
+        pass
+    class Api:
+        def __init__(self, client):
+            pass
+        def search_users(self, value):
+            assert value == "Public Name"
+            return [DisplayIdentity("user", str(i), "Public Name") for i in range(matches)]
+    monkeypatch.setattr(cli_module, "WarEraApiClient", lambda: object())
+    monkeypatch.setattr(cli_module, "WarEraMarketApi", Api)
+    monkeypatch.setattr(cli_module, "load_participant_report", lambda *a, **k: pytest.fail("global analysis"))
+    if matches != 1:
+        monkeypatch.setattr(cli_module, "load_entity_activity", lambda *a, **k: pytest.fail("analysis without unique identity"))
+    monkeypatch.setattr(sys, "argv", ["warera-marketguide", "--player-summary", "Public Name", "--market-db", str(path), "--quiet"])
+    with pytest.raises(SystemExit, match=message):
+        main()
