@@ -2030,6 +2030,28 @@ def generate_html_report(
     return _html_page("WarEra Market Guide", body)
 
 
+def create_report_output_directory(output_root: str | Path, generated_at: datetime, *,
+                                   layout: str = "runs") -> Path:
+    """Reserve a fresh report directory without replacing earlier run files."""
+    if layout not in ("runs", "direct"):
+        raise ValueError("Output layout must be runs or direct")
+    root = Path(output_root)
+    root.mkdir(parents=True, exist_ok=True)
+    if layout == "direct":
+        return root
+    if generated_at.tzinfo is None:
+        raise ValueError("Report generation time must be timezone-aware")
+    name = "report-" + generated_at.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    attempt = 1
+    while True:
+        destination = root / (name if attempt == 1 else f"{name}-{attempt}")
+        try:
+            destination.mkdir()
+            return destination
+        except FileExistsError:
+            attempt += 1
+
+
 def write_outputs(
     df: pd.DataFrame,
     output_dir: str | Path,

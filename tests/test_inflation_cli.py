@@ -37,4 +37,6 @@ def test_csv_mode_never_calculates_we24_from_substitute_prices(monkeypatch, tmp_
     monkeypatch.setattr(cli, 'export_report_assets', lambda *a,**k:[])
     monkeypatch.setattr(sys,'argv',['guide','--csv',str(source),'--output',str(tmp_path/'report'),'--quiet'])
     cli.main()
-    assert not (tmp_path/'report'/'market_inflation.csv').exists()
+    output, = (tmp_path/'report').glob('report-*')
+    assert (output/'market_trends.csv').exists()
+    assert not (output/'market_inflation.csv').exists()

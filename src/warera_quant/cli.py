@@ -45,7 +45,7 @@ from .metrics import (
     price_action_chart_filename,
     select_highlighted_items,
 )
-from .report import combine_market_rows_with_metrics, write_outputs, export_report_assets, format_player_summary
+from .report import combine_market_rows_with_metrics, write_outputs, export_report_assets, format_player_summary, create_report_output_directory
 from .sync import sync_market_data, refresh_display_cache
 from .warera_api import WarEraMarketApi
 
@@ -209,7 +209,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=1.0,
         help="Minimum seconds between API requests.",
     )
-    parser.add_argument("--output", default="output", help="Output directory.")
+    parser.add_argument("--output", default="output", help="Report output root (default: output).")
+    parser.add_argument("--output-layout", choices=("runs", "direct"), default="runs",
+                        help="Use a fresh timestamped subfolder per report (runs, default), or write directly to --output (direct).")
     parser.add_argument("--top", type=int, default=0, help="Legacy option; published reports retain every item regardless of this value.")
     parser.add_argument(
         "--table-pngs",
@@ -475,6 +477,7 @@ class ReportPreparation:
     participant_report: object = None
     equipment_details: object = None
     context: ReportContext | None = None
+    output_dir: Path | None = None
 
 
 def prepare_db_report(store, args, assumptions, *, as_of: datetime | None = None, context: ReportContext | None = None) -> ReportPreparation:
@@ -519,10 +522,13 @@ def run_db_report_workflow(args, assumptions, *, as_of: datetime | None = None, 
 def generate_report(args, assumptions, prepared: ReportPreparation) -> None:
     """Calculate and publish prepared inputs using the existing report layers."""
     df_in = prepared.market_frame
+    generated_at = prepared.context.generated_at if prepared.context else datetime.now(timezone.utc)
+    output_dir = create_report_output_directory(args.output, generated_at,
+        layout=getattr(args, "output_layout", "runs"))
+    prepared.output_dir = output_dir
+    print(f"Report directory: {output_dir}")
     if prepared.context is not None and prepared.context.analysis_as_of is None:
-        output = Path(args.output)
-        output.mkdir(parents=True, exist_ok=True)
-        (output / "report_context.json").write_text(json.dumps(prepared.context.to_dict(), indent=2), encoding="utf-8")
+        (output_dir / "report_context.json").write_text(json.dumps(prepared.context.to_dict(), indent=2), encoding="utf-8")
         print("Report unavailable: no stored market data.")
         return
     report_as_of = prepared.as_of
@@ -531,9 +537,7 @@ def generate_report(args, assumptions, prepared: ReportPreparation) -> None:
     action_cost_results = prepared.action_cost_results
     participant_report = prepared.participant_report
     equipment_details = prepared.equipment_details
-    output_dir = Path(args.output)
     if prepared.context is not None:
-        output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "report_context.json").write_text(json.dumps(prepared.context.to_dict(), indent=2), encoding="utf-8")
     if not (args.live or args.from_db):
         compatibility_defaults = {

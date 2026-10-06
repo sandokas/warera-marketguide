@@ -185,7 +185,8 @@ def main():
                     state['context'] = context.to_dict()
                     atomic_json(job / 'publication.json', {'database':state['snapshot'], 'as_of':context.analysis_as_of.isoformat(), 'context':state['context'], 'status':'Retained snapshot; source and accounting limits remain'})
                     save_state()
-                    invoke_cli(state['snapshot'], ['--from-db','--output',str(job / 'report')], context=context)
+                    invoke_cli(state['snapshot'], ['--from-db','--output',str(job / 'report'),
+                               '--output-layout','direct'], context=context)
                     state['stage'] = 'verify'
                     save_state()
                 if state['stage'] == 'verify':

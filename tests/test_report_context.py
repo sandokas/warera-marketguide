@@ -95,8 +95,9 @@ def test_empty_db_all_read_models_explicitly_unavailable(tmp_path, monkeypatch, 
     monkeypatch.setattr(sys, "argv", ["warera", "--from-db", "--quiet", "--market-db", str(tmp_path / "db"), "--output", str(tmp_path / "out")])
     cli.main()
     assert "Report unavailable" in capsys.readouterr().out
-    assert json.loads((tmp_path / "out/report_context.json").read_text())["analysis_as_of"] is None
-    assert not (tmp_path / "out/charts").exists()
+    output, = (tmp_path / "out").glob("report-*")
+    assert json.loads((output / "report_context.json").read_text())["analysis_as_of"] is None
+    assert not (output / "charts").exists()
 
 
 def test_historical_future_and_equipment_subsecond_ties(tmp_path):

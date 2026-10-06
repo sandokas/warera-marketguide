@@ -53,7 +53,8 @@ def test_offline_cli_browser_publication_context_and_complete_csvs(
 
     monkeypatch.setattr(cli, "run_db_report_workflow", observe)
     flags = ["warera", "--from-db", "--quiet", "--market-db", str(database),
-             "--output", str(output), "--participant-accounting", mode]
+             "--output", str(output), "--participant-accounting", mode,
+             "--output-layout", "direct"]
     if historical:
         flags += ["--as-of", C.isoformat()]
     monkeypatch.setattr(sys, "argv", flags)

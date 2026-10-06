@@ -23,15 +23,34 @@ Generate a report from the included sample data:
 warera-marketguide --csv ./data/sample_market.csv --output output
 ```
 
-Generated files:
+Each CLI report creates a fresh subfolder inside `--output`, named from its UTC
+generation time. The command prints the actual report directory. For example:
 
 ```text
-output/market_report.html
-output/market_trends.csv
-output/market_scores.csv
+output/report-20261006T160000123456Z/market_report.html
+output/report-20261006T160000123456Z/market_trends.csv
+output/report-20261006T160000123456Z/market_scores.csv
 ```
 
 `market_scores.csv` is a compatibility copy of `market_trends.csv`.
+
+All charts, table PNGs, display images, context and asset inventory stay inside
+that run's folder. Repeated reports from the same stale database get separate
+folders; even identical generation timestamps reserve a distinct suffix instead
+of overwriting an earlier run. Existing output files are preserved. Old folders
+can be removed explicitly when no longer needed; automatic retention is not enabled.
+
+Scripts that require exact output paths can opt into the earlier behavior:
+
+```powershell
+.venv\Scripts\warera-marketguide --from-db --output output/current --output-layout direct
+```
+
+`direct` writes into the supplied directory and retains unrelated/obsolete files;
+use its `asset_inventory.json` for the current asset list. The rollout runner uses
+this option explicitly for its resumable `job/report` path. Low-level rendering
+functions also retain their exact-directory contract. Sync-only runs and player
+summaries create no report folders.
 
 ## Live market data
 
@@ -276,7 +295,7 @@ and publication metadata; retries and verification preserve its boundary and
 accounting modes. Legacy `as_of`-only metadata retains historical exclusion.
 Live pagination does not promise a server snapshot.
 
-An empty DB CLI writes an unavailable `report_context.json` and a clear no-data
+An empty DB CLI writes an unavailable `report_context.json` in its run folder and a clear no-data
 message, without generating report tables, charts or CSVs. Standalone rendering
 of empty domain reports can still produce empty boards/header-only exports.
 CSV/custom-endpoint inputs retain their compatibility behavior outside this clock.
@@ -458,7 +477,7 @@ status in window mode. Item CSV comparison columns use `window_*` names and
 `comparison_basis`. Activity Comparison has
 no Observed footer. Every PNG captures the complete table element only.
 
-New paths under the output directory:
+Paths inside each report run's directory:
 
 - `participant_rankings_7d/participants-{user|mu|country}-{volume|explanations}.png`
   (six tables, including explicit empty states). Successful asset export removes

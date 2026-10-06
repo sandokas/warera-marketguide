@@ -219,6 +219,7 @@ def test_csv_mode_writes_unavailable_flip_fields_without_assumption_badges(tmp_p
 
     main()
 
+    output, = output.glob("report-*")
     exported = pd.read_csv(output / "market_trends.csv")
     assert exported.loc[0, "flip_verdict"] == "Unavailable"
     assert exported.loc[0, "flip_quantity"] == 7
@@ -248,7 +249,8 @@ def test_table_png_flow_exports_header_cards_and_tables_without_a_new_flag(tmp_p
     main()
 
     assert [call[0] for call in calls] == ["inventory"]
-    assert calls[0][2] == output
+    assert calls[0][2].parent == output
+    assert calls[0][2].name.startswith("report-")
 
 
 def test_housekeeping_is_an_independent_command(tmp_path, monkeypatch):
@@ -355,7 +357,7 @@ def test_as_of_offline_participant_and_equipment_exports(monkeypatch, tmp_path):
     monkeypatch.setattr(cli_module, 'WarEraApiClient', lambda **k: pytest.fail('offline report attempted API'))
     out = tmp_path / 'output'
     monkeypatch.setattr(sys, 'argv', ['warera-quant','--from-db','--market-db',str(path),'--output',str(out),
-        '--as-of','2026-09-23T01:00:00+01:00','--quiet'])
+        '--as-of','2026-09-23T01:00:00+01:00','--quiet','--output-layout','direct'])
     main()
     first = (out / 'participant_rankings_7d.csv').read_bytes()
     main()
@@ -619,6 +621,7 @@ def test_custom_endpoint_keeps_compatibility_pipeline(monkeypatch, tmp_path):
         "--output", str(output)])
     main()
     assert calls == [("/custom", {"page": "2"})]
+    output, = output.glob("report-*")
     assert pd.read_csv(output / "market_trends.csv").iloc[0]["flip_verdict"] == "Unavailable"
 
 

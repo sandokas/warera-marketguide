@@ -76,6 +76,7 @@ def test_snapshot_cutoff_metadata_and_resume(tmp_path, monkeypatch, historical, 
     monkeypatch.setattr(sys, "argv", flags)
     calls = []
     def interrupted(database, flags, *, context=None):
+        assert flags[-2:] == ["--output-layout", "direct"]
         calls.append(context)
         raise RuntimeError("Simulated report process termination")
     monkeypatch.setattr(module, "invoke_cli", interrupted)
