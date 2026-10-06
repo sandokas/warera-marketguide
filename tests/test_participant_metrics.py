@@ -344,3 +344,138 @@ def test_window_does_not_replay_inventory_even_for_window_acquisitions(monkeypat
         sorted(rows, key=lambda t:(t['created_at'],t['id'])), as_of=NOW)
     assert entity(result)['matched_net_pnl'] is None
     assert result['accounting_status'] == 'not_calculated'
+
+
+@pytest.mark.parametrize("amounts,count", [
+    (["80000000", "10000000", "10000000"], 1),
+    (["79000000", "11000000", "10000000"], 2),
+    (["50000000", "30000000", "20000000"], 2),
+    (["1000000"] * 100, 80),
+    (["0.08", "0.01", "0.01"], 1),
+    (["0.079999999999999999999999999999999999999999999999999",
+      "0.010000000000000000000000000000000000000000000000001", "0.01"], 2),
+])
+def test_minimal_exact_detail_prefix(amounts, count):
+    from fractions import Fraction
+    from warera_quant.metrics import select_participant_details
+    items = [{"category": ("commodity", f"item-{i:03}"), "buy_total_value": D(value),
+              "sell_total_value": D(0)} for i, value in enumerate(amounts)]
+    total = sum((Fraction(D(value)) for value in amounts), Fraction(0))
+    selected, metadata = select_participant_details(items, entity_total=total, turnover_basis="source-money")
+    assert len(selected) == count
+    assert metadata["threshold"] == total * Fraction(4, 5)
+    assert metadata["selected_turnover"] >= metadata["threshold"]
+    assert sum((Fraction(row["buy_total_value"]) for row in selected[:-1]), Fraction(0)) < metadata["threshold"]
+    assert metadata["selected_share"] >= Fraction(4, 5)
+    assert metadata["selected_count"] == count and metadata["total_row_count"] == len(items)
+    assert metadata["status"] == metadata["completeness"] == "complete"
+    assert len(items) == len(amounts)
+
+
+def test_detail_ties_use_signatures_and_do_not_expand():
+    from warera_quant.metrics import select_participant_details
+    categories = [("commodity", code) for code in ("e", "d", "c", "b", "a")]
+    items = [{"category": sig, "buy_total_value": D(1), "sell_total_value": D(1)} for sig in categories]
+    selected, metadata = select_participant_details(items, entity_total=D(10), turnover_basis="gross")
+    assert [row["category"][1] for row in selected] == ["a", "b", "c", "d"]
+    assert select_participant_details(list(reversed(items)), entity_total=D(10), turnover_basis="gross") == (selected, metadata)
+    assert [row["category"] for row in items] == categories
+
+
+@pytest.mark.parametrize("items,total,status", [([], D(0), "empty"),
+    ([{"category": ("commodity", "zero"), "buy_total_value": D(0), "sell_total_value": D(0)}], D(0), "zero-total")])
+def test_detail_zero_empty_handling(items, total, status):
+    from warera_quant.metrics import select_participant_details
+    selected, metadata = select_participant_details(items, entity_total=total, turnover_basis="source-money")
+    assert selected == []
+    assert metadata["status"] == status
+    assert metadata["selected_share"] is None and metadata["threshold"] == 0
+
+
+@pytest.mark.parametrize("missing_count,missing_value", [(1, D(0)), (0, None)])
+def test_unknown_denominator_keeps_complete_detail(missing_count, missing_value):
+    from warera_quant.metrics import select_participant_details
+    items = [{"category": ("commodity", "known"), "buy_total_value": D(100), "sell_total_value": D(0)},
+             {"category": ("commodity", "unknown"), "buy_total_value": missing_value,
+              "sell_total_value": D(0), "buy_missing_money_count": missing_count}]
+    selected, metadata = select_participant_details(items, entity_total=D(100), turnover_basis="source-money",
+                                                    missing_money_count=missing_count)
+    assert len(selected) == 2
+    assert metadata["status"] == metadata["completeness"] == "partial"
+    assert metadata["selected_share"] is None and metadata["threshold"] is None
+    assert metadata["total_turnover"] is None
+    assert metadata["observed_total_turnover"] == 100
+
+
+def test_complete_detail_requires_reconciliation():
+    from warera_quant.metrics import select_participant_details
+    with pytest.raises(ValueError, match="reconcile"):
+        select_participant_details([{"category": ("commodity", "steel"), "buy_total_value": D(10),
+                                    "sell_total_value": D(0)}], entity_total=D(11), turnover_basis="gross")
+
+
+@pytest.mark.parametrize("kind", ["user", "mu", "country"])
+@pytest.mark.parametrize("mode", ["window", "full-fifo"])
+@pytest.mark.parametrize("basis", ["gross", "source-money"])
+def test_shared_detail_selection_report_basis_and_target(kind, mode, basis):
+    from warera_quant.metrics import calculate_entity_activity
+    owner = {kind + "_id": "target"}
+    rows = [trade(str(i), -1, amount, 1, buyer=owner, code=code,
+                  verified=basis == "gross", money_role="settled", buy_fee=fee)
+            for i, (code, amount, fee) in enumerate([("first", 80, "5"), ("second", 10, "0"), ("third", 10, "0")])]
+    report = calculate_participant_rankings(rows, as_of=NOW, accounting_mode=mode)
+    row = entity(report, "target", kind)
+    target = calculate_entity_activity(rows, entity_kind=kind, entity_id="target", as_of=NOW, accounting_mode=mode)
+    assert target["entities"] == [row]
+    assert report["turnover_basis"] == basis
+    assert len(row["top_items"]) == (2 if basis == "gross" else 1)
+    assert row["detail_selection"]["turnover_basis"] == basis
+    assert row["detail_selection"]["total_turnover"] == row["gross_turnover" if basis == "gross" else "source_turnover"]
+    assert len(row["item_categories"]) == len(row["categories"]["buy"]) == 3
+    assert len(row["top_buy"]) == 3
+
+
+def test_buy_sell_combined_and_equipment_signatures():
+    rows = [trade("a", -3, 40, 1, code="combined"),
+            trade("b", -2, 40, 1, buyer="V", seller="U", code="combined"),
+            trade("c", -1, 10, 1, equipment={"equipment_code": "helmet", "stats": {"attack": "1"}, "state": "100"}),
+            trade("d", -1, 10, 1, equipment={"equipment_code": "helmet", "stats": {"attack": "2"}, "state": "100"})]
+    row = entity(calculate_participant_rankings(rows, as_of=NOW))
+    assert [item["item_code"] for item in row["top_items"]] == ["combined"]
+    assert row["detail_selection"]["selected_share"] == D("0.8")
+    signatures = [item["category"] for item in row["item_categories"] if item["category"][0] == "equipment-v1"]
+    assert len(signatures) == 2 and signatures[0] != signatures[1]
+
+
+def test_partial_entity_and_missing_quantity_selection():
+    report = calculate_participant_rankings([trade("a", -2, 100, None, code="known"),
+        trade("b", -1, None, 1, code="unknown")], as_of=NOW)
+    row = entity(report)
+    assert len(row["top_items"]) == len(row["item_categories"]) == 2
+    assert row["detail_selection"]["status"] == "partial"
+    assert row["detail_selection"]["selected_share"] is None
+    known = entity(calculate_participant_rankings([trade("a", -2, 100, None, code="known")], as_of=NOW))
+    assert known["detail_selection"]["status"] == "complete"
+    assert known["top_items"][0]["buy_avg_price"] is None
+
+
+@pytest.mark.parametrize("money,status,selected", [(None, "partial", 1), ("0", "zero-total", 0)])
+def test_all_missing_or_zero_entity_details(money, status, selected):
+    row = entity(calculate_participant_rankings([trade("a", -1, money, 1)], as_of=NOW))
+    assert len(row["item_categories"]) == 1 and len(row["categories"]["buy"]) == 1
+    assert len(row["top_items"]) == selected
+    assert row["detail_selection"]["status"] == status
+    assert row["detail_selection"]["selected_share"] is None
+
+
+def test_equipment_equal_turnover_order_and_minimal_prefix():
+    rows = [trade(str(i), -1, 2, 1, equipment={"equipment_code": "helmet", "stats": {"attack": str(5-i)},
+                  "state": "100", "max_state": "100"}) for i in range(5)]
+    first = entity(calculate_participant_rankings(rows, as_of=NOW))
+    # Different chronological encounter order cannot decide equipment tie ordering.
+    for i, row in enumerate(rows):
+        row["created_at"] = NOW-timedelta(days=i+1)
+    second = entity(calculate_participant_rankings(sorted(rows, key=lambda row: row["created_at"]), as_of=NOW))
+    assert len(first["top_items"]) == 4
+    assert [item["category"] for item in first["top_items"]] == [item["category"] for item in second["top_items"]]
+    assert len(set(item["category"] for item in first["item_categories"])) == 5

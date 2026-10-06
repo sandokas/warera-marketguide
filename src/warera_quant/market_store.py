@@ -11,7 +11,7 @@ from collections.abc import Iterable
 from .market_models import TransactionFacts, StreamProgress, StreamCheckpoint, EnrichmentCoverage, OrderLevel, RejectedTransactionPage
 
 
-LATEST_SCHEMA_VERSION = 7
+LATEST_SCHEMA_VERSION = 8
 
 
 class MarketStoreError(RuntimeError):
@@ -575,6 +575,43 @@ class MarketStore:
         query, parameters = self.participant_history_query(start, end)
         return [row[3] for row in self._connect().execute("explain query plan " + query, parameters)]
 
+    def profile_read(self, operation) -> tuple[Any, dict[str, Any]]:
+        """Measure an isolated read on this connection, including executed plans.
+
+        Consumes iterators inside the measured interval. Intended for disposable
+        fixtures; replaces connection trace/progress callbacks for its duration.
+        VM steps count database work, not rows visited or parents materialized.
+        Does not initialize, analyze, or change schema/data.
+        """
+        from time import perf_counter
+        connection = self._connect()
+        statements = []
+        steps = 0
+
+        def progress():
+            nonlocal steps
+            steps += 100
+            return 0
+
+        connection.set_trace_callback(statements.append)
+        connection.set_progress_handler(progress, 100)
+        started = perf_counter()
+        try:
+            result = operation()
+            if not isinstance(result, (list, dict, tuple, str, int, float, type(None))):
+                result = list(result)
+            elapsed = perf_counter() - started
+        finally:
+            connection.set_trace_callback(None)
+            connection.set_progress_handler(None, 0)
+        reads = [sql for sql in statements if sql.lstrip().lower().startswith(("select", "with"))]
+        plans = [{"sql": sql, "plan": [row[3] for row in connection.execute(
+            "explain query plan " + sql)]} for sql in dict.fromkeys(reads)]
+        children = sum("where transaction_id in (" in sql.lower() for sql in reads)
+        return result, {"elapsed_seconds": elapsed, "vm_steps_approx": steps,
+                        "result_count": len(result) if isinstance(result, (list, dict, tuple)) else None,
+                        "child_queries": children, "read_statements": len(reads), "plans": plans}
+
     def iter_participant_history(self, start: datetime, end: datetime, *, batch_size: int = 500):
         """Yield chronological normalized source batches, bounded to 500 parents.
 
@@ -633,14 +670,11 @@ class MarketStore:
 
     def find_users(self, value: str) -> list[dict]:
         """Find cached users by exact ID or case-insensitive display name."""
-        rows = self._connect().execute(
-            """select * from market_entities
-               where entity_kind='user'
-                 and (entity_id=? or name=? collate nocase)
-               order by entity_id""",
-            (value, value),
-        )
-        return [dict(row) for row in rows]
+        connection = self._connect()
+        by_id = connection.execute("select * from market_entities where entity_kind='user' and entity_id=?", (value,)).fetchall()
+        by_name = connection.execute("select * from market_entities where entity_kind='user' and name=? collate nocase", (value,)).fetchall()
+        return sorted({row["entity_id"]: dict(row) for row in [*by_id, *by_name]}.values(),
+                      key=lambda row: row["entity_id"])
 
     def _write_progress(self, progress: StreamProgress) -> None:
         if progress.pages == 0:
@@ -1096,11 +1130,11 @@ class MarketStore:
             """select id, item_code, transaction_type, created_at, created_at_epoch,
                       money, quantity, unit_price, fetched_at
                from transactions
-               where item_code=? and transaction_type=? and created_at_epoch >= ?
+               where item_code=? and transaction_type=? and created_at_epoch >= ? and created_at_epoch <= ?
                  and coalesce(created_at_us,source_timestamp_us(created_at)) >= ?
                  and coalesce(created_at_us,source_timestamp_us(created_at)) < ?
                order by coalesce(created_at_us,source_timestamp_us(created_at)),id""",
-            (item_code, transaction_type, math.floor(since_epoch), _datetime_us(start), _datetime_us(end)),
+            (item_code, transaction_type, math.floor(since_epoch), math.floor(end.timestamp()), _datetime_us(start), _datetime_us(end)),
         ).fetchall()
         return [_dict_from_row(row) for row in rows]
 
@@ -1193,12 +1227,12 @@ class MarketStore:
             from transactions
             where item_code in ({placeholders})
               and transaction_type = 'trading'
-              and created_at_epoch >= ?
+              and created_at_epoch >= ? and created_at_epoch <= ?
               and coalesce(created_at_us,source_timestamp_us(created_at)) >= ?
               and coalesce(created_at_us,source_timestamp_us(created_at)) < ?
             order by item_code asc, coalesce(created_at_us,source_timestamp_us(created_at)), id asc
             """,
-            (*codes, math.floor(start_epoch), _datetime_us(datetime.fromtimestamp(start_epoch, timezone.utc)), _datetime_us(end)),
+            (*codes, math.floor(start_epoch), math.floor(end.timestamp()), _datetime_us(datetime.fromtimestamp(start_epoch, timezone.utc)), _datetime_us(end)),
         ).fetchall()
         return [_dict_from_row(row) for row in rows]
 
@@ -1308,10 +1342,10 @@ class MarketStore:
         """Discover a market scope; None includes all types and unclassified legacy facts."""
         c = self._connect()
         if transaction_type is None:
-            query = "select item_code from transactions"
+            query = "select distinct item_code from transactions"
             params = ()
         else:
-            query = "select item_code from transactions where transaction_type=?"
+            query = "select distinct item_code from transactions where transaction_type=?"
             params = (transaction_type,)
         if transaction_type in (None, "trading"):
             query += " union select item_code from price_observations union select item_code from order_book_observations"
@@ -1324,16 +1358,10 @@ class MarketStore:
             select id, item_code, observed_at, observed_at_epoch, current_price
             from price_observations
             where id in (
-                select id
-                from (
-                    select id,
-                           row_number() over (
-                               partition by item_code
-                               order by observed_at_epoch desc, id desc
-                           ) as row_number
-                    from price_observations
-                )
-                where row_number = 1
+                select (select p.id from price_observations p
+                        where p.item_code=items.item_code
+                        order by p.observed_at_epoch desc,p.id desc limit 1)
+                from (select distinct item_code from price_observations) items
             )
             """
         ).fetchall()
@@ -1346,16 +1374,10 @@ class MarketStore:
                    bid_depth, ask_depth, spread_abs, spread_pct
             from order_book_observations
             where id in (
-                select id
-                from (
-                    select id,
-                           row_number() over (
-                               partition by item_code
-                               order by observed_at_epoch desc, id desc
-                           ) as row_number
-                    from order_book_observations
-                )
-                where row_number = 1
+                select (select p.id from order_book_observations p
+                        where p.item_code=items.item_code
+                        order by p.observed_at_epoch desc,p.id desc limit 1)
+                from (select distinct item_code from order_book_observations) items
             )
             """
         ).fetchall()
@@ -1698,6 +1720,11 @@ def migrate_to_v7(connection: sqlite3.Connection) -> None:
     _reconcile_data_clock(connection)
 
 
+def migrate_to_v8(connection: sqlite3.Connection) -> None:
+    """Selective cached case-insensitive name lookup."""
+    connection.execute("create index idx_entities_kind_name on market_entities(entity_kind,name collate nocase,entity_id)")
+
+
 MIGRATIONS = {
     1: migrate_to_v1,
     2: migrate_to_v2,
@@ -1706,6 +1733,7 @@ MIGRATIONS = {
     5: migrate_to_v5,
     6: migrate_to_v6,
     7: migrate_to_v7,
+    8: migrate_to_v8,
 }
 
 

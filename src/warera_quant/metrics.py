@@ -2109,6 +2109,64 @@ def _participant_decimal_output(value):
     return value
 
 
+def _detail_amount(value):
+    """Preserve reducer Fractions and exact Decimal inputs without display rounding."""
+    return value if isinstance(value, Fraction) else _participant_number(value)
+
+
+def _detail_turnover(item):
+    # Missing amounts contribute only to the observed subtotal, never coverage.
+    return sum((_detail_amount(item.get(side + "_total_value")) or Fraction(0)
+                for side in ("buy", "sell")), Fraction(0))
+
+
+def _detail_order(item):
+    return (-_detail_turnover(item), repr(item["category"]))
+
+
+def select_participant_details(item_categories, *, entity_total, turnover_basis,
+                               missing_money_count=0):
+    """Return the minimal exact 4/5 prefix and coverage metadata, without mutation.
+
+    Values must already use the entity/report money basis. Unknown money retains
+    every category; a known denominator must reconcile with complete categories.
+    """
+    ordered = sorted(item_categories, key=_detail_order)
+    total = _detail_amount(entity_total)
+    observed = sum((_detail_turnover(item) for item in ordered), Fraction(0))
+    incomplete = bool(missing_money_count) or total is None or any(
+        item.get(side + "_missing_money_count", 0) or
+        _detail_amount(item.get(side + "_total_value")) is None
+        for item in ordered for side in ("buy", "sell"))
+    if not incomplete and observed != total:
+        raise ValueError("Participant detail turnover does not reconcile with entity total")
+    threshold = None if incomplete else total * Fraction(4, 5)
+    selected, cumulative = [], Fraction(0)
+    if incomplete:
+        selected, cumulative = ordered, observed
+        status = "partial"
+    elif not ordered:
+        status = "empty"
+    elif total == 0:
+        status = "zero-total"
+    else:
+        for item in ordered:
+            selected.append(item)
+            cumulative += _detail_turnover(item)
+            if cumulative >= threshold:
+                break
+        status = "complete"
+    return selected, {
+        "status": status, "completeness": "partial" if incomplete else "complete",
+        "turnover_basis": turnover_basis, "target_share": Fraction(4, 5),
+        "threshold": threshold, "total_turnover": None if incomplete else total,
+        "observed_total_turnover": observed, "selected_turnover": cumulative,
+        "selected_share": cumulative / total if not incomplete and total else None,
+        "selected_count": len(selected), "total_row_count": len(ordered),
+        "missing_money_count": missing_money_count,
+    }
+
+
 def calculate_participant_rankings(trades, *, as_of, sources=None, window_end_exclusive=None, accounting_mode="window"):
     return _reduce_participant_activity(trades, as_of=as_of, sources=sources,
         window_end_exclusive=window_end_exclusive, accounting_mode=accounting_mode)
@@ -2476,14 +2534,11 @@ def _reduce_participant_activity(trades, *, as_of, sources=None, window_end_excl
             }
             row["item_categories"].append(item_category)
         
-        # Sort item categories by total turnover (buy + sell)
-        row["item_categories"] = sorted(
-            row["item_categories"],
-            key=lambda c: -((c["buy_total_value"] or 0) + (c["sell_total_value"] or 0))
-        )
-        
-        # Keep top items for display
-        row["top_items"] = row["item_categories"][:10]
+        row["item_categories"] = sorted(row["item_categories"], key=_detail_order)
+        row["top_items"], row["detail_selection"] = select_participant_details(
+            row["item_categories"], entity_total=row["gross_turnover" if verified_gross else "source_turnover"],
+            turnover_basis="gross" if verified_gross else "source-money",
+            missing_money_count=row["missing_money_count"])
     # One money basis per report: never compare mixed gross/source totals.
     turnover_field = "gross_turnover" if verified_gross else "source_turnover"
     rankings = {}

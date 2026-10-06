@@ -154,9 +154,9 @@ def test_all_categories_missingness_and_top_ten(kind, side):
     # Missing data should still be handled properly
     assert 'condition' not in html
     assert len(report['rankings'][kind]['volume']) == 10
-    # Each user in top 10 should only show their top items (limited to 10)
+    # Compact leaders retain their own selected detail prefix.
     actor4 = next(r for r in report['entities'] if r['entity_id']=='actor4')
-    assert len(actor4.get('top_items', [])) <= 10
+    assert len(actor4.get('top_items', [])) == 1
     assert all(x not in html for x in ('Other categories', 'Remaining items', 'Mixed items'))
 
 
@@ -216,3 +216,67 @@ def test_empty_csvs_have_headers(tmp_path):
     write_outputs(frame(), tmp_path, participant_report=calculate_participant_rankings([], as_of=NOW), equipment_details=[])
     for name in ('participant_rankings_7d','participant_item_breakdown_7d','participant_trade_breakdown_7d','equipment_sales_7d','equipment_sale_stats_7d'):
         assert len((tmp_path / (name + '.csv')).read_text().splitlines()) == 1
+
+
+@pytest.mark.parametrize("kind", ["user", "mu", "country"])
+def test_selected_html_target_console_and_complete_csvs(tmp_path, kind):
+    from warera_quant.metrics import calculate_entity_activity
+    from warera_quant.report import _participant_html, _write_participant_exports
+    trades = [{"id": f"item-{i:03}", "created_at": NOW-timedelta(days=1), "transaction_type": "trading",
+        "item_code": f"category-{i:03}", "money": "0.000000000000000003", "quantity": "1",
+        "participants": {"buy": {kind+"_id": "target"}}} for i in range(100)]
+    report = calculate_participant_rankings(trades, as_of=NOW)
+    row = report["entities"][0]
+    assert len(row["top_items"]) == 80 and len(row["item_categories"]) == 100
+    detail = _participant_html(report).split(f'data-table-id="participants-{kind}-explanations"')[1].split('</table>')[0]
+    assert detail.count('<tr>') == 81  # header plus 80 details; no ten-row cap
+    assert "category-079" in detail and "category-080" not in detail
+    target = calculate_entity_activity(trades, entity_kind=kind, entity_id="target", as_of=NOW)
+    console = format_player_summary(target, target["entities"][0])
+    assert "80 of 100 categories covering 80.0%" in console
+    assert "category-079" in console and "category-080" not in console
+    _write_participant_exports(tmp_path, report, [])
+    def read(name):
+        with (tmp_path/name).open(encoding='utf-8', newline='') as file:
+            return list(csv.DictReader(file))
+    for name in ("participant_item_breakdown_7d.csv", "participant_trade_breakdown_7d.csv"):
+        rows = read(name)
+        assert len(rows) == 100
+        assert {item["item_code"] for item in rows} == {f"category-{i:03}" for i in range(100)}
+    assert all(Decimal(item["buy_total_value"]) == Decimal("0.000000000000000003")
+               for item in read("participant_item_breakdown_7d.csv"))
+    ranking = read("participant_rankings_7d.csv")[0]
+    assert ranking["detail_selection_selected_count"] == "80"
+    assert ranking["detail_selection_status"] == "complete"
+    assert row["detail_selection"]["selected_count"] == 80
+
+
+def test_partial_detail_console_context_and_csv_retention(tmp_path):
+    from warera_quant.report import _participant_html, _write_participant_exports
+    trades = [{"id": str(i), "created_at": NOW-timedelta(days=1), "transaction_type": "trading",
+        "item_code": f"category-{i:02}", "money": (None if i == 12 else "100" if i == 0 else "1"),
+        "quantity": "1", "participants": {"buy": {"user_id": "target"}}} for i in range(13)]
+    trades.sort(key=lambda row: (row["created_at"],row["id"]))
+    report = calculate_participant_rankings(trades, as_of=NOW)
+    row = report["entities"][0]
+    assert len(row["top_items"]) == 13
+    console = format_player_summary(report, row)
+    assert "all categories; coverage unknown" in console and "category-12" in console
+    assert "covering 80" not in console
+    html = _participant_html(report)
+    assert "Missing money keeps all detail rows with unknown coverage" in html
+    detail = html.split('data-table-id="participants-user-explanations"')[1].split('</table>')[0]
+    assert "category-12" in detail and "coverage" not in detail.lower()
+    _write_participant_exports(tmp_path, report, [])
+    with (tmp_path/'participant_item_breakdown_7d.csv').open(encoding='utf-8', newline='') as file:
+        assert len(list(csv.DictReader(file))) == 13
+
+
+def test_selected_details_preserve_escaping_icons_and_identity():
+    from warera_quant.report import _participant_html
+    report = participant_fixture()
+    html = _participant_html(report)
+    assert '&lt;script&gt;' in html and '<script>' not in html
+    assert '\u2694\ufe0f' in html or '\u2022' in html
+    assert 'identity-' in html
+    assert '<tfoot>' not in html

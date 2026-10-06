@@ -38,7 +38,7 @@ def test_empty_read_is_metadata_only_and_admin_does_not_advance(tmp_path):
         assert store.data_as_of() is None
         assert len(queries) == 2
         assert all("select data_as_of_us from market_data_metadata" in q for q in queries)
-        assert store.schema_version() == store.user_version() == 7
+        assert store.schema_version() == store.user_version() == 8
 
 
 @pytest.mark.parametrize("observations", [False, True])
@@ -56,7 +56,7 @@ def test_v6_bootstrap_exact_legacy_and_both_streams(tmp_path, monkeypatch, obser
     store.initialize()
     expected = stamp("2026-09-23T10:00:01.000002Z" if observations else "2026-09-23T10:00:00.999999Z")
     assert store.data_as_of() == expected
-    assert store.schema_version() == store.user_version() == 7
+    assert store.schema_version() == store.user_version() == 8
     store.close()
     with MarketStore(store.path) as reopened:
         assert reopened.data_as_of() == expected

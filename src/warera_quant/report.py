@@ -2472,7 +2472,7 @@ def _category_html(category):
 
 
 def _participant_html(report, verbose: bool = False):
-    """Shared presentation: volume top ten and their complete ordered categories.
+    """Shared presentation: volume top ten and selected turnover detail prefixes.
 
     Identity enrichment may add display fields to entity rows; ownership, ranking,
     category signatures and diagnostics remain supplied domain data.
@@ -2529,6 +2529,9 @@ def _participant_html(report, verbose: bool = False):
               '.equipment-frame{display:inline-block;width:42px;height:42px;border:1px solid;border-bottom-width:2px;border-radius:5px;vertical-align:middle;margin:3px 7px 3px 0}'
               '.equipment-image{width:42px;height:42px;object-fit:contain;vertical-align:middle}'
               '.horizontal-items{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}</style>']
+    blocks.append('<p class="muted">Item details show the smallest leading set covering at least 80% '
+                  'of entity monetary turnover. Missing money keeps all detail rows with unknown '
+                  'coverage. Complete window categories remain in CSV exports.</p>')
     for kind, label in (("user", "Users"), ("mu", "Military Units"), ("country", "Countries")):
         entries = report['rankings'][kind]['volume']
         rows, details = [], []
@@ -2610,7 +2613,16 @@ def format_player_summary(report: dict, player: dict) -> str:
         "",
     ])
     rows = []
-    for item in player.get("item_categories", []):
+    selection = player.get("detail_selection")
+    if selection:
+        if selection["status"] == "partial":
+            lines.append("Item details: all categories; coverage unknown because money is missing.")
+        elif selection["status"] in ("empty", "zero-total"):
+            lines.append("Item details: no positive turnover to select.")
+        else:
+            lines.append(f"Item details: {selection['selected_count']} of {selection['total_row_count']} categories "
+                         f"covering {number(selection['selected_share'] * 100, places=1)}% of turnover.")
+    for item in player.get("top_items", player.get("item_categories", [])):
         signature = item["category"]
         item_label = str(item.get("item_code") or "Unknown")
         if signature[0] == "equipment-v1":
