@@ -1,7 +1,7 @@
 # Participant rendering contract for identity integration
 
-Requests 1-9 implemented on 2026-09-24. Identity retrieval and visual design are
-subsequent phases; this change does not fetch profiles or modify storage.
+Updated 2026-10-06 for the performance plan's integration contract. Identity
+enrichment remains outside rendering; renderers do not fetch profiles or modify storage.
 
 ## Read-model boundary
 
@@ -32,9 +32,22 @@ report rendering.
 
 Stable table IDs: `participants-{kind}-volume` and
 `participants-{kind}-explanations`. Six tables are emitted, including empty states.
-The latter ID is retained for compatibility but now means the complete breakdown.
-All categories appear once per selected entity/side. Compact summaries may use
-`top_buy`/`top_sell`; residual groups are never rendered.
+The latter ID is retained for compatibility and displays `top_items`: combined
+buy/sell category rows selected by the shared calculation helper. This is the
+shortest descending-turnover prefix reaching at least 80% of the entity's
+same-basis turnover, including the crossing row. There is no row cap or equal-tie
+expansion; category signatures break ties deterministically. Exact arithmetic,
+not rounded display amounts, controls selection. `detail_selection` records
+threshold, selected turnover/share/count, total row count and completeness/status.
+Missing money keeps all rows and marks coverage partial/unknown. Known zero
+turnover selects no positive prefix. The coverage-policy note sits outside tables.
+Standalone targeted summaries consume the same selection. Compact summaries may
+use `top_buy`/`top_sell`; residual groups are never rendered.
+
+`item_categories` and `categories[side]` remain complete window collections for
+every analyzed entity, including those outside the displayed top ten. Do not
+replace these arrays with the selected prefix during identity joins or export.
+Complete category turnover must reconcile to the entity's same-basis denominator.
 
 `_participant_amount` formats complete values, `Unknown` for wholly missing data,
 and `X known (N missing)` for partial subtotals. Missingness comes from counts,
@@ -46,8 +59,23 @@ Money basis and UTC window appear once in report context. Tables contain no meth
 footer. Activity Comparison has the explicit `data-report-table` identity
 `activity-comparison` to exempt it from generic annotation.
 
-CSV schemas, precision, accounting diagnostics, and underlying records remain
-unchanged. Static PNG capture uses the complete table element at intrinsic size.
+Item and per-side breakdown CSVs retain every window category, source condition
+and normalized stat, including categories omitted from PNGs. Ranking CSVs include
+selection/context/accounting metadata. Default window accounting skips inventory
+replay; matched realized P&L and historical costing diagnostics remain unavailable
+with `accounting_status=not_calculated` and blank CSV cells. Explicit `full-fifo`
+replays earlier buys and dispositions, but adds no earlier turnover to the window.
+`calculated` does not certify complete fees, basis or source coverage. Item
+comparison CSV columns use `window_*` names and `comparison_basis`; domain legacy
+aliases describe window comparisons, never realized P&L or total holdings.
+
+The shared frozen context uses database C inclusively by default, historical
+explicit T <= C exclusively, and clamps future requests to inclusive C. The query
+epsilon never shifts the logical start or chart axis; generation time is separate.
+Static PNG capture uses the complete table element at intrinsic size.
+Geometry validates header/body/footer column edges, spans, overflow and PNG
+dimensions with computed border/rounding tolerances; it does not require text to
+fill each cell. No clipping, forced widths, scrolling or surrounding headings.
 The current-run inventory contains only current targets. After successful capture,
 cleanup deletes only exact losses/profits/coverage PNG filenames for the three
 entity kinds within `participant_rankings_7d`; unrelated archives are retained.
@@ -55,6 +83,7 @@ entity kinds within `participant_rankings_7d`; unrelated archives are retained.
 ## Verification
 
 Focused suites cover shared rendering for all entity kinds and sides, more than
-three categories, commodity aggregation, condition-distinct equipment, partial
+three categories, 80-row exact prefixes, complete CSV retention, commodity
+aggregation, condition-distinct equipment, partial
 and missing cells, top-ten selection, escaping, CSV condition/precision retention,
 the repaired flip-board path, and real-browser PNG bounds/current inventory.

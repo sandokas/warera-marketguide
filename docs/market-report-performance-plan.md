@@ -1,7 +1,14 @@
 # Market report performance and database time plan
 
 Date: 2026-10-06 (Europe/Lisbon).
-Status: requirements and execution plan prepared; implementation has not started.
+Status: phases A-I complete and integration verified on 2026-10-06. Final suite:
+736 passed in 74.62s, no skips; real-browser focused checks: 88 passed in 58.31s.
+Evidence and requirements-to-test mapping:
+[phase-I handoff](market-report-performance-handoffs/phase-i.md).
+The reported outside-column PNG strip remains unreproduced in the checked cases;
+no cause/fix is claimed for it. One reproduced participant-header text overlap
+was fixed with intrinsic numeric-header sizing and a browser regression.
+No production sync, migration, database modification, publication or rollout ran.
 Execution prompts: [market-report-performance-prompts.md](market-report-performance-prompts.md).
 
 ## Scope and decisions
@@ -475,6 +482,15 @@ only when required focused tests pass and its handoff is available. If blocked,
 mark the handoff incomplete and do not start dependent phases.
 
 ## Final verification and completion criteria
+
+Verification completed in phase I against all nine examples below, including
+real offline CLI/browser/publication verification for both boundary modes and
+both accounting modes, atomic clock/migration rollback, bounded/targeted activity,
+exact selection and complete CSVs. The handoff records final test commands,
+disposable measurements, compatibility changes and remaining limitations. This
+status reflects rerun checks and inspected artifacts, not just A-H completion
+claims. Production deployment and production-size migration timing remain outside
+this completed integration scope.
 
 Phase I runs the appropriate full suite once using `.venv/Scripts/pytest` after
 focused phase checks have passed. Use real-browser tests with the supported local

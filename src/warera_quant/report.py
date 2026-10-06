@@ -2145,6 +2145,7 @@ def export_report_assets(
     """
     import json
     import re
+    import struct
     from playwright.sync_api import sync_playwright
     from .charts import _chrome_executable
 
@@ -2235,13 +2236,67 @@ def export_report_assets(
                         return {width:r.width,height:r.height,scrollWidth:e.scrollWidth,scrollHeight:e.scrollHeight,
                             cellsOutside:cells.filter(c => {const b=c.getBoundingClientRect();
                                 return b.left<r.left-1 || b.right>r.right+1 || b.top<r.top-1 || b.bottom>r.bottom+1;}).length,
-                            minCellFont:cells.length ? Math.min(...cells.map(c => parseFloat(getComputedStyle(c).fontSize))) : null};
+                            minCellFont:cells.length ? Math.min(...cells.map(c => parseFloat(getComputedStyle(c).fontSize))) : null,
+                            table: e.matches('table') ? (() => {
+                                const bounds = n => {const b=n.getBoundingClientRect();
+                                    return {left:b.left,top:b.top,right:b.right,bottom:b.bottom,width:b.width,height:b.height};};
+                                const style = n => {const s=getComputedStyle(n);return {
+                                    width:s.width,minWidth:s.minWidth,maxWidth:s.maxWidth,
+                                    tableLayout:s.tableLayout,borderCollapse:s.borderCollapse,
+                                    borderSpacing:s.borderSpacing,paddingRight:s.paddingRight,
+                                    borderRightWidth:s.borderRightWidth,fontSize:s.fontSize};};
+                                // Resolve the logical grid independently in each row group.
+                                // Rowspans can supply a terminal column on subsequent rows.
+                                const groups=[...e.children].filter(n=>['THEAD','TBODY','TFOOT'].includes(n.tagName));
+                                const rows=[];
+                                for(const group of groups){
+                                    const occupied=[];
+                                    for(const [i,row] of [...group.rows].entries()){
+                                        let column=0;const entries=[];
+                                        for(const cell of row.cells){
+                                            while((occupied[column] || 0)>i) column++;
+                                            const end=column+cell.colSpan;
+                                            for(let j=column;j<end;j++) occupied[j]=cell.rowSpan===0 ? group.rows.length : i+cell.rowSpan;
+                                            entries.push({start:column,end,colspan:cell.colSpan,rowspan:cell.rowSpan,
+                                                bounds:bounds(cell),style:style(cell)});column=end;
+                                        }
+                                        rows.push({group:group.tagName,bounds:bounds(row),cells:entries,
+                                            columnCount:Math.max(column,occupied.length)});
+                                    }
+                                }
+                                const columnCount=Math.max(0,...rows.map(row=>row.columnCount));
+                                const edges={};
+                                for(const group of ['THEAD','TBODY','TFOOT']){
+                                    const last=rows.filter(row=>row.group===group).flatMap(row=>row.cells);
+                                    edges[group]=last.length ? Math.max(...last.map(cell=>cell.bounds.right)) : null;
+                                }
+                                // Collapsed half-borders and fractional CSS rounding are valid;
+                                // separate borders additionally contribute border spacing.
+                                const css=getComputedStyle(e);
+                                const tolerance=1+parseFloat(css.borderRightWidth || 0)+
+                                    (css.borderCollapse==='separate' ? parseFloat(css.borderSpacing || 0) : 0);
+                                return {bounds:bounds(e),style:style(e),columnCount,rows,
+                                    groups:groups.map(n=>({group:n.tagName,bounds:bounds(n),style:style(n)})),
+                                    lastCellRight:edges,rightEdgeTolerance:tolerance,
+                                    rightEdgeGaps:Object.fromEntries(Object.entries(edges).map(([k,v])=>[k,v===null?null:r.right-v]))};
+                            })() : null};
                     }""")
                     if verbose:
                         print(f"[VERBOSE] Element geometry: {geometry}")
                     if geometry["cellsOutside"] or geometry["scrollWidth"] > geometry["width"] + 2 or geometry["scrollHeight"] > geometry["height"] + 2:
                         raise RuntimeError(f"Incomplete capture: {selector} {index}: {geometry}")
+                    if kind == "table":
+                        table_geometry = geometry["table"]
+                        if any(gap is not None and abs(gap) > table_geometry["rightEdgeTolerance"]
+                               for gap in table_geometry["rightEdgeGaps"].values()):
+                            raise RuntimeError(f"Unused table edge: {selector} {index}: {table_geometry}")
+                    # PNG IHDR dimensions cover the entire element at the page's 2x scale.
+                    # Playwright rounds both CSS edges outward: at most four device pixels.
+                    png_width, png_height = struct.unpack(">II", path.read_bytes()[16:24])
+                    if abs(png_width - 2 * geometry["width"]) > 4 or abs(png_height - 2 * geometry["height"]) > 4:
+                        raise RuntimeError(f"Incomplete PNG canvas: {path}: {png_width}x{png_height}: {geometry}")
                     record(path, kind, f"{selector} >> nth={index}")
+                    inventory[-1]["png_size"] = {"width": png_width, "height": png_height, "scale": 2}
                     inventory[-1]["css_size"] = geometry
                     if table_id:
                         inventory[-1]["table_id"] = table_id
@@ -2516,6 +2571,7 @@ def _participant_html(report, verbose: bool = False):
     blocks = ['<style>.participant-section {width:max-content;max-width:none} .participant-table table {width:max-content;table-layout:auto;font-size:16px} '
               '.participant-table th,.participant-table td {white-space:normal;max-width:24ch;overflow-wrap:anywhere}'
               '.participant-table th.number,.participant-table td.number {text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}'
+              '.participant-table th.number {max-width:none}'
               '.participant-table th:not(.number),.participant-table td:not(.number) {text-align:left}'
               '.participant-table .col-total-profit {font-weight:700}'
               '.participant-table .profit-positive {color:var(--good);font-weight:600}'

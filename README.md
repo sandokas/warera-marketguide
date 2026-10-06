@@ -53,6 +53,19 @@ market analysis or trading signals:
 warera-marketguide --live --output output
 ```
 
+Collection and report generation can also run separately:
+
+```powershell
+.venv\Scripts\warera-marketguide --sync --market-db data/warera_market.sqlite3
+.venv\Scripts\warera-marketguide --from-db --market-db data/warera_market.sqlite3 --output output
+```
+
+`--sync` commits normalized market facts and exits without preparing report
+artifacts. `--from-db` uses the shared SQLite report workflow offline; `--live`
+calls sync once, then that same workflow with the existing identity refresh.
+These are API-to-database and database-to-report commands, with no intermediate
+raw-response import files. Resync, backfill and resume remain sync options.
+
 The default database is `data/warera_market.sqlite3`, the report lookback is 7 days, and sync requests the API maximum of 100 order-book entries per side. Requests are spaced at least 1 second apart. Override those values when needed:
 
 ```bash
@@ -157,7 +170,8 @@ stats, but stay out of commodity cards, tables, charts, VWAP and WE24. Current
 commodity snapshots preserve individual orders and compatible aggregate depth;
 pending equipment listings are not collected. Unknown scalar fields are retained
 with warning diagnostics. Participant names use dated cached names when available, otherwise IDs; supported live lookup
-response contracts remain unverified. `--from-db` performs no network lookups.
+response contracts remain unverified. Plain `--from-db` performs no network lookups;
+`--refresh-identities` explicitly enables display enrichment.
 
 The legacy backfill route also uses both global streams, ignoring overlap and stopping at its independent lookback boundary:
 
@@ -229,10 +243,43 @@ warera-marketguide \
 
 When no input option is supplied, the CLI uses the default market database if it exists; otherwise it uses `data/sample_market.csv`. Prefer `--from-db` or an explicit CSV path in scripts so the input is clear.
 
-DB-backed reports persist and display the latest completed market-sync timestamp separately from
-the time the report itself was generated. A sync with stream or current-order errors is marked as partial, and a
-failed sync does not advance the stored freshness timestamp. Existing databases infer their initial
-timestamp from the newest stored market observation.
+DB-backed reports freeze one UTC context after sync and any requested identity
+enrichment. `data_as_of` (C) is the newest retained source timestamp across all
+completed transactions, price observations and order-book observations, including
+equipment, unfamiliar items, both streams and legacy source microseconds. It is
+maintained atomically with market writes. Old downloads, duplicate replay,
+profile refresh and report generation do not move it. Committed partial pages
+can advance C; failed/rolled-back pages cannot. Sync status and source coverage
+remain separate evidence. Price observations can advance C without supplying
+trade prices to analysis.
+
+`analysis_as_of` is the common logical reference for statistics, charts, WE24 and
+exports. `generated_at` records when this report was created. Rerunning a stale
+database weeks later preserves its analysis periods; only generation time changes.
+`report_context.json` records these fields, the requested cutoff, exclusive query
+endpoint, boundary mode and participant accounting mode.
+
+| Request | Logical reference | Seven-day activity window |
+| --- | --- | --- |
+| No `--as-of` | C | `[C - 7 days, C]`, queried as `[C - 7 days, C + 1 microsecond)` |
+| Explicit T <= C (including T = C) | T | `[T - 7 days, T)` |
+| Explicit T > C | Clamped to C | Same inclusive window as the default; original request is recorded |
+| Empty database | Unavailable | No invented wall-clock reference or charts |
+
+Starts and coverage use the logical reference, never the extra microsecond.
+The same upper-bound rules apply to trade statistics and forecast/backtest inputs;
+chart starts additionally include their entire first candle. Historical `--as-of`
+does not rewind cached identities, current commodity quotes or latest executable
+orders. A frozen cutoff cannot prevent concurrent revisions of eligible stored
+facts. Rollout reports use a database backup and persist the full context in job
+and publication metadata; retries and verification preserve its boundary and
+accounting modes. Legacy `as_of`-only metadata retains historical exclusion.
+Live pagination does not promise a server snapshot.
+
+An empty DB CLI writes an unavailable `report_context.json` and a clear no-data
+message, without generating report tables, charts or CSVs. Standalone rendering
+of empty domain reports can still produce empty boards/header-only exports.
+CSV/custom-endpoint inputs retain their compatibility behavior outside this clock.
 
 Completed activity uses two bars. Completed Value sums transaction price × quantity
 for every item and determines the row order. PP-equivalent Volume multiplies completed
@@ -290,8 +337,10 @@ Item charts default to 30 days and 4-hour UTC candles. Supported primary interva
 `4h`, and `1D`; they are not automatically coarsened. WE24 defaults to 30 display days.
 The chart start rounds down to the opening of the selected UTC candle, including all
 available trades in that first candle. For example, a 21:18 cutoff starts at 21:00
-for `1h`, 20:00 for `2h` or `4h`, and midnight for `1D`. The end stays at the current
-time, so the newest candle can still be partial. Missing history is never filled in.
+for `1h`, 20:00 for `2h` or `4h`, and midnight for `1D`. The end stays at the shared
+analysis reference, so the newest candle can still be partial. WE24 retains its
+fixed inception and weights and excludes the unfinished UTC day relative to that
+reference. Missing history is never filled in.
 Use `--chart-min-range-pct 5` to control the minimum visible price range. Sparse history remains
 visible, and partial candles are marked. Database read models calculate 1D, 7D, and 30D statistics;
 guidance, valuation dislocations, activity, and Item Price Context use 7D evidence.
@@ -311,7 +360,8 @@ asset kind, position, and a slug; use `asset_inventory.json` for the authoritati
 Old files in a reused output directory are not automatically included in that inventory.
 
 Each table PNG captures the complete table element without its section heading or surrounding
-whitespace. The exporter checks for overflow and replaces the published HTML tables with those
+whitespace. The exporter checks overflow, actual column right edges and full PNG
+canvas dimensions, and replaces the published HTML tables with those
 static images, retaining table text as image alternative text. Composite section PNGs are separate
 assets and may include headings. All item rows are retained; `--top` is a compatibility option.
 
@@ -324,11 +374,17 @@ overwriting the normal report, pass a cached player name or exact player ID:
 .venv\Scripts\warera-marketguide --player-summary "Player Name" --market-db data/warera_market.sqlite3
 ```
 
-Cached names are matched case-insensitively. When a name is not cached, the
+Exact cached or historically referenced IDs take precedence over names. Cached
+names are matched case-insensitively. When a name is not cached, the
 command uses WarEra's public user search and accepts only an exact username match;
 market history still comes exclusively from SQLite. If a name is ambiguous, the
-command lists matching IDs. `--as-of` may be supplied to reproduce the
-`[as_of - 7 days, as_of)` window. The result is printed to the console and no HTML,
+command lists matching IDs before analysis. Only that entity's candidates are
+read and reduced; other entities' rankings are not calculated. Known inactive
+players return a clear no-activity result. Reusable `load_entity_activity` supports
+user, MU and country IDs with the same context/accounting options. Institution
+actors remain attribution metadata, rather than receiving personal turnover;
+current membership does not reassign historical trades. `--as-of` follows the
+boundary table above. The result is printed to the console and no HTML,
 CSV, PNG, or asset-inventory files are written.
 
 To fetch current profile names, images, and citizenship flags and generate the report
@@ -344,36 +400,62 @@ is deferred, report generation stops with the refresh summary instead of silentl
 publishing incomplete identities. Plain `--from-db` remains offline and uses cached
 identities. `--refresh-identities` alone refreshes the cache without generating a report.
 
-DB reports now include independent top-ten loss, profit and monetary-turnover
-boards for users, MUs and countries. Use a timezone-aware cutoff to reproduce the
+DB reports publish the top ten users, MUs and countries by monetary turnover.
+Use a timezone-aware cutoff to reproduce the
 participant window and equipment exports from the same database:
 
 ```powershell
 .venv\Scripts\warera-marketguide --from-db --market-db data/warera_market.sqlite3 --as-of 2026-09-23T00:00:00Z --output output
 ```
 
-One UTC clock is supplied to report read models and charts. Participant activity
-and equipment exports use `[as_of - 7 days, as_of)`; earlier trades are consumed
-for costing. `--as-of` does not sync or rewind current commodity quotes or cached
-names. Changed source facts can change a rerun. Without the option, the boundary
-is captured once at invocation. CSV-only input omits the participant section.
+Ordinary reports and player summaries default to `--participant-accounting window`.
+SQL bounds participant parents before materialization and retains batched child
+reads. Earlier history is not replayed, including for diagnostic CSVs. Accounting
+status is `not_calculated`: matched realized P&L, cost basis and inventory
+diagnostics are unavailable (blank CSV cells), and profit/loss diagnostic boards
+are empty. Window average differences, comparison value and net buy quantity
+describe window activity; they are not realized profit or total holdings.
 
-Amounts are **observed market FIFO realized P&L on matched sales**, never total
-account profit. Equipment requires verified specific-item lineage. Current DB
+Request earlier-history FIFO explicitly when needed:
+
+```powershell
+.venv\Scripts\warera-marketguide --from-db --market-db data/warera_market.sqlite3 --participant-accounting full-fifo --output output-fifo
+.venv\Scripts\warera-marketguide --player-summary U --market-db data/warera_market.sqlite3 --participant-accounting full-fifo
+```
+
+Full FIFO replays earlier acquisitions and dispositions for active accounts,
+while turnover and counts remain window-only. `accounting_status=calculated`
+means replay ran, not that all costs, fees or history are known. It can require
+substantial time and memory. CSV-only input omits the participant section.
+
+Available full-FIFO profit amounts are **observed market FIFO realized P&L on
+matched sales**, never total account profit. Equipment requires verified
+specific-item lineage. Current DB
 money/fee evidence remains unverified: activity uses **source-money turnover**,
 and profit/loss boards can honestly be empty. Unknown is not zero. Basis, fees,
 attribution and source-history coverage remain distinct. MU/country boards rank
 economic accounts, not all members. Summing account turnover counts both sides.
 
-Published participant tables show monetary turnover and a companion complete
-buy/sell breakdown for the same top-ten entities per kind. Compact summaries keep
-three categories; breakdowns show every category in value order, with units, BTC,
-percentage share and trade count. Commodity trades aggregate by item; equipment
+Published participant tables show monetary turnover and companion details for the
+same top-ten entities per kind. Detail selection combines buy/sell category value,
+sorts by descending same-basis turnover with a deterministic signature tie break,
+and takes the shortest prefix reaching at least 80% of entity turnover, including
+the crossing row. There is no ten-row cap or automatic equal-tie expansion:
+80/10/10 selects one row, 79/11/10 selects two, and 100 equal rows select 80.
+Exact amounts determine selection before display rounding. Targeted summaries
+use the same prefix. `detail_selection` records selected count/share and status.
+Missing money makes coverage unknown and retains every category; known zero
+turnover has no positive prefix. Compact Bought/Sold summaries keep three
+categories. Details show units, BTC, percentage share and trade count.
+Commodity trades aggregate by item; equipment
 variants retain full stats and condition in their signatures and CSVs. Display
 labels omit condition. Unknown cells say `Unknown`; partial subtotals say
 `X known (N missing)`. Units are never summed across unlike categories.
 Loss/profit, coverage sections and method footers are omitted from presentation;
-accounting records and CSV diagnostics remain unchanged. Activity Comparison has
+complete window categories remain in CSVs even when omitted from displayed details.
+Ranking diagnostic columns remain, with unavailable cells and explicit accounting
+status in window mode. Item CSV comparison columns use `window_*` names and
+`comparison_basis`. Activity Comparison has
 no Observed footer. Every PNG captures the complete table element only.
 
 New paths under the output directory:
@@ -383,16 +465,20 @@ New paths under the output directory:
   only exact obsolete participant losses/profits/coverage PNG names; unrelated
   files remain untouched and the inventory lists only current-run assets.
 - `participant_rankings_7d.csv`: one row per board/rank, with matched P&L,
-  monetary totals and coverage. The same account can occur in multiple boards.
+  monetary totals, context, accounting status and detail-selection coverage. The
+  same account can occur in multiple diagnostic boards in full-FIFO mode.
+- `participant_item_breakdown_7d.csv`: every combined window category for all
+  analyzed entities, including those outside the published top ten and 80% prefix.
 - `participant_trade_breakdown_7d.csv`: all categories, keyed by entity kind/ID,
   side and category index; `participant_trade_stats_7d.csv` normalizes every skill.
 - `equipment_sales_7d.csv` and `equipment_sale_stats_7d.csv`: window sales and
   every per-sale skill, joined by transaction ID; source references, condition,
   precision/presence and unavailable costing remain explicit.
 
-`asset_inventory.json` explicitly lists these current-run PNGs and CSVs. Empty
-DB results produce header-only CSVs and unavailable/empty boards, not zero-profit
-claims. Names/labels are HTML-escaped. Formula-leading source strings are quoted
+`asset_inventory.json` explicitly lists these current-run PNGs and CSVs for a
+generated report. Empty domain exports use unavailable/empty boards and header-only
+CSVs; the empty DB CLI behavior is described above. Names/labels are HTML-escaped.
+Formula-leading source strings are quoted
 at the CSV boundary without changing stored data. Decimal accounting exports
 retain precision; tables display at most six decimal places. Long stat vectors
 can make tall images; nothing is truncated or hidden behind hover controls.
