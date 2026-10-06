@@ -620,3 +620,23 @@ def test_custom_endpoint_keeps_compatibility_pipeline(monkeypatch, tmp_path):
     main()
     assert calls == [("/custom", {"page": "2"})]
     assert pd.read_csv(output / "market_trends.csv").iloc[0]["flip_verdict"] == "Unavailable"
+
+
+@pytest.mark.parametrize("mode", ["window", "full-fifo"])
+def test_participant_accounting_cli_mode_reaches_read_model(monkeypatch, tmp_path, mode):
+    from test_participant_market_data import NOW, fact, ingest
+    path = tmp_path / "mode.db"
+    with MarketStore(path) as store:
+        ingest(store, [fact("old", -30), fact("recent", -1)])
+    calls = []
+    original = cli_module.load_participant_report
+    def observe(*args, **kwargs):
+        result = original(*args, **kwargs)
+        calls.append(result["accounting_mode"])
+        return result
+    monkeypatch.setattr(cli_module, "load_participant_report", observe)
+    monkeypatch.setattr(sys, "argv", ["warera-marketguide", "--player-summary", "U",
+        "--market-db", str(path), "--quiet", "--participant-accounting", mode])
+    main()
+    assert calls == [mode]
+    assert build_parser().parse_args([]).participant_accounting == "window"

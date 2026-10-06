@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import math
 from bisect import bisect_left, bisect_right
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from collections.abc import Iterable
 from contextlib import closing
@@ -49,12 +49,15 @@ def resolve_publication_context(store: MarketStore, metadata: dict) -> ReportCon
     """Restore inclusion semantics; legacy as_of-only publications are historical."""
     if metadata.get("context"):
         context = ReportContext.from_dict(metadata["context"])
-        if context.accounting_mode != "full-fifo":
-            raise ValueError("Unsupported accounting mode before phase D")
+        if context.accounting_mode not in ("window", "full-fifo"):
+            raise ValueError("Unsupported participant accounting mode")
         return context
     value = metadata.get("as_of")
     requested = datetime.fromisoformat(value.replace("Z", "+00:00")) if value else None
-    return store.resolve_report_context(requested)
+    mode = metadata.get("accounting_mode", "window")
+    if mode not in ("window", "full-fifo"):
+        raise ValueError("Unsupported participant accounting mode")
+    return replace(store.resolve_report_context(requested), accounting_mode=mode)
 
 
 SUPPORTED_REPORT_WINDOWS = ("1D", "7D", "30D", "90D", "1Y")
@@ -1731,20 +1734,25 @@ def _participant_trade_input(source: dict) -> dict:
         "equipment": equipment, "presence": presence}
 
 
-def load_participant_report(store: MarketStore, *, as_of: datetime | None = None, context: ReportContext | None = None, batch_size: int = 500, verbose: bool = False, progress: ProgressReporter | None = None) -> dict:
-    """Offline phase-4 read model; phase 5 renders/exports this domain result."""
+def load_participant_report(store: MarketStore, *, as_of: datetime | None = None, context: ReportContext | None = None, batch_size: int = 500, verbose: bool = False, progress: ProgressReporter | None = None, accounting_mode: str | None = None) -> dict:
+    """Offline activity read model; mode overrides context, otherwise inherits it."""
     from .metrics import calculate_participant_rankings, participant_utc
     context = context or store.resolve_report_context(as_of)
+    mode = context.accounting_mode if accounting_mode is None else accounting_mode
+    if mode not in ("window", "full-fifo"):
+        raise ValueError("Unsupported participant accounting mode")
+    context = replace(context, accounting_mode=mode)
     as_of = context.analysis_as_of
     if as_of is None:
-        return {"as_of": None, "window_start": None, "entities": [], "rankings": {}, "coverage": {}, "sources": {}, "source_coverage": {}, "limitations": ["No stored market data"], "method": "unavailable", "turnover_basis": "source-money", "context": context.to_dict()}
+        return {"as_of": None, "window_start": None, "entities": [], "rankings": {}, "coverage": {}, "sources": {}, "source_coverage": {}, "limitations": ["No stored market data"], "method": "unavailable", "accounting_mode": mode, "accounting_status": "not_calculated", "turnover_basis": "source-money", "context": context.to_dict()}
     as_of = participant_utc(as_of)
     start = as_of - timedelta(days=7)
     progress = progress or ProgressReporter()
     progress.detail("Reading participant coverage and normalization status")
     sources = store.market_sync_status()
-    progress.detail("Reading seven-day participant history and calculating rankings")
-    with closing(store.iter_participant_history(start, context.window_end_exclusive, batch_size=batch_size)) as history:
+    progress.detail(f"Reading participant {mode} activity and calculating rankings")
+    iterator = store.iter_participant_history if mode == "full-fifo" else store.iter_participant_window
+    with closing(iterator(start, context.window_end_exclusive, batch_size=batch_size)) as history:
         def counted_trades():
             count = 0
             for count, row in enumerate(history, 1):
@@ -1753,7 +1761,7 @@ def load_participant_report(store: MarketStore, *, as_of: datetime | None = None
                 yield _participant_trade_input(row)
             progress.detail(f"Participant history: {count:,} rows read; finalizing rankings")
         trades = counted_trades()
-        result = calculate_participant_rankings(trades, as_of=as_of, window_end_exclusive=context.window_end_exclusive, sources=sources)
+        result = calculate_participant_rankings(trades, as_of=as_of, window_end_exclusive=context.window_end_exclusive, sources=sources, accounting_mode=mode)
         result["context"] = context.to_dict()
     progress.detail(f"Participant rankings: {len(result['entities']):,} entities; attaching cached display data")
     enrich_participant_display(store, result, verbose=verbose)

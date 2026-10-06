@@ -78,6 +78,7 @@ def main():
     parser.add_argument('--job-dir', default='output/market-rollout')
     parser.add_argument('--publish-only', action='store_true')
     parser.add_argument('--exhaustion-evidence', type=Path)
+    parser.add_argument('--participant-accounting', choices=('window', 'full-fifo'), default='window')
     parser.add_argument('--as-of', help='Optional aware ISO report cutoff, frozen in job state')
     args = parser.parse_args()
     database = Path(args.market_db).resolve()
@@ -93,7 +94,7 @@ def main():
         state_path = job / 'job.json'
         state = json.loads(state_path.read_text()) if state_path.exists() else {
             'database':str(database), 'stage':'snapshot' if args.publish_only else 'full-import',
-            'as_of':args.as_of, 'started':datetime.now(timezone.utc).isoformat()}
+            'as_of':args.as_of, 'accounting_mode':args.participant_accounting, 'started':datetime.now(timezone.utc).isoformat()}
         if state['database'] != str(database):
             parser.error('Job belongs to a different database')
         if state['stage'] == 'done':

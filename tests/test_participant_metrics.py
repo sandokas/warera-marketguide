@@ -24,7 +24,7 @@ def trade(id, day, money, quantity, buyer='U', seller='V', *, code='steel', veri
 
 
 def calculate(rows, **kwargs):
-    return calculate_participant_rankings(sorted(rows, key=lambda t: (t['created_at'], t['id'])), as_of=NOW, **kwargs)
+    return calculate_participant_rankings(sorted(rows, key=lambda t: (t['created_at'], t['id'])), as_of=NOW, accounting_mode="full-fifo", **kwargs)
 
 
 def entity(result, id='U', kind='user'):
@@ -288,3 +288,59 @@ def test_institutional_profit_loss_and_volume_boards_are_independent():
         assert report['rankings'][kind]['profits'][0]['matched_net_pnl'] == 10
         assert report['rankings'][kind]['losses'][0]['matched_net_pnl'] == -10
         assert [r['entity_id'] for r in report['rankings'][kind]['volume']] == [kind + 'loser', kind + 'winner']
+
+
+@pytest.mark.parametrize("verified", [True, False])
+def test_window_aggregation_matches_existing_fifo_window_totals(verified):
+    rows = [trade('old-buy', -30, 100, 10, verified=verified),
+            trade('old-sale', -20, 60, 4, 'V', 'U', verified=verified),
+            trade('start', -7, '12.25', 2, verified=verified),
+            trade('sell', -1, '30.125', 3, 'V', 'U', verified=verified),
+            trade('self', -1, 999, 1, 'U', 'U', verified=verified),
+            trade('unresolved', -1, 7, 1, {}, 'U', verified=verified),
+            trade('variant', -1, 5, 1, equipment=equipment(), verified=verified),
+            trade('excluded', 0, 1000, 1, verified=verified)]
+    ordered = sorted(rows, key=lambda t: (t['created_at'], t['id']))
+    window = calculate_participant_rankings(ordered, as_of=NOW)
+    fifo = calculate(ordered)
+    assert window['coverage'] == fifo['coverage']
+    assert window['coverage']['market_transaction_count'] == 5
+    assert window['turnover_basis'] == fifo['turnover_basis']
+    for a, b in zip(window['entities'], fifo['entities']):
+        for field in ('entity_kind', 'entity_id', 'actor_ids', 'source_turnover',
+                      'gross_turnover', 'categories', 'item_categories', 'top_items',
+                      'source_buy_value', 'source_sell_value', 'sale_count',
+                      'missing_money_count', 'invalid_quantity_count'):
+            assert a[field] == b[field]
+        assert a['matched_quantity'] is None
+        assert a['accounting_status'] == 'not_calculated'
+    assert not window['rankings']['user']['profits']
+    assert not window['rankings']['user']['losses']
+
+
+def test_window_comparison_is_exact_and_missing_values_unavailable():
+    rows = [trade('buy', -2, '0.123456789123456789', 3),
+            trade('sell', -1, '0.246913578246913578', 3, 'V', 'U')]
+    result = calculate_participant_rankings(rows, as_of=NOW)
+    item = entity(result)['item_categories'][0]
+    assert item['profit_loss_btc'] == D('0.123456789123456789')
+    assert 'window' in item['comparison_basis']
+    result = calculate_participant_rankings(
+        [trade('buy', -2, None, 3), trade('sell', -1, 10, None, 'V', 'U')], as_of=NOW)
+    item = entity(result)['item_categories'][0]
+    assert item['buy_avg_price'] is None and item['sell_avg_price'] is None
+    assert item['profit_loss_btc'] is None and item['unmatched_buy_quantity'] is None
+
+
+def test_window_does_not_replay_inventory_even_for_window_acquisitions(monkeypatch):
+    import warera_quant.metrics as metrics
+    def forbidden(*args, **kwargs):
+        pytest.fail("window mode allocated inventory lots")
+    monkeypatch.setattr(metrics, "deque", forbidden)
+    rows = [trade('buy', -2, 10, 1), trade('sell', -1, 20, 1, 'V', 'U'),
+            trade('equipment-buy', -2, 10, 1, equipment=equipment(), lineage=True),
+            trade('equipment-sell', -1, 20, 1, 'V', 'U', equipment=equipment(), lineage=True)]
+    result = metrics.calculate_participant_rankings(
+        sorted(rows, key=lambda t:(t['created_at'],t['id'])), as_of=NOW)
+    assert entity(result)['matched_net_pnl'] is None
+    assert result['accounting_status'] == 'not_calculated'

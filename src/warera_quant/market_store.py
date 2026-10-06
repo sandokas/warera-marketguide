@@ -479,6 +479,22 @@ class MarketStore:
             result[key] = [dict(r) for r in c.execute(f"select * from {table} where transaction_id=?", (transaction_id,))]
         return result
 
+    def iter_participant_window(self, start: datetime, end: datetime, *, batch_size: int = 500):
+        """Yield only [start,end) parents; load children in bounded shared batches."""
+        if start.tzinfo is None or end.tzinfo is None or start >= end:
+            raise ValueError("Expected aware increasing participant window")
+        if not 1 <= batch_size <= 500:
+            raise ValueError("batch_size must be between 1 and 500")
+        query = """select * from transactions
+            where transaction_type in ('trading','itemMarket')
+              and created_at_epoch >= ? and created_at_epoch <= ?
+              and coalesce(created_at_us,source_timestamp_us(created_at)) >= ?
+              and coalesce(created_at_us,source_timestamp_us(created_at)) < ?
+            order by coalesce(created_at_us,source_timestamp_us(created_at)),id"""
+        yield from self._iter_source_query(query,
+            (math.floor(start.timestamp()), math.floor(end.timestamp()),
+             _datetime_us(start), _datetime_us(end)), batch_size)
+
     def participant_history_query(self, start: datetime, end: datetime) -> tuple[str, tuple]:
         """Source query shared by streaming and EXPLAIN; no ownership rules in SQL.
 

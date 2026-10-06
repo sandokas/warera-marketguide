@@ -2109,15 +2109,19 @@ def _participant_decimal_output(value):
     return value
 
 
-def calculate_participant_rankings(trades, *, as_of, sources=None, window_end_exclusive=None):
+def calculate_participant_rankings(trades, *, as_of, sources=None, window_end_exclusive=None, accounting_mode="window"):
     """Reduce chronological (timestamp, opaque ID) domain history incrementally.
 
-    All available earlier dispositions consume inventory. Same-timestamp buys
+    Only explicit full-fifo replays inventory; window mode aggregates activity.
+    All available earlier dispositions consume inventory in full-fifo. Same-timestamp buys
     cannot cost a sale; sale ties consume older lots in ID order and flag that
     local convention, which is not verified upstream causal order. Holds open
     lots and window aggregates, not a historical DataFrame. Unknown amounts and
     fees remain None. Source completeness is independent of accounting coverage.
     """
+    if accounting_mode not in ("window", "full-fifo"):
+        raise ValueError("Unsupported participant accounting mode")
+    full_fifo = accounting_mode == "full-fifo"
     as_of = participant_utc(as_of)
     start = as_of - timedelta(days=7)
     window_end_exclusive = participant_utc(window_end_exclusive or as_of)
@@ -2154,6 +2158,140 @@ def calculate_participant_rankings(trades, *, as_of, sources=None, window_end_ex
         if amount is not None:
             row[field] = (row[field] or Fraction(0)) + amount
 
+    def aggregate_window_side(row, resolved, same_time, side, money, gross, quantity, trade, equipment):
+        if resolved["actor_id"] is not None:
+            row["actor_ids"].add(resolved["actor_id"])
+        row["equal_timestamp_order"] |= same_time
+        row["source_" + side + "_value"] += money or 0
+        row["missing_money_count"] += money is None
+        field = "gross_" + side + "_value"
+        row[field] = None if gross is None or row[field] is None else row[field] + gross
+        row["invalid_quantity_count"] += quantity is None or quantity == 0
+        row["sale_count"] += side == "sell"
+        category = equipment_category(trade) if equipment else ("commodity", trade.get("item_code"))
+        categories = row["_categories"][side]
+        detail = categories.setdefault(category, {"category": category, "money": Fraction(0),
+            "market_type": trade["transaction_type"], "item_code": trade.get("item_code"),
+            "gross_money": Fraction(0), "source_money": Fraction(0),
+            "quantity": Fraction(0), "trade_count": 0, "missing_money_count": 0,
+            "missing_quantity_count": 0})
+        detail["money"] += money or 0
+        detail["source_money"] += money or 0
+        detail["gross_money"] = (None if gross is None or detail["gross_money"] is None
+                                 else detail["gross_money"] + gross)
+        detail["quantity"] += quantity or 0
+        detail["trade_count"] += 1
+        detail["missing_money_count"] += money is None
+        detail["missing_quantity_count"] += quantity is None
+
+        # Also track by item for combined buy/sell view
+        item_key = category
+        item_detail = row["_item_categories"].setdefault(item_key, {
+            "category": category, "item_code": trade.get("item_code"),
+            "market_type": trade["transaction_type"],
+            "buy_quantity": Fraction(0), "buy_gross_money": Fraction(0), "buy_source_money": Fraction(0),
+            "sell_quantity": Fraction(0), "sell_gross_money": Fraction(0), "sell_source_money": Fraction(0),
+            "buy_trade_count": 0, "sell_trade_count": 0,
+            "buy_missing_money_count": 0, "sell_missing_money_count": 0,
+            "buy_missing_quantity_count": 0, "sell_missing_quantity_count": 0
+        })
+        if side == "buy":
+            item_detail["buy_quantity"] += quantity or 0
+            item_detail["buy_gross_money"] = (None if gross is None or item_detail["buy_gross_money"] is None
+                                             else item_detail["buy_gross_money"] + gross)
+            item_detail["buy_source_money"] += money or 0
+            item_detail["buy_trade_count"] += 1
+            item_detail["buy_missing_money_count"] += money is None
+            item_detail["buy_missing_quantity_count"] += quantity is None
+        else:  # sell
+            item_detail["sell_quantity"] += quantity or 0
+            item_detail["sell_gross_money"] = (None if gross is None or item_detail["sell_gross_money"] is None
+                                              else item_detail["sell_gross_money"] + gross)
+            item_detail["sell_source_money"] += money or 0
+            item_detail["sell_trade_count"] += 1
+            item_detail["sell_missing_money_count"] += money is None
+            item_detail["sell_missing_quantity_count"] += quantity is None
+
+    def account_side(trade, side, key, row, gross, settled, lot_key, same_time,
+                     equipment, lineage, item_lot, instance, quantity, money, timestamp):
+        lots = inventory[lot_key] if not equipment else deque()
+        if equipment and lineage and item_lot and item_lot[0] == key:
+            lots.append(item_lot[1])
+        if quantity is None or quantity <= 0:
+            # Unknown prior disposition size invalidates remaining observed
+            # basis for this owner/code; never reuse potentially sold lots.
+            if side == "sell":
+                lots.clear()
+                if not equipment:
+                    inventory.pop(lot_key, None)
+                if row is not None:
+                    row["uncosted_source_sale_value"] += money or 0
+                    if not _participant_fee_known(trade, side):
+                        row["unknown_fee_source_sale_value"] += money or 0
+            elif not equipment and (not lots or lots[-1][0] is not None):
+                # Unknown-size acquisitions are FIFO barriers, not zero
+                # units. Later lots cannot jump ahead of unknown inventory.
+                lots.append([None, None, None, timestamp, False, False])
+            return
+        if side == "buy":
+            lot = [quantity, gross, settled, timestamp, same_time, _participant_fee_known(trade, side)]
+            if not equipment:
+                if lots and lots[-1][3] == timestamp:
+                    lots[-1][4] = True
+                if not lots or lots[-1][0] is not None:
+                    lots.append(lot)
+            elif lineage:
+                equipment_lots[instance] = (key, lot)
+            return
+        remaining = quantity
+        matched = Fraction(0)
+        net_matched = Fraction(0)
+        unknown_fee = Fraction(0)
+        while remaining and lots and lots[0][0] is not None and lots[0][3] < timestamp:
+            lot = lots[0]
+            if row is not None:
+                row["equal_timestamp_order"] |= lot[4]
+            take = min(remaining, lot[0])
+            fraction = take / lot[0]
+            cost_gross = None if lot[1] is None else lot[1] * fraction
+            cost_net = None if lot[2] is None else lot[2] * fraction
+            if cost_gross is not None or cost_net is not None:
+                matched += take
+            if not _participant_fee_known(trade, side) or not lot[5]:
+                unknown_fee += take
+            if settled is not None and cost_net is not None:
+                net_matched += take
+                if row is not None:
+                    add_optional(row, "matched_net_pnl", settled * take / quantity - cost_net)
+            if row is not None and gross is not None and cost_gross is not None:
+                add_optional(row, "matched_gross_pnl", gross * take / quantity - cost_gross)
+            lot[0] -= take
+            if lot[1] is not None:
+                lot[1] -= cost_gross
+            if lot[2] is not None:
+                lot[2] -= cost_net
+            remaining -= take
+            if lot[0] == 0:
+                lots.popleft()
+        if not equipment and not lots:
+            inventory.pop(lot_key, None)
+        # Unknown acquisition fee evidence overlaps unknown basis; flags are
+        # not additive. No future acquisition is revisited to fill this sale.
+        unknown_fee += remaining
+        if row is not None:
+            row["matched_quantity"] += matched
+            row["net_matched_quantity"] += net_matched
+            row["uncosted_quantity"] += quantity - matched
+            row["unknown_fee_quantity"] += unknown_fee
+            row["matched_source_sale_value"] += (money or 0) * matched / quantity
+            row["net_matched_source_sale_value"] += (money or 0) * net_matched / quantity
+            row["uncosted_source_sale_value"] += (money or 0) * (quantity - matched) / quantity
+            row["unknown_fee_source_sale_value"] += (money or 0) * unknown_fee / quantity
+            if gross is None:
+                row["matched_gross_sale_value"] = None
+            elif row["matched_gross_sale_value"] is not None:
+                row["matched_gross_sale_value"] += gross * matched / quantity
+
     for trade in trades:
         timestamp = participant_utc(trade["created_at"])
         order = (timestamp, trade["id"])
@@ -2167,6 +2305,8 @@ def calculate_participant_rankings(trades, *, as_of, sources=None, window_end_ex
         if trade["transaction_type"] not in ("trading", "itemMarket"):
             continue
         in_window = timestamp >= start
+        if not in_window and not full_fifo:
+            continue
         money = _participant_number(trade.get("money"))
         quantity = _participant_number(trade.get("quantity"))
         owners = {side: resolve_market_account(trade.get("participants", {}).get(side, {}))
@@ -2187,7 +2327,7 @@ def calculate_participant_rankings(trades, *, as_of, sources=None, window_end_ex
         lineage = equipment and trade.get("lineage_verified") is True and bool(instance)
         # A disposition invalidates the previous instance holding, even if this
         # event has unresolved ownership or no verified continuity itself.
-        item_lot = equipment_lots.pop(instance, None) if equipment and instance else None
+        item_lot = equipment_lots.pop(instance, None) if full_fifo and equipment and instance else None
         settlements = {side: _participant_settlement(trade, side) for side in ("buy", "sell")}
         for side in ("sell", "buy"):
             resolved = owners[side]
@@ -2206,135 +2346,10 @@ def calculate_participant_rankings(trades, *, as_of, sources=None, window_end_ex
             same_time = last_events.get(lot_key) == timestamp
             last_events[lot_key] = timestamp
             if row is not None:
-                if resolved["actor_id"] is not None:
-                    row["actor_ids"].add(resolved["actor_id"])
-                row["equal_timestamp_order"] |= same_time
-                row["source_" + side + "_value"] += money or 0
-                row["missing_money_count"] += money is None
-                field = "gross_" + side + "_value"
-                row[field] = None if gross is None or row[field] is None else row[field] + gross
-                row["invalid_quantity_count"] += quantity is None or quantity == 0
-                row["sale_count"] += side == "sell"
-                category = equipment_category(trade) if equipment else ("commodity", trade.get("item_code"))
-                categories = row["_categories"][side]
-                detail = categories.setdefault(category, {"category": category, "money": Fraction(0),
-                    "market_type": trade["transaction_type"], "item_code": trade.get("item_code"),
-                    "gross_money": Fraction(0), "source_money": Fraction(0),
-                    "quantity": Fraction(0), "trade_count": 0, "missing_money_count": 0,
-                    "missing_quantity_count": 0})
-                detail["money"] += money or 0
-                detail["source_money"] += money or 0
-                detail["gross_money"] = (None if gross is None or detail["gross_money"] is None
-                                         else detail["gross_money"] + gross)
-                detail["quantity"] += quantity or 0
-                detail["trade_count"] += 1
-                detail["missing_money_count"] += money is None
-                detail["missing_quantity_count"] += quantity is None
-                
-                # Also track by item for combined buy/sell view
-                item_key = category
-                item_detail = row["_item_categories"].setdefault(item_key, {
-                    "category": category, "item_code": trade.get("item_code"),
-                    "market_type": trade["transaction_type"],
-                    "buy_quantity": Fraction(0), "buy_gross_money": Fraction(0), "buy_source_money": Fraction(0),
-                    "sell_quantity": Fraction(0), "sell_gross_money": Fraction(0), "sell_source_money": Fraction(0),
-                    "buy_trade_count": 0, "sell_trade_count": 0,
-                    "buy_missing_money_count": 0, "sell_missing_money_count": 0,
-                    "buy_missing_quantity_count": 0, "sell_missing_quantity_count": 0
-                })
-                if side == "buy":
-                    item_detail["buy_quantity"] += quantity or 0
-                    item_detail["buy_gross_money"] = (None if gross is None or item_detail["buy_gross_money"] is None
-                                                     else item_detail["buy_gross_money"] + gross)
-                    item_detail["buy_source_money"] += money or 0
-                    item_detail["buy_trade_count"] += 1
-                    item_detail["buy_missing_money_count"] += money is None
-                    item_detail["buy_missing_quantity_count"] += quantity is None
-                else:  # sell
-                    item_detail["sell_quantity"] += quantity or 0
-                    item_detail["sell_gross_money"] = (None if gross is None or item_detail["sell_gross_money"] is None
-                                                      else item_detail["sell_gross_money"] + gross)
-                    item_detail["sell_source_money"] += money or 0
-                    item_detail["sell_trade_count"] += 1
-                    item_detail["sell_missing_money_count"] += money is None
-                    item_detail["sell_missing_quantity_count"] += quantity is None
-            lots = inventory[lot_key] if not equipment else deque()
-            if equipment and lineage and item_lot and item_lot[0] == key:
-                lots.append(item_lot[1])
-            if quantity is None or quantity <= 0:
-                # Unknown prior disposition size invalidates remaining observed
-                # basis for this owner/code; never reuse potentially sold lots.
-                if side == "sell":
-                    lots.clear()
-                    if not equipment:
-                        inventory.pop(lot_key, None)
-                    if row is not None:
-                        row["uncosted_source_sale_value"] += money or 0
-                        if not _participant_fee_known(trade, side):
-                            row["unknown_fee_source_sale_value"] += money or 0
-                elif not equipment and (not lots or lots[-1][0] is not None):
-                    # Unknown-size acquisitions are FIFO barriers, not zero
-                    # units. Later lots cannot jump ahead of unknown inventory.
-                    lots.append([None, None, None, timestamp, False, False])
-                continue
-            if side == "buy":
-                lot = [quantity, gross, settled, timestamp, same_time, _participant_fee_known(trade, side)]
-                if not equipment:
-                    if lots and lots[-1][3] == timestamp:
-                        lots[-1][4] = True
-                    if not lots or lots[-1][0] is not None:
-                        lots.append(lot)
-                elif lineage:
-                    equipment_lots[instance] = (key, lot)
-                continue
-            remaining = quantity
-            matched = Fraction(0)
-            net_matched = Fraction(0)
-            unknown_fee = Fraction(0)
-            while remaining and lots and lots[0][0] is not None and lots[0][3] < timestamp:
-                lot = lots[0]
-                if row is not None:
-                    row["equal_timestamp_order"] |= lot[4]
-                take = min(remaining, lot[0])
-                fraction = take / lot[0]
-                cost_gross = None if lot[1] is None else lot[1] * fraction
-                cost_net = None if lot[2] is None else lot[2] * fraction
-                if cost_gross is not None or cost_net is not None:
-                    matched += take
-                if not _participant_fee_known(trade, side) or not lot[5]:
-                    unknown_fee += take
-                if settled is not None and cost_net is not None:
-                    net_matched += take
-                    if row is not None:
-                        add_optional(row, "matched_net_pnl", settled * take / quantity - cost_net)
-                if row is not None and gross is not None and cost_gross is not None:
-                    add_optional(row, "matched_gross_pnl", gross * take / quantity - cost_gross)
-                lot[0] -= take
-                if lot[1] is not None:
-                    lot[1] -= cost_gross
-                if lot[2] is not None:
-                    lot[2] -= cost_net
-                remaining -= take
-                if lot[0] == 0:
-                    lots.popleft()
-            if not equipment and not lots:
-                inventory.pop(lot_key, None)
-            # Unknown acquisition fee evidence overlaps unknown basis; flags are
-            # not additive. No future acquisition is revisited to fill this sale.
-            unknown_fee += remaining
-            if row is not None:
-                row["matched_quantity"] += matched
-                row["net_matched_quantity"] += net_matched
-                row["uncosted_quantity"] += quantity - matched
-                row["unknown_fee_quantity"] += unknown_fee
-                row["matched_source_sale_value"] += (money or 0) * matched / quantity
-                row["net_matched_source_sale_value"] += (money or 0) * net_matched / quantity
-                row["uncosted_source_sale_value"] += (money or 0) * (quantity - matched) / quantity
-                row["unknown_fee_source_sale_value"] += (money or 0) * unknown_fee / quantity
-                if gross is None:
-                    row["matched_gross_sale_value"] = None
-                elif row["matched_gross_sale_value"] is not None:
-                    row["matched_gross_sale_value"] += gross * matched / quantity
+                aggregate_window_side(row, resolved, same_time, side, money, gross, quantity, trade, equipment)
+            if full_fifo:
+                account_side(trade, side, key, row, gross, settled, lot_key, same_time,
+                             equipment, lineage, item_lot, instance, quantity, money, timestamp)
 
     verified_gross = all(row["gross_buy_value"] is not None and row["gross_sell_value"] is not None
                          for row in entities.values())
@@ -2356,14 +2371,25 @@ def calculate_participant_rankings(trades, *, as_of, sources=None, window_end_ex
         row["costing_status"] = row["result_status"]
         if row["matched_net_pnl"] is not None and source_coverage["status"] != "observed_api_coverage":
             row["result_status"] = "partial"
+        row["accounting_mode"] = accounting_mode
+        row["accounting_status"] = "calculated" if full_fifo else "not_calculated"
+        if not full_fifo:
+            for field in ("matched_net_pnl", "matched_gross_pnl", "matched_quantity",
+                          "net_matched_quantity", "uncosted_quantity", "unknown_fee_quantity",
+                          "matched_source_sale_value", "net_matched_source_sale_value",
+                          "matched_gross_sale_value", "uncosted_source_sale_value",
+                          "unknown_fee_source_sale_value", "matched_sale_value_coverage",
+                          "matched_source_value_coverage"):
+                row[field] = None
+            row["result_status"] = row["costing_status"] = "not_calculated"
         row["turnover_status"] = "partial" if row["missing_money_count"] else "observed"
         row["categories"] = {}
         for side, categories in row.pop("_categories").items():
             for category in categories.values():
                 category["money"] = category["gross_money"] if verified_gross else category["source_money"]
                 # Calculate average price: total money / total quantity
-                if category["quantity"] > 0:
-                    category["average_price"] = float(category["money"]) / float(category["quantity"])
+                if category["quantity"] > 0 and not category["missing_money_count"] and not category["missing_quantity_count"]:
+                    category["average_price"] = category["money"] / category["quantity"]
                 else:
                     category["average_price"] = None
             ordered = sorted(categories.values(), key=lambda c: (-c["money"], repr(c["category"])))
@@ -2385,23 +2411,25 @@ def calculate_participant_rankings(trades, *, as_of, sources=None, window_end_ex
             sell_money = item_detail["sell_gross_money"] if verified_gross else item_detail["sell_source_money"]
             
             # Calculate average prices
-            buy_avg_price = float(buy_money) / float(item_detail["buy_quantity"]) if item_detail["buy_quantity"] > 0 and buy_money is not None else None
-            sell_avg_price = float(sell_money) / float(item_detail["sell_quantity"]) if item_detail["sell_quantity"] > 0 and sell_money is not None else None
+            buy_avg_price = buy_money / item_detail["buy_quantity"] if item_detail["buy_quantity"] > 0 and buy_money is not None and not item_detail["buy_missing_money_count"] and not item_detail["buy_missing_quantity_count"] else None
+            sell_avg_price = sell_money / item_detail["sell_quantity"] if item_detail["sell_quantity"] > 0 and sell_money is not None and not item_detail["sell_missing_money_count"] and not item_detail["sell_missing_quantity_count"] else None
             
             # Calculate profit/loss
             profit_loss_per_unit = None
             profit_loss_btc = None
-            matched_quantity = min(item_detail["buy_quantity"], item_detail["sell_quantity"])
+            matched_quantity = (None if item_detail["buy_missing_quantity_count"] or item_detail["sell_missing_quantity_count"]
+                                else min(item_detail["buy_quantity"], item_detail["sell_quantity"]))
             
-            if buy_avg_price is not None and sell_avg_price is not None and matched_quantity > 0:
+            if buy_avg_price is not None and sell_avg_price is not None and matched_quantity is not None and matched_quantity > 0:
                 profit_loss_per_unit = sell_avg_price - buy_avg_price
                 profit_loss_btc = profit_loss_per_unit * matched_quantity
             
             # Calculate unmatched quantities
-            unmatched_buy = item_detail["buy_quantity"] - matched_quantity
-            unmatched_sell = item_detail["sell_quantity"] - matched_quantity
+            unmatched_buy = None if matched_quantity is None else item_detail["buy_quantity"] - matched_quantity
+            unmatched_sell = None if matched_quantity is None else item_detail["sell_quantity"] - matched_quantity
             
             item_category = {
+                "comparison_basis": "window averages; not realized P&L or total holdings",
                 "category": item_detail["category"],
                 "item_code": item_detail["item_code"],
                 "market_type": item_detail["market_type"],
@@ -2417,6 +2445,12 @@ def calculate_participant_rankings(trades, *, as_of, sources=None, window_end_ex
                 "sell_trade_count": item_detail["sell_trade_count"],
                 "sell_missing_money_count": item_detail["sell_missing_money_count"],
                 "sell_missing_quantity_count": item_detail["sell_missing_quantity_count"],
+                "window_average_difference_per_unit": profit_loss_per_unit,
+                "window_comparison_value": profit_loss_btc,
+                "window_comparison_quantity": matched_quantity,
+                "window_net_buy_quantity": (None if matched_quantity is None else
+                                           item_detail["buy_quantity"] - item_detail["sell_quantity"]),
+                # Compatibility keys also describe window comparisons, never FIFO.
                 "profit_loss_per_unit": profit_loss_per_unit,
                 "profit_loss_btc": profit_loss_btc,
                 "matched_quantity": matched_quantity,
@@ -2448,7 +2482,9 @@ def calculate_participant_rankings(trades, *, as_of, sources=None, window_end_ex
             "volume": sorted((r for r in rows if r[turnover_field] > 0),
                              key=lambda r: (-r[turnover_field], r["entity_id"]))[:10]}
     return _participant_decimal_output({"as_of": as_of, "window_start": start, "window_end_exclusive": window_end_exclusive,
-        "method": "Observed market FIFO realized P&L on matched sales; verified specific-item equipment only",
+        "accounting_mode": accounting_mode, "accounting_status": "calculated" if full_fifo else "not_calculated",
+        "method": ("Observed market FIFO realized P&L on matched sales; verified specific-item equipment only"
+                   if full_fifo else "Window activity; FIFO accounting not calculated"),
         "limitations": "Observed market acquisitions are not complete wealth or full inventory accounting. "
                        "Unknown basis and fee values can overlap. Summing account turnover counts both sides. "
                        "Equal-time ID ordering is a local convention, not proven causality.",

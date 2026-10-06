@@ -192,3 +192,116 @@ def test_batched_stream_query_plan_and_synthetic_volume(tmp_path):
         print('participant query plan: ' + ' | '.join(plans))
         with pytest.raises(ValueError, match='batch_size'):
             list(store.iter_participant_history(NOW - timedelta(days=7), NOW, batch_size=501))
+
+
+def test_default_window_never_materializes_old_active_rows_or_csv(tmp_path, monkeypatch):
+    import csv
+    import warera_quant.market_data as data
+    from warera_quant.report import _write_participant_exports
+    with MarketStore(tmp_path / 'bounded.db') as store:
+        ingest(store, [fact('start', -7), fact('sale', -1, buyer='V', seller='U')])
+        original = data._participant_trade_input
+        materialized = []
+        def observe(row):
+            materialized.append(row['id'])
+            return original(row)
+        monkeypatch.setattr(data, '_participant_trade_input', observe)
+        def forbidden(*args, **kwargs):
+            raise AssertionError('default report/CSV invoked history')
+        monkeypatch.setattr(store, 'iter_participant_history', forbidden)
+        def run():
+            materialized.clear()
+            sql = []
+            store._connect().set_trace_callback(sql.append)
+            try:
+                report = data.load_participant_report(store, as_of=NOW, batch_size=1)
+            finally:
+                store._connect().set_trace_callback(None)
+            children = [q for q in sql if q.startswith('select * from transaction_')]
+            assert materialized == ['start', 'sale']
+            assert len(children) == 8  # four child queries for each one-parent batch
+            assert all("'old" not in q for q in children)
+            return report, children
+        before, child_before = run()
+        ingest(store, [fact(f'old{i:04}', -30, buyer='U', seller='V') for i in range(2000)])
+        after, child_after = run()
+        for key in ("entities", "rankings", "coverage", "source_coverage"):
+            assert before[key] == after[key]
+        assert child_before == child_after
+        assert after['accounting_mode'] == 'window'
+        assert after['accounting_status'] == 'not_calculated'
+        user = next(r for r in after['entities'] if r['entity_id'] == 'U')
+        assert user['source_turnover'] == 20
+        for field in ('matched_net_pnl', 'matched_quantity', 'uncosted_quantity',
+                      'unknown_fee_quantity', 'matched_source_value_coverage'):
+            assert user[field] is None
+        _write_participant_exports(tmp_path, after, [])
+        with (tmp_path / 'participant_rankings_7d.csv').open(newline='', encoding='utf-8') as f:
+            rows = list(csv.DictReader(f))
+        assert rows and all(r['accounting_mode'] == 'window' for r in rows)
+        assert all(r['accounting_status'] == 'not_calculated' and r['matched_quantity'] == '' for r in rows)
+
+
+def test_window_iterator_exact_microsecond_bounds(tmp_path):
+    start = NOW - timedelta(days=7)
+    end = NOW
+    facts = [normalize_transaction({'_id': name, 'createdAt':stamp.isoformat(),
+                                    'transactionType':'trading', 'itemCode':'steel',
+                                    'buyerId':'U', 'sellerId':'V', 'money':10, 'quantity':1})
+             for name, stamp in [('before', start-timedelta(microseconds=1)),
+                                 ('start', start), ('inside', end-timedelta(microseconds=1)),
+                                 ('end', end), ('after', end+timedelta(microseconds=1))]]
+    with MarketStore(tmp_path / 'bounds.db') as store:
+        ingest(store, facts)
+        assert [r['id'] for r in store.iter_participant_window(start, end, batch_size=2)] == ['start', 'inside']
+        default = load_participant_report(store)
+        assert default['coverage']['market_transaction_count'] == 3
+        historical = load_participant_report(store, as_of=NOW)
+        assert historical['coverage']['market_transaction_count'] == 2
+
+
+def test_explicit_fifo_read_model_consumes_older_dispositions(tmp_path, monkeypatch):
+    import warera_quant.market_data as data
+    from dataclasses import replace
+    with MarketStore(tmp_path / 'fifo.db') as store:
+        ingest(store, [fact('old-buy', -30, money='100', quantity='10'),
+                       fact('old-sale', -20, buyer='V', seller='U', money='60', quantity='4'),
+                       fact('sale', -1, buyer='V', seller='U', money='120', quantity='8')])
+        original = data._participant_trade_input
+        processed = []
+        def observe(row):
+            processed.append(row['id'])
+            result = original(row)
+            result['settlement'] = {side: {'verified': True, 'money_role':'gross', 'fee':'0'}
+                                    for side in ('buy', 'sell')}
+            return result
+        monkeypatch.setattr(data, '_participant_trade_input', observe)
+        report = load_participant_report(store, as_of=NOW, accounting_mode='full-fifo', batch_size=1)
+        assert processed == ['old-buy', 'old-sale', 'sale']
+        user = next(r for r in report['entities'] if r['entity_id'] == 'U')
+        assert user['matched_quantity'] == 6 and user['uncosted_quantity'] == 2
+        assert user['matched_net_pnl'] == 30
+        assert user['source_turnover'] == 120
+        assert report['coverage']['market_transaction_count'] == 1
+        assert report['accounting_status'] == 'calculated'
+        assert report['context']['accounting_mode'] == 'full-fifo'
+        frozen = replace(store.resolve_report_context(NOW), accounting_mode='full-fifo')
+        processed.clear()
+        assert load_participant_report(store, context=frozen)['accounting_mode'] == 'full-fifo'
+        assert processed == ['old-buy', 'old-sale', 'sale']
+        processed.clear()
+        assert load_participant_report(store, context=frozen, accounting_mode='window')['accounting_status'] == 'not_calculated'
+        assert processed == ['sale']
+
+
+@pytest.mark.parametrize('mode', ['window', 'full-fifo'])
+def test_publication_context_restores_accounting_mode(tmp_path, mode):
+    from dataclasses import replace
+    from warera_quant.market_data import resolve_publication_context
+    with MarketStore(tmp_path / 'context.db') as store:
+        ingest(store, [fact('recent', -1)])
+        context = replace(store.resolve_report_context(), accounting_mode=mode)
+        restored = resolve_publication_context(store, {'context':context.to_dict()})
+        assert restored == context
+        assert load_participant_report(store, context=restored)['accounting_mode'] == mode
+        assert resolve_publication_context(store, {'accounting_mode':mode}).accounting_mode == mode

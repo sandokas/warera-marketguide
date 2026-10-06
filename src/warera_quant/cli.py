@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 import json
 from datetime import datetime, timedelta, timezone
@@ -101,6 +101,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--live", action="store_true", help="Fetch live WarEra market data from the API.")
     parser.add_argument("--migrate-db", action="store_true", help="Back up and migrate an existing database offline, then exit.")
     parser.add_argument("--market-sync-status", action="store_true", help="Show offline market ingestion progress and coverage, then exit.")
+    parser.add_argument("--participant-accounting", choices=("window", "full-fifo"), default="window", help="Window activity (default) or explicit historical FIFO accounting.")
     parser.add_argument("--player-summary", metavar="NAME_OR_ID", help="Print one player's seven-day market summary from SQLite, then exit.")
     parser.add_argument("--resume-market", action="store_true", help="Persist page-atomic cursors and resume an all-history resync; cursor validity is upstream-dependent.")
     parser.add_argument("--resync-market", action="store_true", help="Enrich both global market streams; requires --sync --history-scope 7d or all.")
@@ -270,7 +271,7 @@ def main(*, report_context: ReportContext | None = None) -> None:
             raise SystemExit("Market database does not exist.")
         progress = ProgressReporter(None if args.quiet else lambda message: print(message, flush=True), verbose=args.verbose)
         with MarketStore(args.market_db) as store:
-            report = load_participant_report(store, as_of=report_as_of, verbose=args.verbose, progress=progress)
+            report = load_participant_report(store, as_of=report_as_of, accounting_mode=args.participant_accounting, verbose=args.verbose, progress=progress)
             player, candidates = select_player_summary(store, report, args.player_summary)
         live_matches = []
         if player is None and not candidates:
@@ -315,7 +316,7 @@ def main(*, report_context: ReportContext | None = None) -> None:
         from .market_data import displayed_identity_keys
         from .sync import refresh_display_cache
         with MarketStore(args.market_db) as store:
-            population = displayed_identity_keys(load_participant_report(store, as_of=report_as_of, verbose=args.verbose))
+            population = displayed_identity_keys(load_participant_report(store, as_of=report_as_of, accounting_mode=args.participant_accounting, verbose=args.verbose))
             summary = refresh_display_cache(WarEraMarketApi(WarEraApiClient()), store, population,
                 asset_dir=Path(args.market_db).resolve().parent / "display-assets",
                 max_profiles=args.identity_limit, max_assets=args.asset_limit,
@@ -489,11 +490,11 @@ def prepare_db_report(store, args, assumptions, *, as_of: datetime | None = None
         # Selection is only for the enrichment population, before report inputs.
         # Identity writes do not advance the market clock. Freeze the report
         # context after enrichment, rather than reusing this selection preview.
-        preview = context or resolve_context(store.data_as_of(), as_of)
+        preview = context or replace(resolve_context(store.data_as_of(), as_of), accounting_mode=getattr(args, "participant_accounting", "window"))
         population = load_participant_report(store, context=preview, verbose=args.verbose, progress=preparation)
         preparation.call("Identity and image refresh", _refresh_participant_display,
             store, population, verbose=args.verbose, progress=preparation)
-    context = context or store.resolve_report_context(as_of)
+    context = context or replace(store.resolve_report_context(as_of), accounting_mode=getattr(args, "participant_accounting", "window"))
     as_of = context.analysis_as_of
     rows = preparation.call("Market rows", load_market_rows,
         store, progress=preparation, windows=("1D", "7D", "30D"), context=context,

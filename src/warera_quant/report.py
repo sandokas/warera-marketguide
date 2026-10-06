@@ -98,6 +98,7 @@ def _fmt_report_value(value: object, *, column: str | None = None) -> str:
             or label == "liquidity"
             or "quantity" in label
             or label == "qty"
+            or "window net buy qty" in label
             or "unmatched" in label  # Net unmatched is a quantity
         ):
             return _fmt(value, 0)
@@ -1433,6 +1434,7 @@ def _is_number_column(column: str) -> bool:
             "buy qty", "buy avg", "buy total btc",
             "sell qty", "sell avg", "sell total btc",
             "profit/unit", "total profit btc", "net unmatched", "net unmatched qty",
+            "window avg difference/unit", "window comparison btc", "window net buy qty",
         }
         or label.endswith("trades")
         or label.endswith("momentum %")
@@ -2491,7 +2493,7 @@ def _participant_html(report, verbose: bool = False):
                 column_name = str(headers[i])
                 cell_class = _column_classes(column_name)
                 # Add emphasis and sign coloring to total profit only.
-                if "Total Profit" in column_name:
+                if "Window Comparison" in column_name:
                     cell_class += " col-total-profit"
                     try:
                         value = float(str(c).replace(",", ""))
@@ -2552,9 +2554,9 @@ def _participant_html(report, verbose: bool = False):
                 profit_per_unit = _fmt_report_value(item['profit_loss_per_unit'], column='Profit/Unit BTC')
                 profit_total = _fmt_report_value(item['profit_loss_btc'], column='Total Profit BTC')
                 
-                # Format remaining inventory - merge unmatched buy/sell, sell as negative (quantity, not BTC)
+                # Window net quantity compares observed buys and sells; it is not inventory.
                 net_unmatched = _fmt_report_value(
-                    float(item['unmatched_buy_quantity'] or 0) - float(item['unmatched_sell_quantity'] or 0), 
+                    None if item['unmatched_buy_quantity'] is None or item['unmatched_sell_quantity'] is None else item['unmatched_buy_quantity'] - item['unmatched_sell_quantity'],
                     column='Net Unmatched Qty'
                 )
                 
@@ -2567,7 +2569,7 @@ def _participant_html(report, verbose: bool = False):
         blocks.append(table(f'participants-{kind}-volume', f'{label} - monetary turnover',
             ['Rank', {'user': 'User', 'mu': 'MU', 'country': 'Country'}[kind], '7D Turnover BTC', 'Bought', 'Sold'], rows))
         blocks.append(table(f'participants-{kind}-explanations', f'{label} - item breakdown (buy/sell combined)',
-            [{'user': 'User', 'mu': 'MU', 'country': 'Country'}[kind], 'Item', 'Buy Qty', 'Buy Avg', 'Buy Total BTC', 'Sell Qty', 'Sell Avg', 'Sell Total BTC', 'Profit/Unit', 'Total Profit BTC', 'Net Unmatched Qty'], details))
+            [{'user': 'User', 'mu': 'MU', 'country': 'Country'}[kind], 'Item', 'Buy Qty', 'Buy Avg', 'Buy Total BTC', 'Sell Qty', 'Sell Avg', 'Sell Total BTC', 'Window Avg Difference/Unit', 'Window Comparison BTC', 'Window Net Buy Qty'], details))
     return ''.join(blocks)
 
 
@@ -2591,6 +2593,7 @@ def format_player_summary(report: dict, player: dict) -> str:
         f"Period: {report['window_start'].isoformat()} to "
         f"{report['as_of'].isoformat()} ({'end included' if report.get('context', {}).get('boundary_mode') == 'database-inclusive' else 'end excluded'})",
         f"Player ID: {player['entity_id']}",
+        f"Accounting: {report.get('accounting_mode')} ({report.get('accounting_status')})",
     ]
     if identity.get("citizenship_name"):
         lines.append(f"Citizenship: {identity['citizenship_name']}")
@@ -2602,7 +2605,7 @@ def format_player_summary(report: dict, player: dict) -> str:
         f"Sell turnover:  {number(player[prefix + '_sell_value'])} BTC",
         f"Total turnover: {number(player[prefix + '_turnover'])} BTC ({basis})",
         f"Trades:         {trade_count:,}",
-        f"Realized P&L:   {number(pnl) if pnl is not None else 'Unknown'}"
+        f"Realized P&L:   {number(pnl) if pnl is not None else 'Unavailable'}"
         + (" BTC" if pnl is not None else ""),
         "",
     ])
@@ -2625,7 +2628,7 @@ def format_player_summary(report: dict, player: dict) -> str:
             number(item.get("profit_loss_btc")),
         ])
     if rows:
-        lines.append(tabulate(rows, headers=("Item", "Buy Qty", "Buy Avg", "Sell Qty", "Sell Avg", "Profit BTC"),
+        lines.append(tabulate(rows, headers=("Item", "Buy Qty", "Buy Avg", "Sell Qty", "Sell Avg", "Window Comparison BTC"),
                               tablefmt="plain", disable_numparse=True))
     else:
         lines.append("No qualifying observed activity in this period.")
@@ -2660,8 +2663,8 @@ def _write_participant_exports(out, report, equipment_details):
             writer.writerows({k: safe(v) for k, v in row.items()} for row in rows)
         paths.append(path)
     if report is not None:
-        common = {k: report.get(k) for k in ('as_of', 'window_start', 'window_end_exclusive', 'method', 'turnover_basis', 'limitations')}
-        common.update({k: report.get('context', {}).get(k) for k in ('data_as_of', 'requested_as_of', 'boundary_mode', 'accounting_mode')})
+        common = {k: report.get(k) for k in ('as_of', 'window_start', 'window_end_exclusive', 'method', 'turnover_basis', 'limitations', 'accounting_mode', 'accounting_status')}
+        common.update({k: report.get('context', {}).get(k) for k in ('data_as_of', 'requested_as_of', 'boundary_mode')})
         common.update(flat({'source_coverage': report['source_coverage'], 'attribution': report['coverage']}))
         rankings = []
         for kind, boards in report['rankings'].items():
@@ -2678,16 +2681,17 @@ def _write_participant_exports(out, report, equipment_details):
                 sig = item['category']
                 # Create a compatible category dict for description function
                 category_for_desc = {'category': sig, 'item_code': item['item_code']}
-                # Calculate net unmatched (buy - sell, sell as negative)
-                net_unmatched = float(item['unmatched_buy_quantity'] or 0) - float(item['unmatched_sell_quantity'] or 0)
+                # Window net quantity; not total holdings.
+                net_unmatched = None if item['unmatched_buy_quantity'] is None or item['unmatched_sell_quantity'] is None else item['unmatched_buy_quantity'] - item['unmatched_sell_quantity']
                 item_row = {**common, **key, 'name':row.get('name') or row['entity_id'],
                     'item_code':item['item_code'], 'market_type':item['market_type'],
                     'buy_quantity':item['buy_quantity'], 'buy_avg_price':item['buy_avg_price'], 'buy_total_value':item['buy_total_value'],
                     'buy_trade_count':item['buy_trade_count'], 'buy_missing_money_count':item['buy_missing_money_count'], 'buy_missing_quantity_count':item['buy_missing_quantity_count'],
                     'sell_quantity':item['sell_quantity'], 'sell_avg_price':item['sell_avg_price'], 'sell_total_value':item['sell_total_value'],
                     'sell_trade_count':item['sell_trade_count'], 'sell_missing_money_count':item['sell_missing_money_count'], 'sell_missing_quantity_count':item['sell_missing_quantity_count'],
-                    'profit_loss_per_unit':item['profit_loss_per_unit'], 'profit_loss_btc':item['profit_loss_btc'],
-                    'matched_quantity':item['matched_quantity'], 'net_unmatched':net_unmatched,
+                    'window_average_difference_per_unit':item['profit_loss_per_unit'], 'window_comparison_value':item['profit_loss_btc'],
+                    'window_comparison_quantity':item['matched_quantity'], 'window_net_buy_quantity':net_unmatched,
+                    'comparison_basis':'window averages; not realized P&L',
                     'signature_version':sig[0], 'state':sig[3] if len(sig)>2 else None, 'max_state':sig[4] if len(sig)>2 else None,
                     'description':_category_description(category_for_desc, include_condition=True)}
                 item_breakdown.append(item_row)

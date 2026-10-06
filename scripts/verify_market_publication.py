@@ -19,7 +19,7 @@ assert len({a['path'] for a in assets}) == len(assets)
 assert all((out / a['path']).is_file() for a in assets)
 tables = [a for a in assets if a['kind'] == 'table']
 participant = [a for a in tables if a.get('table_id', '').startswith('participants-')]
-expected = {f'participants-{kind}-{board}' for kind in ('user','mu','country') for board in ('losses','profits','volume')}
+expected = {f'participants-{kind}-{board}' for kind in ('user','mu','country') for board in ('volume','explanations')}
 assert expected <= {a['table_id'] for a in participant}
 for a in tables:
     b = a['css_size']
@@ -61,9 +61,12 @@ with MarketStore(meta['database']) as store:
     fields = ('source_buy_value','source_sell_value','matched_source_sale_value',
         'net_matched_source_sale_value','uncosted_source_sale_value','unknown_fee_source_sale_value')
     summary = {'context':context.to_dict(), 'as_of':as_of, 'status':meta['status'], 'turnover_basis':report['turnover_basis'],
+        'accounting_mode':report['accounting_mode'], 'accounting_status':report['accounting_status'],
         'sources':report['sources'], 'source_coverage':report['source_coverage'],
         'attribution':report['coverage'], 'entities':len(report['entities']),
-        'account_side_totals':{k:sum((r[k] for r in report['entities']), Decimal(0)) for k in fields},
+        'account_side_totals':{k:(None if any(r[k] is None for r in report['entities'])
+            or (report['accounting_status'] == 'not_calculated' and k not in ('source_buy_value','source_sell_value'))
+            else sum((r[k] for r in report['entities']), Decimal(0))) for k in fields},
         'boards':{k:{b:len(v) for b,v in boards.items()} for k,boards in report['rankings'].items()},
         'equipment_sales':len(sales), 'equipment_stats':len(exported_stats),
         'commodity_items':len(trends), 'assets':len(assets), 'complete_table_crops':len(tables),

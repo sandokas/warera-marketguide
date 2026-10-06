@@ -17,7 +17,7 @@ class ReportContext:
     window_end_exclusive: datetime | None
     generated_at: datetime
     boundary_mode: str
-    accounting_mode: str = "full-fifo"
+    accounting_mode: str = "window"
 
     def window_start(self, days=7):
         return self.analysis_as_of - timedelta(days=days) if self.analysis_as_of else None

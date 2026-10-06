@@ -50,8 +50,9 @@ with module.exclusive_job(Path(sys.argv[2])):
         pass
 
 
+@pytest.mark.parametrize("mode", ["window", "full-fifo"])
 @pytest.mark.parametrize("historical", [False, True])
-def test_snapshot_cutoff_metadata_and_resume(tmp_path, monkeypatch, historical):
+def test_snapshot_cutoff_metadata_and_resume(tmp_path, monkeypatch, historical, mode):
     import json
     from datetime import datetime, timedelta, timezone
     from warera_quant.market_store import MarketStore
@@ -69,7 +70,7 @@ def test_snapshot_cutoff_metadata_and_resume(tmp_path, monkeypatch, historical):
         for stream in ("trading", "itemMarket")}}))
     job = tmp_path / "job"
     flags = ["rollout", "--publish-only", "--exhaustion-evidence", str(evidence),
-             "--market-db", str(database), "--job-dir", str(job)]
+             "--market-db", str(database), "--job-dir", str(job), "--participant-accounting", mode]
     if historical:
         flags += ["--as-of", C.isoformat()]
     monkeypatch.setattr(sys, "argv", flags)
@@ -82,6 +83,7 @@ def test_snapshot_cutoff_metadata_and_resume(tmp_path, monkeypatch, historical):
         module.main()
     state = json.loads((job / "job.json").read_text())
     assert state["stage"] == "report"
+    assert state["context"]["accounting_mode"] == mode
     assert state["context"]["analysis_as_of"] == C.isoformat()
     assert state["context"]["boundary_mode"] == ("historical-exclusive" if historical else "database-inclusive")
     # Source progresses after the snapshot. A resumed report still uses snapshot C.
@@ -95,6 +97,7 @@ def test_snapshot_cutoff_metadata_and_resume(tmp_path, monkeypatch, historical):
         context = resolve_publication_context(store, publication)
         count = load_participant_report(store, context=context)["coverage"]["market_transaction_count"]
     assert count == (0 if historical else 1)
+    assert calls[-1].accounting_mode == calls[0].accounting_mode == mode
     assert calls[-1].analysis_as_of == calls[0].analysis_as_of == C
     assert calls[-1].window_end_exclusive == calls[0].window_end_exclusive
     assert publication["context"] == calls[-1].to_dict()
@@ -110,3 +113,49 @@ def test_legacy_as_of_only_job_remains_end_exclusive(tmp_path):
         context = resolve_publication_context(store, {"as_of": C.isoformat()})
         assert context.boundary_mode == "historical-exclusive"
         assert load_participant_report(store, context=context)["coverage"]["market_transaction_count"] == 0
+
+
+@pytest.mark.parametrize("mode", ["window", "full-fifo"])
+def test_publication_verifier_preserves_unavailable_accounting(tmp_path, monkeypatch, mode):
+    import json
+    import runpy
+    import struct
+    from dataclasses import replace
+    from warera_quant.market_store import MarketStore
+    from warera_quant.market_data import load_participant_report
+    from warera_quant.report import _write_participant_exports
+    from test_participant_market_data import fact, ingest
+    database = tmp_path / "verify.db"
+    out = tmp_path / "report"
+    out.mkdir()
+    with MarketStore(database) as store:
+        ingest(store, [fact("recent", -1)])
+        context = replace(store.resolve_report_context(), accounting_mode=mode)
+        report = load_participant_report(store, context=context)
+        _write_participant_exports(out, report, [])
+    (tmp_path / "publication.json").write_text(json.dumps({
+        "database":str(database), "as_of":context.analysis_as_of.isoformat(),
+        "context":context.to_dict(), "status":"isolated verification fixture"}))
+    (out / "report_context.json").write_text(json.dumps(context.to_dict()))
+    # Mock already-exported assets: test verifier accounting, not PNG rendering.
+    assets = []
+    for kind in ("user", "mu", "country"):
+        for board in ("volume", "explanations"):
+            name = f"participants-{kind}-{board}"
+            (out / (name+".png")).write_bytes(bytes(16) + struct.pack(">II", 200, 100))
+            assets.append({"path":name+".png", "kind":"table", "table_id":name,
+                "css_size":{"cellsOutside":0, "scrollWidth":100, "width":100,
+                            "scrollHeight":50, "height":50, "minCellFont":16}})
+    (out / "asset_inventory.json").write_text(json.dumps(assets))
+    (out / "market_report.html").write_text("")
+    (out / "market_trends.csv").write_text("item_code\n")
+    if mode == "window":
+        monkeypatch.setattr(MarketStore, "iter_participant_history",
+                            lambda *a, **k: pytest.fail("verifier invoked default history"))
+    monkeypatch.setattr(sys, "argv", ["verify", str(tmp_path)])
+    runpy.run_path(str(Path(__file__).parents[1] / "scripts/verify_market_publication.py"))
+    summary = json.loads((tmp_path / "reconciliation.json").read_text())
+    assert summary["accounting_mode"] == mode
+    assert summary["accounting_status"] == ("not_calculated" if mode == "window" else "calculated")
+    assert summary["account_side_totals"]["source_buy_value"] == "10"
+    assert summary["account_side_totals"]["matched_source_sale_value"] == (None if mode == "window" else "0")

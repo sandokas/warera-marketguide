@@ -27,7 +27,7 @@ def participant_fixture():
         'participants':{'buy':{'user_id':'0'}, 'sell':{}},
         'equipment':{'equipment_code':'helmet', 'state':'0', 'max_state':'100',
             'stats':{f'skill-{i:02}':'1.123456789' for i in range(30)}}})
-    report = calculate_participant_rankings(sorted(trades, key=lambda t:(t['created_at'],t['id'])), as_of=NOW)
+    report = calculate_participant_rankings(sorted(trades, key=lambda t:(t['created_at'],t['id'])), as_of=NOW, accounting_mode="full-fifo")
     for row in report['entities'] + [r for b in report['rankings'].values() for rows in b.values() for r in rows]:
         if row['entity_id'] == '0':
             row['name'] = '=External <script> & extremely long participant name with several words'
@@ -65,22 +65,22 @@ def test_shared_turnover_and_complete_breakdown(kind):
     assert 'Sell Qty' in html
     assert 'Sell Avg' in html
     assert 'Sell Total BTC' in html
-    assert 'Profit/Unit' in html
-    assert 'Total Profit BTC' in html
-    assert 'Net Unmatched Qty' in html
+    assert 'Window Avg Difference/Unit' in html
+    assert 'Window Comparison BTC' in html
+    assert 'Window Net Buy Qty' in html
     assert '99.123456789' not in html
     assert '>99.123</td>' in html
     assert '>15.000</td>' in html
     assert re.search(r'<td class="[^"]*profit-positive">5\.000</td>', html)
     assert re.search(r'<td class="[^"]*profit-negative">-3\.000</td>', html)
-    assert re.search(r'<td class="col-net-unmatched-qty number">', html)
+    assert re.search(r'<td class="col-window-net-buy-qty number">', html)
     assert not re.search(r'<td class="[^"]*net-(?:positive|negative)', html)
     assert report['rankings'][kind]['profits']  # diagnostics preserved
     assert '2026-09-16T00:00:00+00:00' not in html
 
 
 def test_empty_and_legacy_are_not_zero_results():
-    report = calculate_participant_rankings([], as_of=NOW)
+    report = calculate_participant_rankings([], as_of=NOW, accounting_mode="full-fifo")
     html = generate_html_report(frame(), participant_report=report)
     assert html.count('No qualifying observed activity.') == 6
     assert 'participants-' not in generate_html_report(frame())
@@ -102,7 +102,7 @@ def test_console_summary_combines_buy_and_sell_only_for_exact_equipment_signatur
          "transaction_type": "itemMarket", "item_code": "helmet4", "money": "70", "quantity": "1",
          "participants": {"buy": {"user_id": "player"}, "sell": {}}, "equipment": equipment("4")},
     ]
-    report = calculate_participant_rankings(trades, as_of=NOW)
+    report = calculate_participant_rankings(trades, as_of=NOW, accounting_mode="full-fifo")
     player = next(row for row in report["entities"] if row["entity_id"] == "player")
 
     assert len(player["item_categories"]) == 2
@@ -133,7 +133,7 @@ def test_all_categories_missingness_and_top_ten(kind, side):
         add('boots4', '10', '1', equipment={'equipment_code':'boots4','state':state,'max_state':'100','stats':{'attack':'3'}})
     for i in range(12):
         add('outsider'+str(i), str(i+1), '1', owner='actor'+str(i))
-    report = calculate_participant_rankings(sorted(trades, key=lambda t:(t['created_at'],t['id'])), as_of=NOW)
+    report = calculate_participant_rankings(sorted(trades, key=lambda t:(t['created_at'],t['id'])), as_of=NOW, accounting_mode="full-fifo")
     html = _participant_html(report)
     detail = html.split(f'data-table-id="participants-{kind}-explanations"')[1].split('</table>')[0]
     winner = next(r for r in report['entities'] if r['entity_id']=='winner')
@@ -147,9 +147,9 @@ def test_all_categories_missingness_and_top_ten(kind, side):
     assert 'Sell Qty' in detail
     assert 'Sell Avg' in detail
     assert 'Sell Total BTC' in detail
-    assert 'Profit/Unit' in detail
-    assert 'Total Profit BTC' in detail
-    assert 'Net Unmatched' in detail
+    assert 'Window Avg Difference/Unit' in detail
+    assert 'Window Comparison BTC' in detail
+    assert 'Window Net Buy' in detail
     assert 'commodity0' in detail
     # Missing data should still be handled properly
     assert 'condition' not in html
@@ -196,12 +196,12 @@ def test_precise_exports_full_stats_formula_protection_and_source_unchanged(tmp_
     assert helmet_item['state'] == '0' and helmet_item['max_state'] == '100'
     assert 'condition 0/100' in helmet_item['description']
     # Check that profit/loss fields exist
-    assert 'profit_loss_per_unit' in helmet_item
-    assert 'profit_loss_btc' in helmet_item
+    assert 'window_average_difference_per_unit' in helmet_item
+    assert 'window_comparison_value' in helmet_item
     assert 'buy_quantity' in helmet_item
     assert 'sell_quantity' in helmet_item
     # Check that net_unmatched replaced individual unmatched fields
-    assert 'net_unmatched' in helmet_item
+    assert 'window_net_buy_quantity' in helmet_item
     assert 'unmatched_buy_quantity' not in helmet_item
     assert 'unmatched_sell_quantity' not in helmet_item
     # Legacy breakdown should still exist for compatibility
