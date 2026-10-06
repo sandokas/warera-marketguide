@@ -31,6 +31,7 @@ from .market_data import (
     iter_equipment_sale_details,
     opportunity_fields,
 )
+from .report_context import ReportContext, resolve_context
 from .market_store import MarketStore
 from .metrics import (
     FlipAssumptions,
@@ -71,9 +72,9 @@ def _parse_param(value: str) -> tuple[str, str]:
     return key, param_value
 
 
-def _current_complete_utc_midnight(now: datetime | None = None) -> datetime:
+def _current_complete_utc_midnight(now: datetime) -> datetime:
     """Return the end boundary of the latest complete UTC calendar day."""
-    current = now or datetime.now(timezone.utc)
+    current = now
     if current.tzinfo is None:
         raise ValueError("now must be timezone-aware.")
     return current.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -254,10 +255,10 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> None:
+def main(*, report_context: ReportContext | None = None) -> None:
     load_dotenv()
     args = build_parser().parse_args()
-    report_as_of = args.as_of or datetime.now(timezone.utc)
+    report_as_of = args.as_of
     if args.player_summary:
         if any((args.live, args.sync, args.housekeeping, args.api_endpoint, args.migrate_db,
                 args.market_sync_status, args.transaction_backfill, args.resync_market,
@@ -452,10 +453,10 @@ def main() -> None:
                 )
             if args.sync:
                 return
-        run_db_report_workflow(args, assumptions, as_of=report_as_of)
+        run_db_report_workflow(args, assumptions, as_of=report_as_of, context=report_context)
         return
     elif args.from_db:
-        run_db_report_workflow(args, assumptions, as_of=report_as_of)
+        run_db_report_workflow(args, assumptions, as_of=report_as_of, context=report_context)
         return
     elif args.api_endpoint:
         client = WarEraApiClient(min_interval_seconds=args.min_interval)
@@ -464,7 +465,7 @@ def main() -> None:
     else:
         df_in = load_market_csv(args.csv)
 
-    generate_report(args, assumptions, ReportPreparation(df_in, report_as_of))
+    generate_report(args, assumptions, ReportPreparation(df_in, report_as_of or datetime.now(timezone.utc)))
 
 
 @dataclass
@@ -472,42 +473,50 @@ class ReportPreparation:
     """Prepared inputs shared by DB-backed and compatibility report generation."""
 
     market_frame: pd.DataFrame
-    as_of: datetime
+    as_of: datetime | None
     data_sync_metadata: object = None
     we24: object = None
     action_cost_results: object = None
     participant_report: object = None
     equipment_details: object = None
+    context: ReportContext | None = None
 
 
-def prepare_db_report(store, args, assumptions, *, as_of: datetime) -> ReportPreparation:
+def prepare_db_report(store, args, assumptions, *, as_of: datetime | None = None, context: ReportContext | None = None) -> ReportPreparation:
     """Read report inputs at the supplied cutoff; enrich only when requested."""
     preparation = ProgressReporter(None if args.quiet else lambda message: print(message, flush=True), verbose=args.verbose)
+    if args.live or args.refresh_identities:
+        # Selection is only for the enrichment population, before report inputs.
+        # Identity writes do not advance the market clock. Freeze the report
+        # context after enrichment, rather than reusing this selection preview.
+        preview = context or resolve_context(store.data_as_of(), as_of)
+        population = load_participant_report(store, context=preview, verbose=args.verbose, progress=preparation)
+        preparation.call("Identity and image refresh", _refresh_participant_display,
+            store, population, verbose=args.verbose, progress=preparation)
+    context = context or store.resolve_report_context(as_of)
+    as_of = context.analysis_as_of
     rows = preparation.call("Market rows", load_market_rows,
-        store, progress=preparation, windows=("1D", "7D", "30D"), now=as_of,
+        store, progress=preparation, windows=("1D", "7D", "30D"), context=context,
         forecast_horizon_hours=args.forecast_horizon_hours,
         forecast_target_max_lag_hours=args.forecast_target_max_lag_hours,
         forecast_min_samples=args.forecast_min_samples, min_tick=args.min_tick,
         flip_assumptions=assumptions)
     metadata = preparation.call("Sync metadata", store.market_sync_metadata)
-    we24 = preparation.call("WE24 index", build_we24_market_index, store, as_of=as_of,
+    we24 = preparation.call("WE24 index", build_we24_market_index, store, context=context,
         display_days=max(args.we24_days, args.research_days or 0))
-    costs = preparation.call("Action costs", load_action_cost_results, store, as_of=as_of)
+    costs = preparation.call("Action costs", load_action_cost_results, store, context=context)
     participants = preparation.call("Participant rankings", load_participant_report, store,
-        as_of=as_of, verbose=args.verbose, progress=preparation)
-    if args.live or args.refresh_identities:
-        preparation.call("Identity and image refresh", _refresh_participant_display,
-            store, participants, verbose=args.verbose, progress=preparation)
+        context=context, verbose=args.verbose, progress=preparation)
     equipment = preparation.call("Equipment sale details",
-        lambda: list(iter_equipment_sale_details(store, as_of=as_of, progress=preparation)))
+        lambda: list(iter_equipment_sale_details(store, context=context, progress=preparation)))
     preparation.summary()
-    return ReportPreparation(pd.DataFrame(rows), as_of, metadata, we24, costs, participants, equipment)
+    return ReportPreparation(pd.DataFrame(rows), as_of, metadata, we24, costs, participants, equipment, context)
 
 
-def run_db_report_workflow(args, assumptions, *, as_of: datetime) -> ReportPreparation:
+def run_db_report_workflow(args, assumptions, *, as_of: datetime | None = None, context: ReportContext | None = None) -> ReportPreparation:
     """Prepare and generate a DB report without collecting market data."""
     with MarketStore(args.market_db) as store:
-        prepared = prepare_db_report(store, args, assumptions, as_of=as_of)
+        prepared = prepare_db_report(store, args, assumptions, as_of=as_of, context=context)
     generate_report(args, assumptions, prepared)
     return prepared
 
@@ -515,6 +524,12 @@ def run_db_report_workflow(args, assumptions, *, as_of: datetime) -> ReportPrepa
 def generate_report(args, assumptions, prepared: ReportPreparation) -> None:
     """Calculate and publish prepared inputs using the existing report layers."""
     df_in = prepared.market_frame
+    if prepared.context is not None and prepared.context.analysis_as_of is None:
+        output = Path(args.output)
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "report_context.json").write_text(json.dumps(prepared.context.to_dict(), indent=2), encoding="utf-8")
+        print("Report unavailable: no stored market data.")
+        return
     report_as_of = prepared.as_of
     data_sync_metadata = prepared.data_sync_metadata
     we24 = prepared.we24
@@ -522,6 +537,9 @@ def generate_report(args, assumptions, prepared: ReportPreparation) -> None:
     participant_report = prepared.participant_report
     equipment_details = prepared.equipment_details
     output_dir = Path(args.output)
+    if prepared.context is not None:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "report_context.json").write_text(json.dumps(prepared.context.to_dict(), indent=2), encoding="utf-8")
     if not (args.live or args.from_db):
         compatibility_defaults = {
             "forecast_model_version": "direction-v1",
@@ -590,7 +608,7 @@ def generate_report(args, assumptions, prepared: ReportPreparation) -> None:
                 item_code.lower(): load_price_action_history(
                     store, item_code=item_code, window_days=args.item_chart_days,
                     interval=args.chart_interval,
-                    now=report_as_of,
+                    context=prepared.context,
                 )
                 for item_code in item_codes
             }
@@ -643,7 +661,7 @@ def generate_report(args, assumptions, prepared: ReportPreparation) -> None:
                         store, item_code=storage_code,
                         window_days=args.research_days or args.item_chart_days,
                         interval=args.chart_interval,
-                        now=report_as_of,
+                        context=prepared.context,
                     )
                     chart_item = prepare_price_action_item(
                         row,
@@ -691,6 +709,7 @@ def generate_report(args, assumptions, prepared: ReportPreparation) -> None:
         participant_report=participant_report,
         equipment_details=equipment_details,
         as_of=report_as_of,
+        context=prepared.context,
         verbose=args.verbose,
     )
     print(f"Wrote {csv_path}")
@@ -698,6 +717,8 @@ def generate_report(args, assumptions, prepared: ReportPreparation) -> None:
         print(f"Wrote {output_dir / 'market_action_costs.csv'}")
     print(f"Wrote {report_path}")
     data_paths = [output_dir / name for name in ("market_scores.csv", "market_trends.csv", "we24_series.csv", "we24_weights.csv")]
+    if prepared.context is not None:
+        data_paths.append(output_dir / "report_context.json")
     if action_cost_results:
         data_paths.append(output_dir / "market_action_costs.csv")
     inventory = export_report_assets(report_path, output_dir, extra_paths=optional_chart_paths, data_paths=data_paths, verbose=args.verbose)

@@ -1023,16 +1023,26 @@ class MarketStore:
             vacuumed=vacuumed,
         )
 
-    def transactions_for_window(self, item_code: str, since_epoch: int, *, transaction_type: str = "trading") -> list[dict[str, Any]]:
+    def resolve_report_context(self, requested_as_of=None, *, generated_at=None):
+        """Resolve the shared cutoff with one metadata read; never infer now."""
+        from .report_context import resolve_context
+        return resolve_context(self.data_as_of(), requested_as_of, generated_at=generated_at)
+
+    def transactions_for_window(self, item_code: str, since_epoch: float, *,
+                                transaction_type: str = "trading", end: datetime | None = None) -> list[dict[str, Any]]:
+        end = end or self.resolve_report_context().window_end_exclusive
+        if end is None:
+            return []
+        start = datetime.fromtimestamp(since_epoch, timezone.utc)
         rows = self._connect().execute(
-            """
-            select id, item_code, transaction_type, created_at, created_at_epoch,
-                   money, quantity, unit_price, fetched_at
-            from transactions
-            where item_code = ? and transaction_type = ? and created_at_epoch >= ?
-            order by created_at_epoch asc, id asc
-            """,
-            (item_code, transaction_type, since_epoch),
+            """select id, item_code, transaction_type, created_at, created_at_epoch,
+                      money, quantity, unit_price, fetched_at
+               from transactions
+               where item_code=? and transaction_type=? and created_at_epoch >= ?
+                 and coalesce(created_at_us,source_timestamp_us(created_at)) >= ?
+                 and coalesce(created_at_us,source_timestamp_us(created_at)) < ?
+               order by coalesce(created_at_us,source_timestamp_us(created_at)),id""",
+            (item_code, transaction_type, math.floor(since_epoch), _datetime_us(start), _datetime_us(end)),
         ).fetchall()
         return [_dict_from_row(row) for row in rows]
 
@@ -1103,8 +1113,9 @@ class MarketStore:
     def transactions_for_period(
         self,
         item_codes: list[str] | tuple[str, ...],
-        start_epoch: int,
-        end_epoch: int,
+        start_epoch: float,
+        end_epoch: float,
+        *, end: datetime | None = None,
     ) -> list[dict[str, Any]]:
         """Return chronological transaction facts in ``[start_epoch, end_epoch)``.
 
@@ -1115,6 +1126,7 @@ class MarketStore:
         codes = tuple(dict.fromkeys(str(code).strip() for code in item_codes if str(code).strip()))
         if not codes or end_epoch <= start_epoch:
             return []
+        end = end or datetime.fromtimestamp(end_epoch, timezone.utc)
         placeholders = ", ".join("?" for _ in codes)
         rows = self._connect().execute(
             f"""
@@ -1124,51 +1136,70 @@ class MarketStore:
             where item_code in ({placeholders})
               and transaction_type = 'trading'
               and created_at_epoch >= ?
-              and created_at_epoch < ?
-            order by item_code asc, created_at_epoch asc, id asc
+              and coalesce(created_at_us,source_timestamp_us(created_at)) >= ?
+              and coalesce(created_at_us,source_timestamp_us(created_at)) < ?
+            order by item_code asc, coalesce(created_at_us,source_timestamp_us(created_at)), id asc
             """,
-            (*codes, start_epoch, end_epoch),
+            (*codes, math.floor(start_epoch), _datetime_us(datetime.fromtimestamp(start_epoch, timezone.utc)), _datetime_us(end)),
         ).fetchall()
         return [_dict_from_row(row) for row in rows]
 
-    def price_observations_for_window(self, item_code: str, since_epoch: int) -> list[dict[str, Any]]:
+    def price_observations_for_window(self, item_code: str, since_epoch: float, *, end: datetime | None = None) -> list[dict[str, Any]]:
+        end = end or self.resolve_report_context().window_end_exclusive
+        if end is None:
+            return []
+        start_us = _datetime_us(datetime.fromtimestamp(since_epoch, timezone.utc))
+        end_us = _datetime_us(end)
         rows = self._connect().execute(
             """
             select id, item_code, observed_at, observed_at_epoch, current_price
             from price_observations
             where item_code = ? and observed_at_epoch >= ?
-            order by observed_at_epoch asc, id asc
+              and source_timestamp_us(observed_at) >= ? and source_timestamp_us(observed_at) < ?
+            order by source_timestamp_us(observed_at), id
             """,
-            (item_code, since_epoch),
+            (item_code, math.floor(since_epoch), start_us, end_us),
         ).fetchall()
         return [_dict_from_row(row) for row in rows]
 
-    def order_book_observations_for_window(self, item_code: str, since_epoch: int) -> list[dict[str, Any]]:
+    def order_book_observations_for_window(self, item_code: str, since_epoch: float, *, end: datetime | None = None) -> list[dict[str, Any]]:
+        end = end or self.resolve_report_context().window_end_exclusive
+        if end is None:
+            return []
+        start_us = _datetime_us(datetime.fromtimestamp(since_epoch, timezone.utc))
+        end_us = _datetime_us(end)
         rows = self._connect().execute(
             """
             select id, item_code, observed_at, observed_at_epoch, best_bid, best_ask,
                    bid_depth, ask_depth, spread_abs, spread_pct
             from order_book_observations
             where item_code = ? and observed_at_epoch >= ?
-            order by observed_at_epoch asc, id asc
+              and source_timestamp_us(observed_at) >= ? and source_timestamp_us(observed_at) < ?
+            order by source_timestamp_us(observed_at), id
             """,
-            (item_code, since_epoch),
+            (item_code, math.floor(since_epoch), start_us, end_us),
         ).fetchall()
         return [_dict_from_row(row) for row in rows]
 
     def order_book_history_with_levels(
-        self, item_code: str, since_epoch: int = 0
+        self, item_code: str, since_epoch: float = 0, *, end: datetime | None = None
     ) -> list[dict[str, Any]]:
         """Return chronological snapshots and their normalized levels in two bounded queries."""
+        end = end or self.resolve_report_context().window_end_exclusive
+        if end is None:
+            return []
+        start_us = _datetime_us(datetime.fromtimestamp(since_epoch, timezone.utc))
+        end_us = _datetime_us(end)
         rows = self._connect().execute(
             """
             select id, item_code, observed_at, observed_at_epoch, best_bid, best_ask,
                    bid_depth, ask_depth, spread_abs, spread_pct
             from order_book_observations
             where item_code = ? and observed_at_epoch >= ?
-            order by observed_at_epoch asc, id asc
+              and source_timestamp_us(observed_at) >= ? and source_timestamp_us(observed_at) < ?
+            order by source_timestamp_us(observed_at), id
             """,
-            (item_code, since_epoch),
+            (item_code, math.floor(since_epoch), start_us, end_us),
         ).fetchall()
         observations = [_dict_from_row(row) for row in rows]
         if not observations:
@@ -1183,12 +1214,14 @@ class MarketStore:
             join order_book_observations as observations
               on observations.id = levels.observation_id
             where observations.item_code = ? and observations.observed_at_epoch >= ?
+              and source_timestamp_us(observations.observed_at) >= ?
+              and source_timestamp_us(observations.observed_at) < ?
               and levels.price > 0 and levels.quantity > 0
             order by levels.observation_id,
                      case levels.side when 'bid' then 0 else 1 end,
                      levels.level_position
             """,
-            (item_code, since_epoch),
+            (item_code, math.floor(since_epoch), start_us, end_us),
         ).fetchall()
         levels_by_observation: dict[int, list[dict[str, Any]]] = {
             observation_id: [] for observation_id in observation_ids

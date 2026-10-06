@@ -12,6 +12,7 @@ from pathlib import Path
 
 from .progress import ProgressReporter
 from .market_store import MarketStore
+from .report_context import ReportContext
 from .metrics import (
     DEFAULT_INFLATION_MINIMUM_COVERAGE_PCT,
     FORECAST_MODEL_VERSION,
@@ -42,6 +43,18 @@ from .metrics import (
     calculate_short_term_guidance,
     WE24_COMPONENTS,
 )
+
+
+def resolve_publication_context(store: MarketStore, metadata: dict) -> ReportContext:
+    """Restore inclusion semantics; legacy as_of-only publications are historical."""
+    if metadata.get("context"):
+        context = ReportContext.from_dict(metadata["context"])
+        if context.accounting_mode != "full-fifo":
+            raise ValueError("Unsupported accounting mode before phase D")
+        return context
+    value = metadata.get("as_of")
+    requested = datetime.fromisoformat(value.replace("Z", "+00:00")) if value else None
+    return store.resolve_report_context(requested)
 
 
 SUPPORTED_REPORT_WINDOWS = ("1D", "7D", "30D", "90D", "1Y")
@@ -266,15 +279,19 @@ def _action_cost_results_from_prices(
 
 
 def load_action_cost_results(
-    store: MarketStore, *, as_of: datetime,
+    store: MarketStore, *, as_of: datetime | None = None, context: ReportContext | None = None,
     definitions: Iterable[ActionCostDefinition] | None = None,
 ) -> tuple[ActionCostResult, ...]:
     """Load reusable completed-price inputs without computing inflation indexes."""
     definitions = tuple(default_action_cost_definitions() if definitions is None else definitions)
     codes = tuple(dict.fromkeys(code for definition in definitions for code, _ in definition.quantities))
+    context = context or store.resolve_report_context(as_of)
+    as_of = context.analysis_as_of
+    if as_of is None:
+        return _action_cost_results_from_prices({}, definitions=definitions)
     end = _as_utc(as_of).replace(hour=0, minute=0, second=0, microsecond=0)
     prices = load_period_item_prices(
-        store, item_codes=codes, period_start=end - timedelta(days=7), period_end=end,
+        store, item_codes=codes, period_start=end - timedelta(days=7), period_end=end, context=context,
     )
     return _action_cost_results_from_prices(
         {price.item_code: price.representative_price for price in prices}, definitions=definitions,
@@ -282,10 +299,14 @@ def load_action_cost_results(
 
 
 def build_we24_market_index(
-    store: MarketStore, *, as_of: datetime, display_days: int = 30,
+    store: MarketStore, *, as_of: datetime | None = None, context: ReportContext | None = None, display_days: int = 30,
     inception: datetime = datetime(2026, 8, 1, tzinfo=timezone.utc), weighting_days: int = 28,
 ) -> dict[str, Any]:
     """Read completed transaction inputs, independently of synchronization metadata."""
+    context = context or store.resolve_report_context(as_of)
+    as_of = context.analysis_as_of
+    if as_of is None:
+        return {"coverage_status": "unavailable", "reason": "No stored market data", "observations": [], "weights": {}, "weight_history": [], "latest_level": None}
     end = _as_utc(as_of).replace(hour=0, minute=0, second=0, microsecond=0)
     start = _as_utc(inception) - timedelta(days=weighting_days + 1)
     facts = store.completed_daily_facts(WE24_COMPONENTS, int(start.timestamp()), int(end.timestamp()))
@@ -381,6 +402,7 @@ def build_inflation_index_results(
     price_window_days: int = 7,
     min_base_trade_count: int = DEFAULT_INFLATION_MIN_BASE_TRADE_COUNT,
     min_base_traded_quantity: float = DEFAULT_INFLATION_MIN_BASE_TRADED_QUANTITY,
+    context: ReportContext | None = None,
 ) -> tuple[InflationIndexResult, ...]:
     """Build reproducible Phase 1 histories and latest 7/30/90-day changes."""
     definitions = default_inflation_index_definitions(
@@ -398,7 +420,9 @@ def build_inflation_index_results(
         definitions[0].base_period_start,
         first - timedelta(days=definitions[0].price_window_days),
     )
-    rows = store.transactions_for_period(all_codes, int(earliest.timestamp()), int(last.timestamp()))
+    if context is not None and context.analysis_as_of is None:
+        return ()
+    rows = store.transactions_for_period(all_codes, earliest.timestamp(), last.timestamp(), end=min(last, context.window_end_exclusive) if context and context.window_end_exclusive else last)
     row_index = _index_transaction_rows(rows)
     all_base_inputs = _period_item_prices_from_index(
         row_index, codes=all_codes, period_start=definitions[0].base_period_start,
@@ -519,6 +543,7 @@ def load_period_item_prices(
     item_codes: Iterable[str],
     period_start: datetime,
     period_end: datetime,
+    context: ReportContext | None = None,
 ) -> tuple[PeriodItemPrice, ...]:
     """Aggregate eligible completed transactions inside a half-open UTC period."""
     start = _as_utc(period_start)
@@ -528,7 +553,9 @@ def load_period_item_prices(
     codes = _normalized_item_codes(item_codes)
     if not codes:
         return ()
-    rows = store.transactions_for_period(codes, int(start.timestamp()), int(end.timestamp()))
+    if context is not None and context.analysis_as_of is None:
+        return ()
+    rows = store.transactions_for_period(codes, start.timestamp(), end.timestamp(), end=min(end, context.window_end_exclusive) if context and context.window_end_exclusive else end)
     return _period_item_prices_from_rows(rows, codes=codes, period_start=start, period_end=end)
 
 
@@ -555,6 +582,7 @@ def load_trailing_period_price_series(
     first_as_of: datetime,
     last_as_of: datetime,
     price_window_days: int = 7,
+    context: ReportContext | None = None,
 ) -> tuple[HistoricalPeriodPrices, ...]:
     """Build one trailing-window observation per complete UTC-day boundary.
 
@@ -573,7 +601,9 @@ def load_trailing_period_price_series(
         return ()
 
     earliest = first - timedelta(days=price_window_days)
-    rows = store.transactions_for_period(codes, int(earliest.timestamp()), int(last.timestamp()))
+    if context is not None and context.analysis_as_of is None:
+        return ()
+    rows = store.transactions_for_period(codes, earliest.timestamp(), last.timestamp(), end=min(last, context.window_end_exclusive) if context and context.window_end_exclusive else last)
     return _trailing_period_price_series_from_index(
         _index_transaction_rows(rows), codes=codes, first_as_of=first,
         last_as_of=last, price_window_days=price_window_days,
@@ -627,8 +657,8 @@ def _index_transaction_rows(
         grouped.setdefault(code, []).append(row)
     result = {}
     for code, code_rows in grouped.items():
-        ordered = sorted(code_rows, key=lambda row: (int(row["created_at_epoch"]), str(row.get("id", ""))))
-        result[code] = ([int(row["created_at_epoch"]) for row in ordered], ordered)
+        ordered = sorted(code_rows, key=lambda row: (_source_epoch(row, "created_at", "created_at_epoch"), str(row.get("id", ""))))
+        result[code] = ([_source_epoch(row, "created_at", "created_at_epoch") for row in ordered], ordered)
     return result
 
 
@@ -644,8 +674,8 @@ def _period_item_prices_from_index(
     results: list[PeriodItemPrice] = []
     for code in codes:
         epochs, all_rows = folded_index.get(code.casefold(), ([], []))
-        start = bisect_left(epochs, int(period_start.timestamp()))
-        end = bisect_left(epochs, int(period_end.timestamp()))
+        start = bisect_left(epochs, period_start.timestamp())
+        end = bisect_left(epochs, period_end.timestamp())
         code_rows = all_rows[start:end]
         eligible: list[dict[str, Any]] = []
         excluded = 0
@@ -661,8 +691,8 @@ def _period_item_prices_from_index(
             continue
         quantities = [float(row["quantity"]) for row in eligible]
         values = [float(row["unit_price"]) * float(row["quantity"]) for row in eligible]
-        first_at = _as_utc(datetime.fromtimestamp(int(eligible[0]["created_at_epoch"]), timezone.utc))
-        last_at = _as_utc(datetime.fromtimestamp(int(eligible[-1]["created_at_epoch"]), timezone.utc))
+        first_at = datetime.fromtimestamp(_source_epoch(eligible[0], "created_at", "created_at_epoch"), timezone.utc)
+        last_at = datetime.fromtimestamp(_source_epoch(eligible[-1], "created_at", "created_at_epoch"), timezone.utc)
         results.append(PeriodItemPrice(
             item_code=code,
             period_start=period_start,
@@ -701,6 +731,7 @@ def evaluate_item_forecast(
     store: MarketStore,
     *,
     item_code: str,
+    context: ReportContext | None = None,
     horizon_hours: float = 24.0,
     target_max_lag_hours: float = 6.0,
     min_samples: int = 30,
@@ -718,7 +749,8 @@ def evaluate_item_forecast(
     calculate_book_sweep([], side="buy", quantity=quantity)
 
     progress = progress or ProgressReporter()
-    observations = progress.call(f"{item_code}: forecast order history", store.order_book_history_with_levels, item_code)
+    context = context or store.resolve_report_context()
+    observations = (progress.call(f"{item_code}: forecast order history", store.order_book_history_with_levels, item_code, end=context.window_end_exclusive) if context.analysis_as_of else [])
     if not observations:
         return summarize_forecast_evaluations(
             item_code=item_code,
@@ -728,7 +760,7 @@ def evaluate_item_forecast(
             min_samples=min_samples,
         )
     earliest_epoch = int(observations[0]["observed_at_epoch"]) - FORECAST_TRAILING_SECONDS
-    transactions = progress.call(f"{item_code}: forecast transaction history", store.transactions_for_window, item_code, earliest_epoch)
+    transactions = progress.call(f"{item_code}: forecast transaction history", store.transactions_for_window, item_code, earliest_epoch, end=context.window_end_exclusive)
     features = progress.call(f"{item_code}: forecast features", build_forecast_features, observations, transactions, progress=progress)
     progress.detail(f"{item_code}: evaluating {len(features):,} forecast features")
 
@@ -748,15 +780,15 @@ def evaluate_item_forecast(
 
     horizon_seconds = horizon_hours * 60 * 60
     max_lag_seconds = target_max_lag_hours * 60 * 60
-    observation_epochs = [int(observation["observed_at_epoch"]) for observation in observations]
+    observation_epochs = [_source_epoch(observation, "observed_at", "observed_at_epoch") for observation in observations]
     evaluated: list[ForecastEvaluationRow] = []
     for feature in features:
-        target_epoch = feature["observed_at_epoch"] + horizon_seconds
+        target_epoch = _source_epoch(feature, "observed_at", "observed_at_epoch") + horizon_seconds
         target_index = bisect_left(observation_epochs, target_epoch)
         if target_index >= len(observations):
             continue
         target = observations[target_index]
-        if target["observed_at_epoch"] > target_epoch + max_lag_seconds:
+        if _source_epoch(target, "observed_at", "observed_at_epoch") > target_epoch + max_lag_seconds:
             continue
         future_bid = _positive_float(target.get("best_bid"))
         if future_bid is None:
@@ -803,12 +835,12 @@ def build_forecast_features(
 ) -> list[dict[str, Any]]:
     """Build chronological seven-day features without reading beyond each feature time."""
     ordered_observations = sorted(
-        observations, key=lambda row: (int(row["observed_at_epoch"]), int(row["observation_id"]))
+        observations, key=lambda row: (_source_epoch(row, "observed_at", "observed_at_epoch"), int(row["observation_id"]))
     )
     ordered_transactions = sorted(
-        transactions, key=lambda row: (int(row["created_at_epoch"]), str(row.get("id", "")))
+        transactions, key=lambda row: (_source_epoch(row, "created_at", "created_at_epoch"), str(row.get("id", "")))
     )
-    transaction_epochs = [int(row["created_at_epoch"]) for row in ordered_transactions]
+    transaction_epochs = [_source_epoch(row, "created_at", "created_at_epoch") for row in ordered_transactions]
     features: list[dict[str, Any]] = []
     for observation_number, observation in enumerate(ordered_observations, 1):
         if progress and (observation_number == 1 or observation_number % 100 == 0):
@@ -817,7 +849,7 @@ def build_forecast_features(
         best_ask = _positive_float(observation.get("best_ask"))
         if best_bid is None or best_ask is None:
             continue
-        feature_epoch = int(observation["observed_at_epoch"])
+        feature_epoch = _source_epoch(observation, "observed_at", "observed_at_epoch")
         start = bisect_left(transaction_epochs, feature_epoch - FORECAST_TRAILING_SECONDS)
         end = bisect_right(transaction_epochs, feature_epoch)
         trailing = ordered_transactions[start:end]
@@ -893,7 +925,9 @@ def estimate_latest_execution(
     if snapshot is None:
         return None
     observed_at = datetime.fromtimestamp(snapshot["observed_at_epoch"], tz=timezone.utc)
-    reference_time = _as_utc(now or datetime.now(timezone.utc))
+    reference_time = store.resolve_report_context(now).analysis_as_of
+    if reference_time is None:
+        return None
     result = dict(snapshot)
     result["snapshot_age_seconds"] = max(0.0, (reference_time - observed_at).total_seconds())
     result["execution"] = None
@@ -931,8 +965,8 @@ class PriceActionHistory:
 
     item_code: str
     window_days: int
-    window_start: datetime
-    window_end: datetime
+    window_start: datetime | None
+    window_end: datetime | None
     trades: tuple[dict[str, Any], ...]
     coverage: HistoryCoverage
 
@@ -954,6 +988,7 @@ def load_market_rows(
     windows: list[str] | tuple[str, ...] | None = None,
     lookback_days: float | None = None,
     now: datetime | None = None,
+    context: ReportContext | None = None,
     forecast_horizon_hours: float = 24.0,
     forecast_target_max_lag_hours: float = 6.0,
     forecast_min_samples: int = 30,
@@ -967,16 +1002,19 @@ def load_market_rows(
 
     progress = progress or ProgressReporter()
     report_windows = _resolve_windows(windows, lookback_days)
-    now = _as_utc(now or datetime.now(timezone.utc))
+    context = context or store.resolve_report_context(now)
+    now = context.analysis_as_of
+    if now is None:
+        return []
     assumptions = flip_assumptions or FlipAssumptions(
         quantity=forecast_quantity,
         forecast_horizon_hours=forecast_horizon_hours,
     )
     since_epochs = {
-        window.label: int((now - timedelta(days=window.days)).timestamp())
+        window.label: (now - timedelta(days=window.days)).timestamp()
         for window in report_windows
     }
-    display_since_epoch = int((now - timedelta(days=DISPLAY_HISTORY_DAYS)).timestamp())
+    display_since_epoch = (now - timedelta(days=DISPLAY_HISTORY_DAYS)).timestamp()
     earliest_since_epoch = min(*since_epochs.values(), display_since_epoch)
 
     progress.detail("Loading latest prices, order books, and production points")
@@ -988,9 +1026,9 @@ def load_market_rows(
     codes = store.item_codes(transaction_type="trading")
     for item_number, item_code in enumerate(codes, 1):
         progress.detail(f"{_display_name(item_code)}: item {item_number}/{len(codes)}; history since epoch {earliest_since_epoch}")
-        trades = progress.call(f"{item_code}: transaction history", store.transactions_for_window, item_code, earliest_since_epoch)
-        price_observations = progress.call(f"{item_code}: price history", store.price_observations_for_window, item_code, earliest_since_epoch)
-        order_observations = progress.call(f"{item_code}: order history", store.order_book_observations_for_window, item_code, earliest_since_epoch)
+        trades = progress.call(f"{item_code}: transaction history", store.transactions_for_window, item_code, earliest_since_epoch, end=context.window_end_exclusive)
+        price_observations = progress.call(f"{item_code}: price history", store.price_observations_for_window, item_code, earliest_since_epoch, end=context.window_end_exclusive)
+        order_observations = progress.call(f"{item_code}: order history", store.order_book_observations_for_window, item_code, earliest_since_epoch, end=context.window_end_exclusive)
         latest_price = latest_prices.get(item_code, {})
         latest_book = latest_books.get(item_code, {})
 
@@ -1046,7 +1084,7 @@ def load_market_rows(
         trend_coverage = _history_coverage(trend_path_90d)
         row["trend_path_90d"] = trend_path_90d
         row["trend_path_90d_start_epoch"] = display_since_epoch
-        row["trend_path_90d_end_epoch"] = int(now.timestamp())
+        row["trend_path_90d_end_epoch"] = now.timestamp()
         row["trend_path_90d_first_observation_epoch"] = _epoch_or_none(
             trend_coverage.first_observation_at
         )
@@ -1060,12 +1098,13 @@ def load_market_rows(
             else []
         )
         row["trend_path_30d_start_epoch"] = since_epochs.get("30D")
-        row["trend_path_30d_end_epoch"] = int(now.timestamp()) if "30D" in since_epochs else None
+        row["trend_path_30d_end_epoch"] = now.timestamp() if "30D" in since_epochs else None
         _add_legacy_metric_fields(row, report_windows, window_stats)
         progress.detail(f"{item_code}: window statistics and trends completed")
         forecast = progress.call(f"{item_code}: forecast", evaluate_item_forecast,
             store,
             progress=progress,
+            context=context,
             item_code=item_code,
             horizon_hours=assumptions.forecast_horizon_hours,
             target_max_lag_hours=forecast_target_max_lag_hours,
@@ -1185,11 +1224,15 @@ def load_chart_trades(
     item_code: str,
     window: str,
     now: datetime | None = None,
+    context: ReportContext | None = None,
 ) -> list[dict[str, Any]]:
     report_window = parse_report_window(window)
-    now = _as_utc(now or datetime.now(timezone.utc))
-    since_epoch = int((now - timedelta(days=report_window.days)).timestamp())
-    return _chart_trades_from_rows(store.transactions_for_window(item_code, since_epoch))
+    context = context or store.resolve_report_context(now)
+    now = context.analysis_as_of
+    if now is None:
+        return []
+    since_epoch = (now - timedelta(days=report_window.days)).timestamp()
+    return _chart_trades_from_rows(store.transactions_for_window(item_code, since_epoch, end=context.window_end_exclusive))
 
 
 def load_chart_data(
@@ -1198,11 +1241,15 @@ def load_chart_data(
     item_code: str,
     window: str,
     now: datetime | None = None,
+    context: ReportContext | None = None,
 ) -> dict[str, Any]:
     report_window = parse_report_window(window)
-    now = _as_utc(now or datetime.now(timezone.utc))
-    since_epoch = int((now - timedelta(days=report_window.days)).timestamp())
-    trades = _chart_trades_from_rows(store.transactions_for_window(item_code, since_epoch))
+    context = context or store.resolve_report_context(now)
+    now = context.analysis_as_of
+    if now is None:
+        return {"item_code": item_code, "window": report_window.label, "trades": [], "spread_observations": []}
+    since_epoch = (now - timedelta(days=report_window.days)).timestamp()
+    trades = _chart_trades_from_rows(store.transactions_for_window(item_code, since_epoch, end=context.window_end_exclusive))
     spread_observations = [
         {
             "item_code": row["item_code"],
@@ -1213,7 +1260,7 @@ def load_chart_data(
             "spread": row["spread_abs"],
             "spread_pct": row["spread_pct"],
         }
-        for row in store.order_book_observations_for_window(item_code, since_epoch)
+        for row in store.order_book_observations_for_window(item_code, since_epoch, end=context.window_end_exclusive)
         if row.get("spread_abs") is not None
     ]
     return {
@@ -1229,23 +1276,23 @@ def load_highlight_trade_history(
     *,
     item_codes: Iterable[str],
     now: datetime | None = None,
+    context: ReportContext | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Load at most the trailing display window of completed trades for highlights."""
-    now = _as_utc(now or datetime.now(timezone.utc))
-    since_epoch = int((now - timedelta(days=HIGHLIGHT_HISTORY_DAYS)).timestamp())
-    end_epoch = int(now.timestamp())
+    context = context or store.resolve_report_context(now)
+    now = context.analysis_as_of
+    if now is None:
+        return {}
+    since_epoch = (now - timedelta(days=HIGHLIGHT_HISTORY_DAYS)).timestamp()
     histories: dict[str, list[dict[str, Any]]] = {}
     for item_code in dict.fromkeys(item_codes):
         storage_code = str(item_code).strip()
         if not storage_code:
             continue
-        rows = store.transactions_for_window(storage_code, since_epoch)
+        rows = store.transactions_for_window(storage_code, since_epoch, end=context.window_end_exclusive)
         if not rows and storage_code != storage_code.lower():
-            rows = store.transactions_for_window(storage_code.lower(), since_epoch)
-        histories[storage_code.lower()] = _chart_trades_from_rows([
-            row for row in rows
-            if int(row.get("created_at_epoch", end_epoch + 1)) <= end_epoch
-        ])
+            rows = store.transactions_for_window(storage_code.lower(), since_epoch, end=context.window_end_exclusive)
+        histories[storage_code.lower()] = _chart_trades_from_rows(rows)
     return histories
 
 
@@ -1254,24 +1301,24 @@ def load_price_action_history(
     *,
     item_code: str,
     now: datetime | None = None,
+    context: ReportContext | None = None,
     window_days: int = 30,
     interval: str = "4h",
 ) -> PriceActionHistory:
     """Load available trades from the first candle's opening through now."""
     if window_days <= 0:
         raise ValueError("Item chart window_days must be positive.")
-    window_end = _as_utc(now or datetime.now(timezone.utc))
+    context = context or store.resolve_report_context(now)
+    window_end = context.analysis_as_of
+    if window_end is None:
+        return PriceActionHistory(item_code.lower(), window_days, None, None, (), _history_coverage([]))
     window_start = price_action_candle_start(
         window_end - timedelta(days=window_days), interval=interval,
     ).to_pydatetime()
-    end_epoch = int(window_end.timestamp())
-    rows = store.transactions_for_window(item_code, int(window_start.timestamp()))
+    rows = store.transactions_for_window(item_code, window_start.timestamp(), end=context.window_end_exclusive)
     if not rows and item_code != item_code.lower():
-        rows = store.transactions_for_window(item_code.lower(), int(window_start.timestamp()))
-    trades = _chart_trades_from_rows([
-        row for row in rows
-        if int(row.get("created_at_epoch", end_epoch + 1)) <= end_epoch
-    ])
+        rows = store.transactions_for_window(item_code.lower(), window_start.timestamp(), end=context.window_end_exclusive)
+    trades = _chart_trades_from_rows(rows)
     return PriceActionHistory(
         item_code=item_code.lower(),
         window_days=window_days,
@@ -1315,7 +1362,7 @@ def _chart_trades_from_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _history_coverage(observations: Iterable[dict[str, Any]]) -> HistoryCoverage:
     timestamps = sorted(
-        int(timestamp)
+        _source_epoch(observation, "created_at", "created_at_epoch") if observation.get("created_at") else float(timestamp)
         for observation in observations
         if (timestamp := observation.get("created_at_epoch", observation.get("timestamp"))) is not None
     )
@@ -1328,8 +1375,8 @@ def _history_coverage(observations: Iterable[dict[str, Any]]) -> HistoryCoverage
     )
 
 
-def _epoch_or_none(value: datetime | None) -> int | None:
-    return int(value.timestamp()) if value is not None else None
+def _epoch_or_none(value: datetime | None) -> float | None:
+    return value.timestamp() if value is not None else None
 
 
 def _window_from_days(days: float) -> ReportWindow:
@@ -1515,8 +1562,14 @@ def _add_legacy_metric_fields(
     row["close_7d"] = stats["close"]
 
 
+def _source_epoch(row, text_field, epoch_field):
+    value = row.get(text_field)
+    return (_as_utc(datetime.fromisoformat(value.replace("Z", "+00:00"))).timestamp()
+            if value else float(row[epoch_field]))
+
+
 def _rows_since(rows: list[dict[str, Any]], since_epoch: int, field: str) -> list[dict[str, Any]]:
-    return [row for row in rows if row[field] >= since_epoch]
+    return [row for row in rows if _as_utc(datetime.fromisoformat(row["created_at" if field == "created_at_epoch" else "observed_at"].replace("Z", "+00:00"))).timestamp() >= since_epoch]
 
 
 def _daily_last_trade_prices(trades: list[dict[str, Any]]) -> list[dict[str, float | int]]:
@@ -1527,10 +1580,10 @@ def _daily_last_trade_prices(trades: list[dict[str, Any]]) -> list[dict[str, flo
         price = _number_or_none(trade.get("unit_price"))
         if epoch is None or price is None or price <= 0:
             continue
-        timestamp = int(epoch)
+        timestamp = _source_epoch(trade, "created_at", "created_at_epoch")
         day = datetime.fromtimestamp(timestamp, tz=timezone.utc).date().isoformat()
         previous = daily.get(day)
-        if previous is None or timestamp >= int(previous["timestamp"]):
+        if previous is None or timestamp >= previous["timestamp"]:
             daily[day] = {"timestamp": timestamp, "price": price}
     return sorted(daily.values(), key=lambda point: int(point["timestamp"]))
 
@@ -1678,16 +1731,20 @@ def _participant_trade_input(source: dict) -> dict:
         "equipment": equipment, "presence": presence}
 
 
-def load_participant_report(store: MarketStore, *, as_of: datetime, batch_size: int = 500, verbose: bool = False, progress: ProgressReporter | None = None) -> dict:
+def load_participant_report(store: MarketStore, *, as_of: datetime | None = None, context: ReportContext | None = None, batch_size: int = 500, verbose: bool = False, progress: ProgressReporter | None = None) -> dict:
     """Offline phase-4 read model; phase 5 renders/exports this domain result."""
     from .metrics import calculate_participant_rankings, participant_utc
+    context = context or store.resolve_report_context(as_of)
+    as_of = context.analysis_as_of
+    if as_of is None:
+        return {"as_of": None, "window_start": None, "entities": [], "rankings": {}, "coverage": {}, "sources": {}, "source_coverage": {}, "limitations": ["No stored market data"], "method": "unavailable", "turnover_basis": "source-money", "context": context.to_dict()}
     as_of = participant_utc(as_of)
     start = as_of - timedelta(days=7)
     progress = progress or ProgressReporter()
     progress.detail("Reading participant coverage and normalization status")
     sources = store.market_sync_status()
     progress.detail("Reading seven-day participant history and calculating rankings")
-    with closing(store.iter_participant_history(start, as_of, batch_size=batch_size)) as history:
+    with closing(store.iter_participant_history(start, context.window_end_exclusive, batch_size=batch_size)) as history:
         def counted_trades():
             count = 0
             for count, row in enumerate(history, 1):
@@ -1696,7 +1753,8 @@ def load_participant_report(store: MarketStore, *, as_of: datetime, batch_size: 
                 yield _participant_trade_input(row)
             progress.detail(f"Participant history: {count:,} rows read; finalizing rankings")
         trades = counted_trades()
-        result = calculate_participant_rankings(trades, as_of=as_of, sources=sources)
+        result = calculate_participant_rankings(trades, as_of=as_of, window_end_exclusive=context.window_end_exclusive, sources=sources)
+        result["context"] = context.to_dict()
     progress.detail(f"Participant rankings: {len(result['entities']):,} entities; attaching cached display data")
     enrich_participant_display(store, result, verbose=verbose)
     return result
@@ -1837,7 +1895,7 @@ def enrich_participant_display(store: MarketStore, result: dict, *, verbose: boo
             item["display"] = equipment.get(item["item_code"], {})
 
 
-def iter_equipment_sale_details(store: MarketStore, *, as_of: datetime, batch_size: int = 500, progress: ProgressReporter | None = None):
+def iter_equipment_sale_details(store: MarketStore, *, as_of: datetime | None = None, context: ReportContext | None = None, batch_size: int = 500, progress: ProgressReporter | None = None):
     """Separate streamed sale-detail export input, with no commodity signals.
 
     Each row includes its own condition/full stats and actor/source references.
@@ -1845,12 +1903,16 @@ def iter_equipment_sale_details(store: MarketStore, *, as_of: datetime, batch_si
     No identity, fee or acquisition evidence is invented by this adapter.
     """
     from .metrics import participant_utc
+    context = context or store.resolve_report_context(as_of)
+    as_of = context.analysis_as_of
+    if as_of is None:
+        return
     as_of = participant_utc(as_of)
-    for count, source in enumerate(store.iter_equipment_sales(as_of - timedelta(days=7), as_of, batch_size=batch_size), 1):
+    for count, source in enumerate(store.iter_equipment_sales(context.window_start(), context.window_end_exclusive, batch_size=batch_size), 1):
         if progress and (count == 1 or count % 5000 == 0):
             progress.detail(f"Equipment sales: {count:,} rows processed", periodic=True)
         result = _participant_trade_input(source)
-        result.update(as_of=as_of, window_start=as_of - timedelta(days=7),
+        result.update(as_of=as_of, window_end_exclusive=context.window_end_exclusive, boundary_mode=context.boundary_mode, window_start=as_of - timedelta(days=7),
                       net_realized_pnl=None, basis_status="unverified_equipment_lineage",
                       fee_status="unverified", money_basis="source-money")
         yield result

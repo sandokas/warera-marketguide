@@ -129,6 +129,10 @@ def test_all_price_action_charts_is_opt_in():
 
 def test_from_db_preserves_structured_order_book_for_report(monkeypatch, tmp_path):
     class DummyStore:
+        def resolve_report_context(self, as_of=None):
+            from warera_quant.report_context import resolve_context
+            return resolve_context(datetime(2026, 6, 30, tzinfo=timezone.utc), as_of)
+
         def __init__(self, _path):
             pass
 
@@ -502,14 +506,27 @@ def test_live_and_offline_use_equivalent_prepared_and_chart_inputs(monkeypatch, 
     assert len(syncs) == 1 and enrichments == [True]
     left, right = prepared
     pd.testing.assert_frame_equal(left.market_frame, right.market_frame)
-    assert left.as_of == right.as_of == NOW
+    assert left.as_of == right.as_of == NOW - timedelta(days=1)
     for field in ("data_sync_metadata", "we24", "action_cost_results",
                   "participant_report", "equipment_details"):
-        assert getattr(left, field) == getattr(right, field)
+        a, b = getattr(left, field), getattr(right, field)
+        if field == "participant_report":
+            a, b = dict(a), dict(b)
+            a.pop("context", None)
+            b.pop("context", None)
+        assert a == b
     pd.testing.assert_frame_equal(generated[0][0], generated[1][0])
     for _, kwargs in generated:
         kwargs["we24_chart_path"] = kwargs["we24_chart_path"].name
+        kwargs.pop("context", None)
+        if kwargs.get("participant_report"):
+            kwargs["participant_report"] = dict(kwargs["participant_report"])
+            kwargs["participant_report"].pop("context", None)
     assert generated[0][1] == generated[1][1]
+    for collection in captured_histories:
+        for kwargs, _history in collection:
+            context = kwargs.pop("context")
+            kwargs["context"] = {k: v for k, v in context.to_dict().items() if k != "generated_at"}
     assert captured_histories[0] == captured_histories[1]
     assert captured_histories[0]  # Verify chart preparation was actually exercised.
 

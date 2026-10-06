@@ -117,8 +117,8 @@ def render_inflation_overview_chart(
         )
 
     axis.axhline(0.0, color=style["muted"], linestyle="--", linewidth=1, label="No 30D change")
-    display_end = max(dates) if dates else datetime.now(timezone.utc)
-    display_start = display_end - timedelta(days=90)
+    display_end = max(dates) if dates else None
+    display_start = display_end - timedelta(days=90) if display_end else None
     for event in events:
         at = event.at if isinstance(event, InflationChartEvent) else event["at"]
         label = event.label if isinstance(event, InflationChartEvent) else str(event["label"])
@@ -127,7 +127,7 @@ def render_inflation_overview_chart(
             plt.close(figure)
             raise ValueError("Inflation event timestamps must be timezone-aware UTC values.")
         timestamp = timestamp.tz_convert("UTC").to_pydatetime()
-        if not display_start <= timestamp <= display_end:
+        if display_end is None or not display_start <= timestamp <= display_end:
             continue
         axis.axvline(timestamp, color=style["muted"], linestyle=":", linewidth=1)
         axis.annotate(

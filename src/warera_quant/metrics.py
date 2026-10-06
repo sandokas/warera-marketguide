@@ -2109,7 +2109,7 @@ def _participant_decimal_output(value):
     return value
 
 
-def calculate_participant_rankings(trades, *, as_of, sources=None):
+def calculate_participant_rankings(trades, *, as_of, sources=None, window_end_exclusive=None):
     """Reduce chronological (timestamp, opaque ID) domain history incrementally.
 
     All available earlier dispositions consume inventory. Same-timestamp buys
@@ -2120,6 +2120,7 @@ def calculate_participant_rankings(trades, *, as_of, sources=None):
     """
     as_of = participant_utc(as_of)
     start = as_of - timedelta(days=7)
+    window_end_exclusive = participant_utc(window_end_exclusive or as_of)
     entities = {}
     inventory = defaultdict(deque)
     equipment_lots = {}
@@ -2161,7 +2162,7 @@ def calculate_participant_rankings(trades, *, as_of, sources=None):
         if previous_order is not None and previous_order[0] != timestamp:
             last_events.clear()
         previous_order = order
-        if timestamp >= as_of:
+        if timestamp >= window_end_exclusive:
             continue
         if trade["transaction_type"] not in ("trading", "itemMarket"):
             continue
@@ -2446,7 +2447,7 @@ def calculate_participant_rankings(trades, *, as_of, sources=None):
                               key=lambda r: pnl_order(r, -1))[:10],
             "volume": sorted((r for r in rows if r[turnover_field] > 0),
                              key=lambda r: (-r[turnover_field], r["entity_id"]))[:10]}
-    return _participant_decimal_output({"as_of": as_of, "window_start": start,
+    return _participant_decimal_output({"as_of": as_of, "window_start": start, "window_end_exclusive": window_end_exclusive,
         "method": "Observed market FIFO realized P&L on matched sales; verified specific-item equipment only",
         "limitations": "Observed market acquisitions are not complete wealth or full inventory accounting. "
                        "Unknown basis and fee values can overlap. Summing account turnover counts both sides. "

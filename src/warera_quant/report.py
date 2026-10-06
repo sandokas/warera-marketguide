@@ -1897,12 +1897,15 @@ def generate_html_report(
     we24_chart_path: str | Path | None = None,
     participant_report: dict | None = None,
     as_of: datetime | None = None,
+    context=None,
     inflation_results: Sequence["InflationIndexResult"] | None = None,
     inflation_chart_paths: Mapping[str, str | Path] | None = None,
     verbose: bool = False,
 ) -> str:
     assumptions = assumptions or FlipAssumptions()
-    generated = (as_of or datetime.now(timezone.utc)).strftime("%Y-%m-%d %H:%M UTC")
+    generated = (context.generated_at if context else datetime.now(timezone.utc)).isoformat()
+    analysis = context.analysis_as_of if context else as_of
+    analysis_label = analysis.isoformat() if analysis else "Unavailable"
     
     if verbose:
         print(f"[VERBOSE] generate_html_report: Starting report generation with {len(df)} items")
@@ -1930,7 +1933,7 @@ def generate_html_report(
         <h1>Market intelligence, without the noise.</h1>
         <p class="muted">Completed trades provide price history; current visible orders provide executable prices and market depth.</p>
       </div>
-      <div class="hero-meta"><strong>Short-term trader report | UTC</strong><span>{data_freshness}</span><span>Report generated {escape(generated)}</span></div>
+      <div class="hero-meta"><strong>Short-term trader report | UTC</strong><span>{data_freshness}</span><span>Analysis as of {escape(analysis_label)}</span><span>Report generated {escape(generated)}</span></div>
 </header>
 """
     highlight_html = _highlight_pairs_html(highlights or [], Path(output_dir))
@@ -2041,6 +2044,7 @@ def write_outputs(
     we24_chart_path: str | Path | None = None,
     participant_report: dict | None = None,
     as_of: datetime | None = None,
+    context=None,
     inflation_results: Sequence["InflationIndexResult"] | None = None,
     inflation_chart_paths: Mapping[str, str | Path] | None = None,
     equipment_details: Iterable[dict] | None = None,
@@ -2100,6 +2104,7 @@ def write_outputs(
             data_sync_status=data_sync_status,
             participant_report=participant_report,
             as_of=as_of,
+            context=context,
             we24=we24,
             we24_chart_path=we24_chart_path,
             verbose=verbose,
@@ -2122,7 +2127,7 @@ def _display_report_timestamp(value: str | None) -> str | None:
         return value
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    return parsed.astimezone(timezone.utc).isoformat()
 
 
 def export_report_assets(
@@ -2583,8 +2588,8 @@ def format_player_summary(report: dict, player: dict) -> str:
                       for category in categories)
     lines = [
         f"{name} - 7-day market summary",
-        f"Period: {report['window_start'].strftime('%Y-%m-%d %H:%M UTC')} to "
-        f"{report['as_of'].strftime('%Y-%m-%d %H:%M UTC')} (end excluded)",
+        f"Period: {report['window_start'].isoformat()} to "
+        f"{report['as_of'].isoformat()} ({'end included' if report.get('context', {}).get('boundary_mode') == 'database-inclusive' else 'end excluded'})",
         f"Player ID: {player['entity_id']}",
     ]
     if identity.get("citizenship_name"):
@@ -2655,7 +2660,8 @@ def _write_participant_exports(out, report, equipment_details):
             writer.writerows({k: safe(v) for k, v in row.items()} for row in rows)
         paths.append(path)
     if report is not None:
-        common = {k: report[k] for k in ('as_of', 'window_start', 'method', 'turnover_basis', 'limitations')}
+        common = {k: report.get(k) for k in ('as_of', 'window_start', 'window_end_exclusive', 'method', 'turnover_basis', 'limitations')}
+        common.update({k: report.get('context', {}).get(k) for k in ('data_as_of', 'requested_as_of', 'boundary_mode', 'accounting_mode')})
         common.update(flat({'source_coverage': report['source_coverage'], 'attribution': report['coverage']}))
         rankings = []
         for kind, boards in report['rankings'].items():

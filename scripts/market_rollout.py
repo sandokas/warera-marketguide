@@ -16,6 +16,8 @@ import sys
 from warera_quant import cli
 from warera_quant.api_client import WarEraApiClient
 from warera_quant.market_store import MarketStore
+from dataclasses import replace
+from warera_quant.market_data import resolve_publication_context
 
 
 def atomic_json(path, value):
@@ -50,11 +52,14 @@ def exclusive_job(path):
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
-def invoke_cli(database, flags):
+def invoke_cli(database, flags, *, context=None):
     previous = sys.argv
     try:
         sys.argv = ['warera-marketguide', *flags, '--market-db', str(database)]
-        cli.main()
+        if context is None:
+            cli.main()
+        else:
+            cli.main(report_context=context)
     finally:
         sys.argv = previous
 
@@ -160,17 +165,26 @@ def main():
                     store = MarketStore(database)
                     if store.market_sync_metadata().status != 'complete':
                         raise RuntimeError('Source database has incomplete sync metadata')
-                    as_of = state.get('as_of') or datetime.now(timezone.utc).isoformat()
                     snapshot = job / ('snapshot-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ') + '.sqlite3')
                     store.backup(snapshot)
                     store.close()
                     # An interrupted backup is retained as an orphan, never overwritten.
-                    state.update(stage='report', snapshot=str(snapshot), as_of=as_of)
-                    atomic_json(job / 'publication.json', {'database':str(snapshot), 'as_of':as_of,
+                    with MarketStore(snapshot) as report_store:
+                        context = resolve_publication_context(report_store, state)
+                    if context.analysis_as_of is None:
+                        raise RuntimeError('Snapshot has no stored market data')
+                    state.update(stage='report', snapshot=str(snapshot), as_of=context.analysis_as_of.isoformat(), context=context.to_dict())
+                    atomic_json(job / 'publication.json', {'database':str(snapshot), 'as_of':state['as_of'], 'context':state['context'],
                         'status':'API exhaustion observed; retained legacy, inventory, lineage and settlement limits remain'})
                     save_state()
                 if state['stage'] == 'report':
-                    invoke_cli(state['snapshot'], ['--from-db','--as-of',state['as_of'],'--output',str(job / 'report')])
+                    with MarketStore(state['snapshot']) as report_store:
+                        context = resolve_publication_context(report_store, state)
+                    context = replace(context, generated_at=datetime.now(timezone.utc))
+                    state['context'] = context.to_dict()
+                    atomic_json(job / 'publication.json', {'database':state['snapshot'], 'as_of':context.analysis_as_of.isoformat(), 'context':state['context'], 'status':'Retained snapshot; source and accounting limits remain'})
+                    save_state()
+                    invoke_cli(state['snapshot'], ['--from-db','--output',str(job / 'report')], context=context)
                     state['stage'] = 'verify'
                     save_state()
                 if state['stage'] == 'verify':

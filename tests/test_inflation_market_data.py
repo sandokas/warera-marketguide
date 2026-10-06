@@ -245,7 +245,7 @@ def test_pipeline_fetches_shared_transaction_facts_once(store, monkeypatch):
     original = store.transactions_for_period
     calls = []
 
-    def recording_read(item_codes, start_epoch, end_epoch):
+    def recording_read(item_codes, start_epoch, end_epoch, **kwargs):
         calls.append((tuple(item_codes), start_epoch, end_epoch))
         return original(item_codes, start_epoch, end_epoch)
 

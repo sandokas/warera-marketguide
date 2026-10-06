@@ -19,6 +19,7 @@ from warera_quant.market_data import (
     parse_report_window,
 )
 from warera_quant.market_store import MarketStore
+from warera_quant.report_context import resolve_context
 from warera_quant.metrics import build_price_action_candles, prepare_price_action_item
 from warera_quant.warera_api import OrderLevel, TopOrders
 
@@ -47,7 +48,7 @@ def test_price_action_history_reports_authentic_sparse_coverage(tmp_path):
             _transaction("same-time", first.isoformat(), money=11, quantity=1),
             _transaction("last", last.isoformat(), money=12, quantity=1),
         ], fetched_at=NOW)
-        result = load_price_action_history(store, item_code="Bread", now=NOW, window_days=90)
+        result = load_price_action_history(store, item_code="Bread", context=resolve_context(NOW), window_days=90)
 
     assert result.window_days == DISPLAY_HISTORY_DAYS == 90
     assert result.window_start == NOW - timedelta(days=90)
@@ -85,7 +86,7 @@ def test_price_action_history_loads_whole_first_candle(tmp_path, interval, start
             _transaction("future", (now + timedelta(seconds=1)).isoformat(), money=999, quantity=1),
         ], fetched_at=now)
         history = load_price_action_history(
-            store, item_code="Bread", now=now, window_days=30, interval=interval,
+            store, item_code="Bread", context=resolve_context(now), window_days=30, interval=interval,
         )
 
     assert history.window_start == start
@@ -102,7 +103,7 @@ def test_price_action_history_loads_whole_first_candle(tmp_path, interval, start
 def test_price_action_history_preserves_exact_candle_boundary(tmp_path, interval):
     now = datetime(2026, 9, 22, tzinfo=timezone.utc)
     with _store(tmp_path) as store:
-        history = load_price_action_history(store, item_code="bread", now=now, interval=interval)
+        history = load_price_action_history(store, item_code="bread", context=resolve_context(now), interval=interval)
     assert history.window_start == now - timedelta(days=30)
     assert history.trades == ()
 
@@ -117,7 +118,7 @@ def test_price_action_chart_marks_only_current_boundary_candle_partial(tmp_path,
             _transaction(str(day), (now - timedelta(days=day)).isoformat(), money=10, quantity=1)
             for day in range(31)
         ], fetched_at=now)
-        history = load_price_action_history(store, item_code="bread", now=now, interval=interval)
+        history = load_price_action_history(store, item_code="bread", context=resolve_context(now), interval=interval)
     item = prepare_price_action_item({
         "item_code": "bread", "item_name": "Bread",
         "last_trade_price": 10, "stable_fair_price_7d": 10,
@@ -159,7 +160,7 @@ def test_estimate_latest_execution_includes_snapshot_age_and_sweep(tmp_path):
 
     assert estimate is not None
     assert estimate["levels_available"] is True
-    assert estimate["snapshot_age_seconds"] == 60
+    assert estimate["snapshot_age_seconds"] == 0  # Future reference clamps to the DB ceiling.
     assert estimate["execution"].gross_value == 23
     assert estimate["execution"].fully_filled is True
 
@@ -274,7 +275,7 @@ def test_load_market_rows_computes_window_statistics(tmp_path):
             datetime(2026, 6, 30, 11, 45, tzinfo=timezone.utc),
         )
 
-        rows = load_market_rows(store, windows=["1D"], now=NOW)
+        rows = load_market_rows(store, windows=["1D"], context=resolve_context(NOW))
 
     assert len(rows) == 1
     row = rows[0]

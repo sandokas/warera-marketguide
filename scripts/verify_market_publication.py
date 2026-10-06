@@ -8,7 +8,7 @@ from decimal import Decimal
 from pathlib import Path
 from html import unescape
 from warera_quant.market_store import MarketStore
-from warera_quant.market_data import load_participant_report, iter_equipment_sale_details
+from warera_quant.market_data import load_participant_report, iter_equipment_sale_details, resolve_publication_context
 
 folder = Path(sys.argv[1])
 meta = json.loads((folder / 'publication.json').read_text())
@@ -37,8 +37,13 @@ def rows(name):
         return list(csv.DictReader(f))
 
 with MarketStore(meta['database']) as store:
-    report = load_participant_report(store, as_of=as_of)
-    details = list(iter_equipment_sale_details(store, as_of=as_of))
+    context = resolve_publication_context(store, meta)
+    actual_context = json.loads((out / "report_context.json").read_text()) if meta.get("context") else None
+    if actual_context is not None:
+        assert actual_context == context.to_dict()
+    as_of = context.analysis_as_of
+    report = load_participant_report(store, context=context)
+    details = list(iter_equipment_sale_details(store, context=context))
     commodity_codes = set(store.item_codes())
     sales = rows('equipment_sales_7d.csv')
     exported_stats = rows('equipment_sale_stats_7d.csv')
@@ -55,7 +60,7 @@ with MarketStore(meta['database']) as store:
         assert all(datetime.fromisoformat(r['as_of']) == as_of for r in rows(name))
     fields = ('source_buy_value','source_sell_value','matched_source_sale_value',
         'net_matched_source_sale_value','uncosted_source_sale_value','unknown_fee_source_sale_value')
-    summary = {'as_of':as_of, 'status':meta['status'], 'turnover_basis':report['turnover_basis'],
+    summary = {'context':context.to_dict(), 'as_of':as_of, 'status':meta['status'], 'turnover_basis':report['turnover_basis'],
         'sources':report['sources'], 'source_coverage':report['source_coverage'],
         'attribution':report['coverage'], 'entities':len(report['entities']),
         'account_side_totals':{k:sum((r[k] for r in report['entities']), Decimal(0)) for k in fields},
