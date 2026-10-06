@@ -409,3 +409,197 @@ def test_from_db_refreshes_identities_before_first_output(monkeypatch, tmp_path)
 def test_as_of_requires_timezone(value):
     with pytest.raises(SystemExit):
         build_parser().parse_args(['--as-of', value])
+
+
+@pytest.mark.parametrize("mode,expected", [
+    ("--sync", ["sync"]),
+    ("--live", ["sync", "workflow", "prepare", "enrich", "generate"]),
+    ("--from-db", ["workflow", "prepare", "generate"]),
+])
+def test_db_commands_share_workflow_in_order(monkeypatch, tmp_path, mode, expected):
+    events = []
+    monkeypatch.setattr(cli_module, "WarEraApiClient", lambda **k: object())
+    monkeypatch.setattr(cli_module, "WarEraMarketApi", lambda client: object())
+    monkeypatch.setattr(cli_module, "sync_market_data",
+                        lambda *a, **k: events.append("sync") or SimpleNamespace())
+    monkeypatch.setattr(cli_module, "_refresh_participant_display",
+                        lambda *a, **k: events.append("enrich"))
+    monkeypatch.setattr(cli_module, "generate_report",
+                        lambda *a, **k: events.append("generate"))
+    prepare = cli_module.prepare_db_report
+    workflow = cli_module.run_db_report_workflow
+
+    def wrapped_prepare(*a, **k):
+        events.append("prepare")
+        return prepare(*a, **k)
+
+    def wrapped_workflow(*a, **k):
+        events.append("workflow")
+        return workflow(*a, **k)
+
+    monkeypatch.setattr(cli_module, "prepare_db_report", wrapped_prepare)
+    monkeypatch.setattr(cli_module, "run_db_report_workflow", wrapped_workflow)
+    monkeypatch.setattr(sys, "argv", ["warera-marketguide", mode, "--quiet",
+        "--market-db", str(tmp_path / "market.db"), "--output", str(tmp_path / "out")])
+    main()
+    assert events == expected
+    assert not (tmp_path / "out").exists()
+
+
+def test_live_and_offline_use_equivalent_prepared_and_chart_inputs(monkeypatch, tmp_path):
+    from test_participant_market_data import NOW, fact, ingest
+    from warera_quant import market_data
+
+    path = tmp_path / "market.db"
+    with MarketStore(path) as store:
+        ingest(store, [fact("old", -20), fact("buy", -2),
+            fact("sell", -1, buyer="V", seller="U"),
+            fact("equipment", -1, equipment={"_id": "helmet", "code": "helmet"})])
+    # Exercise real read models, while leaving actual publication/browser work isolated.
+    monkeypatch.setattr(cli_module, "build_we24_market_index", market_data.build_we24_market_index)
+    monkeypatch.setattr(cli_module, "load_action_cost_results", market_data.load_action_cost_results)
+    monkeypatch.setattr(cli_module, "WarEraApiClient", lambda **k: object())
+    monkeypatch.setattr(cli_module, "WarEraMarketApi", lambda client: object())
+    syncs = []
+    monkeypatch.setattr(cli_module, "sync_market_data",
+        lambda *a, **k: syncs.append(k) or SimpleNamespace())
+    enrichments = []
+    monkeypatch.setattr(cli_module, "_refresh_participant_display",
+        lambda *a, **k: enrichments.append(True))
+    prepared = []
+    prepare = cli_module.prepare_db_report
+
+    def capture_prepare(*a, **k):
+        result = prepare(*a, **k)
+        prepared.append(result)
+        return result
+
+    monkeypatch.setattr(cli_module, "prepare_db_report", capture_prepare)
+    generated = []
+
+    def capture_write(df, output, **kwargs):
+        generated.append((df.copy(), kwargs))
+        return output / "x.csv", output / "x.html"
+
+    monkeypatch.setattr(cli_module, "write_outputs", capture_write)
+    histories = []
+    load_history = cli_module.load_price_action_history
+
+    def capture_history(*a, **k):
+        result = load_history(*a, **k)
+        histories.append((k, result))
+        return result
+
+    monkeypatch.setattr(cli_module, "load_price_action_history", capture_history)
+    captured_histories = []
+    for mode in ("--live", "--from-db"):
+        histories.clear()
+        monkeypatch.setattr(sys, "argv", ["warera-marketguide", mode, "--quiet",
+            "--market-db", str(path), "--output", str(tmp_path / mode[2:]),
+            "--as-of", NOW.isoformat(), "--all-price-action-charts"])
+        main()
+        captured_histories.append(list(histories))
+    assert len(syncs) == 1 and enrichments == [True]
+    left, right = prepared
+    pd.testing.assert_frame_equal(left.market_frame, right.market_frame)
+    assert left.as_of == right.as_of == NOW
+    for field in ("data_sync_metadata", "we24", "action_cost_results",
+                  "participant_report", "equipment_details"):
+        assert getattr(left, field) == getattr(right, field)
+    pd.testing.assert_frame_equal(generated[0][0], generated[1][0])
+    for _, kwargs in generated:
+        kwargs["we24_chart_path"] = kwargs["we24_chart_path"].name
+    assert generated[0][1] == generated[1][1]
+    assert captured_histories[0] == captured_histories[1]
+    assert captured_histories[0]  # Verify chart preparation was actually exercised.
+
+
+def test_sync_failure_never_prepares_report(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli_module, "WarEraApiClient", lambda **k: object())
+    monkeypatch.setattr(cli_module, "WarEraMarketApi", lambda client: object())
+
+    def fail_sync(*a, **k):
+        raise RuntimeError("sync failed")
+
+    monkeypatch.setattr(cli_module, "sync_market_data", fail_sync)
+    monkeypatch.setattr(cli_module, "run_db_report_workflow",
+        lambda *a, **k: pytest.fail("report started after sync exception"))
+    monkeypatch.setattr(sys, "argv", ["warera-marketguide", "--live", "--quiet",
+        "--market-db", str(tmp_path / "market.db")])
+    with pytest.raises(RuntimeError, match="sync failed"):
+        main()
+
+
+def test_live_preserves_partial_sync_publication(monkeypatch, tmp_path):
+    from test_participant_market_data import NOW, fact, ingest
+
+    monkeypatch.setattr(cli_module, "WarEraApiClient", lambda **k: object())
+    monkeypatch.setattr(cli_module, "WarEraMarketApi", lambda client: object())
+    monkeypatch.setattr(cli_module, "_refresh_participant_display", lambda *a, **k: None)
+
+    def partial_sync(api, store, **kwargs):
+        ingest(store, [fact("committed", -1)])
+        store.record_market_sync(NOW, status="partial")
+        return SimpleNamespace(error_count=1)
+
+    captured = []
+    monkeypatch.setattr(cli_module, "sync_market_data", partial_sync)
+
+    def write(df, output, **kwargs):
+        assert kwargs["data_sync_status"] == "partial"
+        assert kwargs["participant_report"]["entities"]
+        captured.append(True)
+        return output / "x.csv", output / "x.html"
+
+    monkeypatch.setattr(cli_module, "write_outputs", write)
+    monkeypatch.setattr(sys, "argv", ["warera-marketguide", "--live", "--quiet",
+        "--market-db", str(tmp_path / "market.db"), "--output", str(tmp_path / "out"),
+        "--as-of", NOW.isoformat()])
+    main()
+    assert captured == [True]
+
+
+@pytest.mark.parametrize("flags,expected", [
+    (["--sync", "--resync-market", "--history-scope", "all", "--resume-market"],
+     {"resync_market": True, "history_scope": "all", "resume_market": True}),
+    (["--live", "--transaction-backfill", "--lookback-days", "90", "--history-pages", "2",
+      "--exclude-item-code", "bread"],
+     {"transaction_backfill": True, "lookback_days": 90, "history_pages": 2,
+      "exclude_item_codes": {"bread"}}),
+])
+def test_shared_sync_keeps_resume_and_backfill_options(monkeypatch, tmp_path, flags, expected):
+    monkeypatch.setattr(cli_module, "WarEraApiClient", lambda **k: object())
+    monkeypatch.setattr(cli_module, "WarEraMarketApi", lambda client: object())
+    calls = []
+    monkeypatch.setattr(cli_module, "sync_market_data",
+        lambda *a, **k: calls.append(k) or SimpleNamespace())
+    monkeypatch.setattr(cli_module, "run_db_report_workflow", lambda *a, **k: None)
+    monkeypatch.setattr(sys, "argv", ["warera-marketguide", *flags, "--quiet",
+        "--market-db", str(tmp_path / "market.db")])
+    main()
+    assert len(calls) == 1
+    assert {key: calls[0][key] for key in expected} == expected
+
+
+def test_custom_endpoint_keeps_compatibility_pipeline(monkeypatch, tmp_path):
+    calls = []
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def get_json(self, endpoint, *, params):
+            calls.append((endpoint, params))
+            return {"data": {"items": [{"item_name": "Bread", "bid": 9,
+                "ask": 10, "trades_7d": 5, "high_7d": 11, "low_7d": 8}]}}
+
+    monkeypatch.setattr(cli_module, "WarEraApiClient", Client)
+    monkeypatch.setattr(cli_module, "sync_market_data", lambda *a, **k: pytest.fail("custom endpoint synced"))
+    monkeypatch.setattr(cli_module, "run_db_report_workflow", lambda *a, **k: pytest.fail("custom endpoint used DB"))
+    output = tmp_path / "out"
+    monkeypatch.setattr(sys, "argv", ["warera-marketguide", "--api-endpoint", "/custom",
+        "--api-param", "page=2", "--api-records-path", "data.items", "--quiet",
+        "--output", str(output)])
+    main()
+    assert calls == [("/custom", {"page": "2"})]
+    assert pd.read_csv(output / "market_trends.csv").iloc[0]["flip_verdict"] == "Unavailable"

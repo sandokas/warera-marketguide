@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import math
 import json
 from datetime import datetime, timedelta, timezone
@@ -257,8 +258,6 @@ def main() -> None:
     load_dotenv()
     args = build_parser().parse_args()
     report_as_of = args.as_of or datetime.now(timezone.utc)
-    participant_report = None
-    equipment_details = None
     if args.player_summary:
         if any((args.live, args.sync, args.housekeeping, args.api_endpoint, args.migrate_db,
                 args.market_sync_status, args.transaction_backfill, args.resync_market,
@@ -341,10 +340,6 @@ def main() -> None:
         finally:
             store.close()
         return
-    output_dir = Path(args.output)
-    data_sync_metadata = None
-    we24 = None
-    action_cost_results = None
     try:
         config = load_config(args.config)
     except ConfigError as exc:
@@ -457,53 +452,11 @@ def main() -> None:
                 )
             if args.sync:
                 return
-            preparation = ProgressReporter(None if args.quiet else lambda message: print(message, flush=True), verbose=args.verbose)
-            rows = preparation.call("Market rows", load_market_rows,
-                store,
-                progress=preparation,
-                windows=("1D", "7D", "30D"),
-                now=report_as_of,
-                forecast_horizon_hours=args.forecast_horizon_hours,
-                forecast_target_max_lag_hours=args.forecast_target_max_lag_hours,
-                forecast_min_samples=args.forecast_min_samples,
-                min_tick=args.min_tick,
-                flip_assumptions=assumptions,
-            )
-            data_sync_metadata = preparation.call("Sync metadata", store.market_sync_metadata)
-            if args.live and not args.sync:
-                we24 = preparation.call("WE24 index", build_we24_market_index, store, as_of=report_as_of, display_days=max(args.we24_days, args.research_days or 0))
-                action_cost_results = preparation.call("Action costs", load_action_cost_results, store, as_of=report_as_of)
-                participant_report = preparation.call("Participant rankings", load_participant_report, store, as_of=report_as_of, verbose=args.verbose, progress=preparation)
-                preparation.call("Identity and image refresh", _refresh_participant_display, store, participant_report, verbose=args.verbose, progress=preparation)
-                equipment_details = preparation.call("Equipment sale details", lambda: list(iter_equipment_sale_details(store, as_of=report_as_of, progress=preparation)))
-            preparation.summary()
-        # Database read models are already normalized and include structured
-        # order-book levels.  Keep those nested values intact for report
-        # rendering instead of flattening them like an arbitrary JSON payload.
-        df_in = pd.DataFrame(rows)
+        run_db_report_workflow(args, assumptions, as_of=report_as_of)
+        return
     elif args.from_db:
-        with MarketStore(args.market_db) as store:
-            preparation = ProgressReporter(None if args.quiet else lambda message: print(message, flush=True), verbose=args.verbose)
-            rows = preparation.call("Market rows", load_market_rows,
-                store,
-                progress=preparation,
-                windows=("1D", "7D", "30D"),
-                now=report_as_of,
-                forecast_horizon_hours=args.forecast_horizon_hours,
-                forecast_target_max_lag_hours=args.forecast_target_max_lag_hours,
-                forecast_min_samples=args.forecast_min_samples,
-                min_tick=args.min_tick,
-                flip_assumptions=assumptions,
-            )
-            data_sync_metadata = preparation.call("Sync metadata", store.market_sync_metadata)
-            we24 = preparation.call("WE24 index", build_we24_market_index, store, as_of=report_as_of, display_days=max(args.we24_days, args.research_days or 0))
-            action_cost_results = preparation.call("Action costs", load_action_cost_results, store, as_of=report_as_of)
-            participant_report = preparation.call("Participant rankings", load_participant_report, store, as_of=report_as_of, verbose=args.verbose, progress=preparation)
-            if args.refresh_identities:
-                preparation.call("Identity and image refresh", _refresh_participant_display, store, participant_report, verbose=args.verbose, progress=preparation)
-            equipment_details = preparation.call("Equipment sale details", lambda: list(iter_equipment_sale_details(store, as_of=report_as_of, progress=preparation)))
-            preparation.summary()
-        df_in = pd.DataFrame(rows)
+        run_db_report_workflow(args, assumptions, as_of=report_as_of)
+        return
     elif args.api_endpoint:
         client = WarEraApiClient(min_interval_seconds=args.min_interval)
         data = client.get_json(args.api_endpoint, params=dict(args.api_param))
@@ -511,6 +464,64 @@ def main() -> None:
     else:
         df_in = load_market_csv(args.csv)
 
+    generate_report(args, assumptions, ReportPreparation(df_in, report_as_of))
+
+
+@dataclass
+class ReportPreparation:
+    """Prepared inputs shared by DB-backed and compatibility report generation."""
+
+    market_frame: pd.DataFrame
+    as_of: datetime
+    data_sync_metadata: object = None
+    we24: object = None
+    action_cost_results: object = None
+    participant_report: object = None
+    equipment_details: object = None
+
+
+def prepare_db_report(store, args, assumptions, *, as_of: datetime) -> ReportPreparation:
+    """Read report inputs at the supplied cutoff; enrich only when requested."""
+    preparation = ProgressReporter(None if args.quiet else lambda message: print(message, flush=True), verbose=args.verbose)
+    rows = preparation.call("Market rows", load_market_rows,
+        store, progress=preparation, windows=("1D", "7D", "30D"), now=as_of,
+        forecast_horizon_hours=args.forecast_horizon_hours,
+        forecast_target_max_lag_hours=args.forecast_target_max_lag_hours,
+        forecast_min_samples=args.forecast_min_samples, min_tick=args.min_tick,
+        flip_assumptions=assumptions)
+    metadata = preparation.call("Sync metadata", store.market_sync_metadata)
+    we24 = preparation.call("WE24 index", build_we24_market_index, store, as_of=as_of,
+        display_days=max(args.we24_days, args.research_days or 0))
+    costs = preparation.call("Action costs", load_action_cost_results, store, as_of=as_of)
+    participants = preparation.call("Participant rankings", load_participant_report, store,
+        as_of=as_of, verbose=args.verbose, progress=preparation)
+    if args.live or args.refresh_identities:
+        preparation.call("Identity and image refresh", _refresh_participant_display,
+            store, participants, verbose=args.verbose, progress=preparation)
+    equipment = preparation.call("Equipment sale details",
+        lambda: list(iter_equipment_sale_details(store, as_of=as_of, progress=preparation)))
+    preparation.summary()
+    return ReportPreparation(pd.DataFrame(rows), as_of, metadata, we24, costs, participants, equipment)
+
+
+def run_db_report_workflow(args, assumptions, *, as_of: datetime) -> ReportPreparation:
+    """Prepare and generate a DB report without collecting market data."""
+    with MarketStore(args.market_db) as store:
+        prepared = prepare_db_report(store, args, assumptions, as_of=as_of)
+    generate_report(args, assumptions, prepared)
+    return prepared
+
+
+def generate_report(args, assumptions, prepared: ReportPreparation) -> None:
+    """Calculate and publish prepared inputs using the existing report layers."""
+    df_in = prepared.market_frame
+    report_as_of = prepared.as_of
+    data_sync_metadata = prepared.data_sync_metadata
+    we24 = prepared.we24
+    action_cost_results = prepared.action_cost_results
+    participant_report = prepared.participant_report
+    equipment_details = prepared.equipment_details
+    output_dir = Path(args.output)
     if not (args.live or args.from_db):
         compatibility_defaults = {
             "forecast_model_version": "direction-v1",
@@ -559,7 +570,6 @@ def main() -> None:
     for index, item in zip(df_out.index, dislocations):
         for column, value in price_dislocation_fields(item).items():
             df_out.at[index, column] = value
-    metric_window = f"{args.lookback_days:g}D" if args.live else "7D"
     chart_path = None
     chart_label = None
     rendered_highlights: list[dict[str, object]] = []
@@ -692,8 +702,6 @@ def main() -> None:
         data_paths.append(output_dir / "market_action_costs.csv")
     inventory = export_report_assets(report_path, output_dir, extra_paths=optional_chart_paths, data_paths=data_paths, verbose=args.verbose)
     print(f"Wrote {len(inventory)} current publication assets and asset_inventory.json")
-
-
 
 if __name__ == "__main__":
     main()

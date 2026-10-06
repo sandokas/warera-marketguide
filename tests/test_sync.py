@@ -70,6 +70,7 @@ def test_global_streams_new_codes_individual_orders_and_replay(tmp_path):
         assert [e["order_id"] for e in entries] == ["a", "b"]
         replay = run(store, client)
         assert replay.transactions_inserted == 0 and replay.transactions_skipped == 2
+        assert store.data_as_of() == NOW  # Real observations outrank both stream histories.
         assert store.stream_status("trading")["progress"]["unchanged"] == 1
         assert store.transaction_coverage(["retiredCode"])["retiredCode"]
 
@@ -171,6 +172,7 @@ def test_failed_pages_do_not_commit_rows_or_coverage(tmp_path, monkeypatch, fail
         assert "secret-cursor" not in str(state) + str(messages)
         assert store.stream_status("itemMarket")["progress"]["status"] == "exhausted"
         assert store.market_sync_metadata().status == "partial"
+        assert store.data_as_of() == NOW  # Only committed observations/pages contribute.
 
 
 def test_failure_recording_preserves_original_exception(tmp_path, monkeypatch):
@@ -195,6 +197,18 @@ def test_order_failure_does_not_block_transactions(tmp_path):
         result = run(store, FakeClient({("trading", None): {"items": [trade()]}}, order_error=True))
         assert result.error_count == 1 and result.transactions_inserted == 1
         assert result.order_books_observed == 0
+        assert store.data_as_of() == NOW  # The price observation was committed.
+
+
+@pytest.mark.parametrize("options", [{}, {"resync_market": True, "history_scope": "all"},
+                                     {"transaction_backfill": True}, {"resync_market": True, "history_scope": "all", "resume_market": True}])
+def test_all_sync_modes_maintain_global_clock(tmp_path, options):
+    newer = "2026-09-23T12:00:01.123456Z"
+    client = FakeClient({("itemMarket", None): {"items": [trade("equipment-clock", newer,
+                        code="unknownEquipment", kind="itemMarket")]}})
+    with MarketStore(tmp_path / "clock") as store:
+        run(store, client, **options)
+        assert store.data_as_of() == datetime.fromisoformat(newer.replace("Z", "+00:00"))
 
 
 def test_page_cap_and_legacy_backfill(tmp_path):

@@ -11,7 +11,7 @@ from collections.abc import Iterable
 from .market_models import TransactionFacts, StreamProgress, StreamCheckpoint, EnrichmentCoverage, OrderLevel, RejectedTransactionPage
 
 
-LATEST_SCHEMA_VERSION = 6
+LATEST_SCHEMA_VERSION = 7
 
 
 class MarketStoreError(RuntimeError):
@@ -119,6 +119,18 @@ class MarketStore:
             connection.rollback()
             raise
         _backfill_market_sync_metadata(connection)
+
+    def data_as_of(self) -> datetime | None:
+        """Read the retained global market clock without scanning or writing facts."""
+        value = self._connect().execute(
+            "select data_as_of_us from market_data_metadata where id=1"
+        ).fetchone()[0]
+        return None if value is None else datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(microseconds=value)
+
+    def _advance_data_clock(self, value: int) -> None:
+        self._connect().execute(
+            "update market_data_metadata set data_as_of_us=? where id=1 "
+            "and (data_as_of_us is null or data_as_of_us < ?)", (value, value))
 
     def schema_version(self) -> int:
         connection = self._connect()
@@ -445,6 +457,14 @@ class MarketStore:
             latest_fetch = old["last_fetched_at"]
         c.execute("update transactions set unit_price=case when quantity>0 then money/quantity else null end, first_fetched_at=coalesce(first_fetched_at,fetched_at), last_fetched_at=?, normalization_version=max(normalization_version,?), normalization_status=case when exists(select 1 from transaction_extra_fields where transaction_id=?) then 'extensions' else 'normalized' end where id=?",
                   (latest_fetch, fact.normalization_version, transaction_id, transaction_id))
+        # Use the merged, retained timestamp, never the incoming revision's timestamp.
+        retained = c.execute("select created_at_us,created_at from transactions where id=?", (transaction_id,)).fetchone()
+        retained_us = _stored_transaction_us(retained)
+        if old is not None and retained_us < _stored_transaction_us(old):
+            clock = c.execute("select data_as_of_us from market_data_metadata where id=1").fetchone()[0]
+            if clock == _stored_transaction_us(old):
+                _reconcile_data_clock(c)
+        self._advance_data_clock(retained_us)
         return "inserted" if inserted else "enriched" if changed else "unchanged"
 
     def transaction_details(self, transaction_id: str) -> dict[str, Any] | None:
@@ -816,6 +836,9 @@ class MarketStore:
                 rows,
             )
 
+            if rows:
+                self._advance_data_clock(_datetime_us(_as_utc(observed_at)))
+
     def upsert_item_production_points(
         self,
         values: dict[str, float | None],
@@ -904,6 +927,9 @@ class MarketStore:
                     level_rows,
                 )
 
+            if snapshots:
+                self._advance_data_clock(_datetime_us(_as_utc(observed_at)))
+
     def order_entries(self, observation_id: int) -> list[dict[str, Any]]:
         c = self._connect()
         entries = [dict(r) for r in c.execute("select * from order_book_entries where observation_id=? order by side,entry_position", (observation_id,))]
@@ -971,6 +997,9 @@ class MarketStore:
                 "delete from order_book_observations where observed_at_epoch < ?",
                 (cutoff_epoch,),
             ).rowcount
+
+            if transactions_deleted or price_observations_deleted or order_book_observations_deleted:
+                _reconcile_data_clock(connection)
 
         vacuumed = False
         if vacuum_interval_days > 0 and _vacuum_is_due(
@@ -1550,6 +1579,34 @@ def migrate_to_v6(connection: sqlite3.Connection) -> None:
         text_color text not null, image_url text not null, observed_at text not null)""")
 
 
+def _stored_transaction_us(row: sqlite3.Row) -> int:
+    return row["created_at_us"] if row["created_at_us"] is not None else _datetime_us(_parse_datetime(row["created_at"], "created_at"))
+
+
+def _reconcile_data_clock(connection: sqlite3.Connection) -> None:
+    """One-time bootstrap / explicit maintenance; stream narrow columns, not domain rows.
+
+    Existing indexes lead with item or stream, not global exact time. A single
+    narrow scan also preserves offset and fractional legacy ISO timestamps.
+    """
+    newest = None
+    for row in connection.execute("select created_at_us,created_at from transactions"):
+        value = _stored_transaction_us(row)
+        newest = value if newest is None else max(newest, value)
+    for table in ("price_observations", "order_book_observations"):
+        for row in connection.execute(f"select observed_at from {table}"):
+            value = _datetime_us(_parse_datetime(row["observed_at"], "observed_at"))
+            newest = value if newest is None else max(newest, value)
+    connection.execute("update market_data_metadata set data_as_of_us=? where id=1", (newest,))
+
+
+def migrate_to_v7(connection: sqlite3.Connection) -> None:
+    """Persist the exact global retained market timestamp, independent of sync status."""
+    connection.execute("create table market_data_metadata (id integer primary key check(id=1), data_as_of_us integer)")
+    connection.execute("insert into market_data_metadata (id,data_as_of_us) values (1,null)")
+    _reconcile_data_clock(connection)
+
+
 MIGRATIONS = {
     1: migrate_to_v1,
     2: migrate_to_v2,
@@ -1557,6 +1614,7 @@ MIGRATIONS = {
     4: migrate_to_v4,
     5: migrate_to_v5,
     6: migrate_to_v6,
+    7: migrate_to_v7,
 }
 
 
