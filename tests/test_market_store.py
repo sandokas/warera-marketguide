@@ -552,6 +552,48 @@ def test_entity_names_are_optional_dated_cache(tmp_path):
         assert store.entity_name("user", "one")["lookup_status"] == "failed"
 
 
+def test_find_mu_by_id_and_name(tmp_path):
+    with _store(tmp_path) as store:
+        store.cache_entity_name("mu", "mu-1", "Alpha MU", "2026-09-22T00:00:00Z", "ok")
+        store.cache_entity_name("mu", "mu-2", "Beta MU", "2026-09-22T00:00:00Z", "ok")
+
+        # Find by exact ID
+        results = store.find_mu("mu-1")
+        assert len(results) == 1
+        assert results[0]["entity_id"] == "mu-1"
+        assert results[0]["name"] == "Alpha MU"
+
+        # Find by case-insensitive name
+        results = store.find_mu("alpha mu")
+        assert len(results) == 1
+        assert results[0]["entity_id"] == "mu-1"
+
+        # Find with no matches
+        results = store.find_mu("nonexistent")
+        assert len(results) == 0
+
+
+def test_find_country_by_id_and_name(tmp_path):
+    with _store(tmp_path) as store:
+        store.cache_entity_name("country", "country-1", "Atlantis", "2026-09-22T00:00:00Z", "ok")
+        store.cache_entity_name("country", "country-2", "Lemuria", "2026-09-22T00:00:00Z", "ok")
+
+        # Find by exact ID
+        results = store.find_country("country-1")
+        assert len(results) == 1
+        assert results[0]["entity_id"] == "country-1"
+        assert results[0]["name"] == "Atlantis"
+
+        # Find by case-insensitive name
+        results = store.find_country("atlantis")
+        assert len(results) == 1
+        assert results[0]["entity_id"] == "country-1"
+
+        # Find with no matches
+        results = store.find_country("nonexistent")
+        assert len(results) == 0
+
+
 def test_transport_preserves_decimal_tokens_before_boundary(monkeypatch):
     from requests import Response
     from warera_quant.api_client import WarEraApiClient

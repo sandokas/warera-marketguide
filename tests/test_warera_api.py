@@ -258,3 +258,91 @@ def test_missing_items_is_not_exhaustion():
     api = WarEraMarketApi(FakeClient([_trpc({})]))
     with pytest.raises(WarEraApiError, match="items list"):
         api.get_transaction_page(limit=100)
+
+
+def test_search_mu_filters_by_exact_name():
+    client = FakeClient([_trpc({"items": [
+        {"_id": "mu-1", "name": "Alpha MU"},
+        {"_id": "mu-2", "name": "Alpha MU Copy"},
+        {"_id": "mu-3", "name": "Beta MU"},
+    ]})])
+    api = WarEraMarketApi(client)
+
+    def mock_get_identity(kind, entity_id):
+        from warera_quant.market_models import DisplayIdentity
+        mapping = {"mu-1": "Alpha MU", "mu-2": "Alpha MU Copy", "mu-3": "Beta MU"}
+        return DisplayIdentity(kind, entity_id, mapping[entity_id])
+
+    original_get_identity = api.get_identity
+    api.get_identity = mock_get_identity
+    results = api.search_mu("Alpha MU")
+    api.get_identity = original_get_identity
+
+    assert len(results) == 1
+    assert results[0].entity_id == "mu-1"
+    assert results[0].name == "Alpha MU"
+    assert client.calls == [("/mu.getManyPaginated", {"input": '{"search": "Alpha MU", "limit": 100}'})]
+
+
+@pytest.mark.parametrize("first_name", ["Alpha MU Copy", "Alpha MU"])
+def test_search_mu_reads_later_pages_and_deduplicates_ids(first_name, monkeypatch):
+    from warera_quant.market_models import DisplayIdentity
+
+    client = FakeClient([
+        _trpc({"items": [{"_id": "mu-1"}], "nextCursor": "page-2"}),
+        _trpc({"items": [{"_id": "mu-1"}, {"_id": "mu-2"}], "nextCursor": None}),
+    ])
+    api = WarEraMarketApi(client)
+    profile_calls = []
+
+    def get_identity(kind, entity_id):
+        profile_calls.append((kind, entity_id))
+        return DisplayIdentity(kind, entity_id, first_name if entity_id == "mu-1" else "ALPHA MU")
+
+    monkeypatch.setattr(api, "get_identity", get_identity)
+    results = api.search_mu("Alpha MU")
+
+    assert [row.entity_id for row in results] == (["mu-1", "mu-2"] if first_name == "Alpha MU" else ["mu-2"])
+    assert profile_calls == [("mu", "mu-1"), ("mu", "mu-2")]
+    assert [json.loads(params["input"]) for _, params in client.calls] == [
+        {"search": "Alpha MU", "limit": 100},
+        {"search": "Alpha MU", "limit": 100, "cursor": "page-2"},
+    ]
+
+
+@pytest.mark.parametrize("cursor", [123, "", "page-2"])
+def test_search_mu_rejects_invalid_or_repeated_cursors(cursor):
+    client = FakeClient([
+        _trpc({"items": [], "nextCursor": "page-2"}),
+        _trpc({"items": [], "nextCursor": cursor}),
+    ])
+    with pytest.raises(WarEraApiError, match="cursor"):
+        WarEraMarketApi(client).search_mu("Alpha MU")
+
+
+def test_search_country_filters_by_exact_name():
+    client = FakeClient([_trpc([
+        {"_id": "country-1", "name": "Atlantis", "code": "atl"},
+        {"_id": "country-2", "name": "Atlantis Copy", "code": "atl2"},
+        {"_id": "country-3", "name": "Lemuria", "code": "lem"},
+    ]), _trpc({"_id": "country-1", "name": "Atlantis", "code": "atl"})])
+    api = WarEraMarketApi(client)
+    results = api.search_country("ATLANTIS")
+
+    assert len(results) == 1
+    assert results[0].entity_id == "country-1"
+    assert results[0].name == "Atlantis"
+    assert results[0].country_code == "atl"
+    assert client.calls == [
+        ("/country.getAllCountries", None),
+        ("/country.getCountryById", {"input": '{"countryId": "country-1"}'}),
+    ]
+
+
+def test_search_country_no_match_does_not_fetch_profiles():
+    client = FakeClient([_trpc([
+        {"_id": "country-1", "name": "Lemuria"},
+        {"_id": "country-2", "name": None},
+    ])])
+    assert WarEraMarketApi(client).search_country("Atlantis") == []
+    assert client.calls == [("/country.getAllCountries", None)]

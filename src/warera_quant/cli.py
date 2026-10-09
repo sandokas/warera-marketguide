@@ -26,6 +26,8 @@ from .market_data import (
     load_market_rows,
     load_participant_report,
     resolve_player_identity,
+    resolve_mu_identity,
+    resolve_country_identity,
     load_entity_activity,
     displayed_identity_keys,
     enrich_participant_display,
@@ -81,6 +83,46 @@ def _current_complete_utc_midnight(now: datetime) -> datetime:
     return current.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
 
 
+def _handle_entity_summary(store: MarketStore, entity_kind: str, value: str, report_as_of: datetime | None,
+                           accounting_mode: str, verbose: bool, quiet: bool) -> None:
+    """Shared logic for player/mu/country summary commands."""
+    entity_name = {"user": "Player", "mu": "MU", "country": "Country"}[entity_kind]
+    progress = ProgressReporter(None if quiet else lambda message: print(message, flush=True), verbose=verbose)
+
+    resolve_func = {"user": resolve_player_identity, "mu": resolve_mu_identity, "country": resolve_country_identity}[entity_kind]
+    search_func = {"user": lambda api, v: api.search_users(v),
+                   "mu": lambda api, v: api.search_mu(v),
+                   "country": lambda api, v: api.search_country(v)}[entity_kind]
+
+    entity_id, candidates = resolve_func(store, value)
+    identity = None
+    if entity_id is None and len(candidates) > 1:
+        choices = "\n".join(f"  {row.get('name') or '(unnamed)'} - {row['entity_id']}" for row in candidates)
+        raise SystemExit(f"{entity_name} name is ambiguous; rerun with an exact ID:\n{choices}")
+    if entity_id is None:
+        try:
+            live_matches = search_func(WarEraMarketApi(WarEraApiClient()), value.strip())
+        except Exception as exc:
+            raise SystemExit(f"{entity_name} was not found in the local identity cache, and live WarEra name lookup failed: {exc}") from exc
+        if len(live_matches) > 1:
+            choices = "\n".join(f"  {item.name} - {item.entity_id}" for item in live_matches)
+            raise SystemExit(f"{entity_name} name is ambiguous; rerun with an exact ID:\n{choices}")
+        if not live_matches:
+            raise SystemExit(f"{entity_name} not found in the cached identities or seven-day activity: {value}")
+        identity = live_matches[0]
+        entity_id = identity.entity_id
+    report = load_entity_activity(store, entity_kind, entity_id, as_of=report_as_of,
+        accounting_mode=accounting_mode, verbose=verbose, progress=progress)
+    entity = next(iter(report["entities"]), None)
+    if entity is None:
+        name = identity.name if identity else (candidates[0].get("name") or entity_id)
+        raise SystemExit(f"No observed seven-day activity for {name} ({entity_id}).")
+    if identity is not None:
+        entity = {**entity, "name": identity.name,
+                  "identity": {**(entity.get("identity") or {}), "display_name": identity.name}}
+    print(format_player_summary(report, entity))
+
+
 def _parse_as_of(value: str) -> datetime:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -103,7 +145,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--migrate-db", action="store_true", help="Back up and migrate an existing database offline, then exit.")
     parser.add_argument("--market-sync-status", action="store_true", help="Show offline market ingestion progress and coverage, then exit.")
     parser.add_argument("--participant-accounting", choices=("window", "full-fifo"), default="window", help="Window activity (default) or explicit historical FIFO accounting.")
-    parser.add_argument("--player-summary", metavar="NAME_OR_ID", help="Print one player's seven-day market summary from SQLite, then exit.")
+    summaries = parser.add_mutually_exclusive_group()
+    summaries.add_argument("--player-summary", metavar="NAME_OR_ID", help="Print one player's seven-day market summary from SQLite, then exit.")
+    summaries.add_argument("--mu-summary", metavar="NAME_OR_ID", help="Print one MU's seven-day market summary from SQLite, then exit.")
+    summaries.add_argument("--country-summary", metavar="NAME_OR_ID", help="Print one country's seven-day market summary from SQLite, then exit.")
     parser.add_argument("--resume-market", action="store_true", help="Persist page-atomic cursors and resume an all-history resync; cursor validity is upstream-dependent.")
     parser.add_argument("--resync-market", action="store_true", help="Enrich both global market streams; requires --sync --history-scope 7d or all.")
     parser.add_argument("--history-scope", choices=("7d", "all"), help="Download scope for recent enrichment, independent of report windows.")
@@ -263,44 +308,23 @@ def main(*, report_context: ReportContext | None = None) -> None:
     load_dotenv()
     args = build_parser().parse_args()
     report_as_of = args.as_of
-    if args.player_summary:
+
+    summary_args = [(args.player_summary, "user"), (args.mu_summary, "mu"), (args.country_summary, "country")]
+    summary_arg = next((v for v in summary_args if v[0]), None)
+
+    if summary_arg:
+        value, entity_kind = summary_arg
         if any((args.live, args.sync, args.housekeeping, args.api_endpoint, args.migrate_db,
                 args.market_sync_status, args.transaction_backfill, args.resync_market,
                 args.history_scope, args.resume_market, args.refresh_identities)):
-            raise SystemExit("--player-summary is a standalone offline action.")
-        if not args.player_summary.strip():
-            raise SystemExit("--player-summary requires a player name or ID.")
+            raise SystemExit(f"--{entity_kind}-summary is a standalone offline action.")
+        if not value.strip():
+            raise SystemExit(f"--{entity_kind}-summary requires a {entity_kind} name or ID.")
         if not Path(args.market_db).is_file():
             raise SystemExit("Market database does not exist.")
-        progress = ProgressReporter(None if args.quiet else lambda message: print(message, flush=True), verbose=args.verbose)
         with MarketStore(args.market_db) as store:
-            player_id, candidates = resolve_player_identity(store, args.player_summary)
-            identity = None
-            if player_id is None and len(candidates) > 1:
-                choices = "\n".join(f"  {row.get('name') or '(unnamed)'} - {row['entity_id']}" for row in candidates)
-                raise SystemExit(f"Player name is ambiguous; rerun with an exact player ID:\n{choices}")
-            if player_id is None:
-                try:
-                    live_matches = WarEraMarketApi(WarEraApiClient()).search_users(args.player_summary.strip())
-                except Exception as exc:
-                    raise SystemExit(f"Player was not found in the local identity cache, and live WarEra name lookup failed: {exc}") from exc
-                if len(live_matches) > 1:
-                    choices = "\n".join(f"  {item.name} - {item.entity_id}" for item in live_matches)
-                    raise SystemExit(f"Player name is ambiguous; rerun with an exact player ID:\n{choices}")
-                if not live_matches:
-                    raise SystemExit(f"Player not found in the cached identities or seven-day activity: {args.player_summary}")
-                identity = live_matches[0]
-                player_id = identity.entity_id
-            report = load_entity_activity(store, "user", player_id, as_of=report_as_of,
-                accounting_mode=args.participant_accounting, verbose=args.verbose, progress=progress)
-            player = next(iter(report["entities"]), None)
-            if player is None:
-                name = identity.name if identity else (candidates[0].get("name") or player_id)
-                raise SystemExit(f"No observed seven-day activity for {name} ({player_id}).")
-            if identity is not None:
-                player = {**player, "name": identity.name,
-                          "identity": {**(player.get("identity") or {}), "display_name": identity.name}}
-        print(format_player_summary(report, player))
+            _handle_entity_summary(store, entity_kind, value, report_as_of,
+                                   args.participant_accounting, args.verbose, args.quiet)
         return
     if args.refresh_identities and not args.from_db:
         if any((args.from_db, args.live, args.sync, args.housekeeping, args.api_endpoint,

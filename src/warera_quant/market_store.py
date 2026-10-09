@@ -676,6 +676,22 @@ class MarketStore:
         return sorted({row["entity_id"]: dict(row) for row in [*by_id, *by_name]}.values(),
                       key=lambda row: row["entity_id"])
 
+    def find_mu(self, value: str) -> list[dict]:
+        """Find cached MUs by exact ID or case-insensitive display name."""
+        connection = self._connect()
+        by_id = connection.execute("select * from market_entities where entity_kind='mu' and entity_id=?", (value,)).fetchall()
+        by_name = connection.execute("select * from market_entities where entity_kind='mu' and name=? collate nocase", (value,)).fetchall()
+        return sorted({row["entity_id"]: dict(row) for row in [*by_id, *by_name]}.values(),
+                      key=lambda row: row["entity_id"])
+
+    def find_country(self, value: str) -> list[dict]:
+        """Find cached countries by exact ID or case-insensitive display name."""
+        connection = self._connect()
+        by_id = connection.execute("select * from market_entities where entity_kind='country' and entity_id=?", (value,)).fetchall()
+        by_name = connection.execute("select * from market_entities where entity_kind='country' and name=? collate nocase", (value,)).fetchall()
+        return sorted({row["entity_id"]: dict(row) for row in [*by_id, *by_name]}.values(),
+                      key=lambda row: row["entity_id"])
+
     def _write_progress(self, progress: StreamProgress) -> None:
         if progress.pages == 0:
             self._clear_checkpoint(progress.stream)

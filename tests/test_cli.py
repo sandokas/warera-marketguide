@@ -24,6 +24,18 @@ def test_order_book_sync_defaults_to_api_maximum():
     assert args.order_limit == 100
 
 
+@pytest.mark.parametrize("flags", [
+    ("--player-summary", "--mu-summary"),
+    ("--player-summary", "--country-summary"),
+    ("--mu-summary", "--country-summary"),
+])
+def test_summary_options_are_mutually_exclusive(flags, capsys):
+    with pytest.raises(SystemExit) as exc:
+        build_parser().parse_args([flags[0], "first", flags[1], "second"])
+    assert exc.value.code == 2
+    assert "not allowed with argument" in capsys.readouterr().err
+
+
 def test_player_summary_prints_one_user_without_writing_report(monkeypatch, tmp_path, capsys):
     from test_participant_market_data import NOW, fact, ingest
 
@@ -99,6 +111,156 @@ def test_player_summary_resolves_uncached_interface_name_live(monkeypatch, tmp_p
     assert "Interface Name - 7-day market summary" in output
     assert "Player ID: live-id" in output
     assert "Total turnover: 10.000 BTC" in output
+
+
+def test_mu_summary_prints_one_mu_without_writing_report(monkeypatch, tmp_path, capsys):
+    from test_participant_market_data import NOW, fact, ingest
+
+    path = tmp_path / "market.db"
+    with MarketStore(path) as store:
+        ingest(store, [fact("buy", -2, buyer="player", seller="seller", money="12", quantity="3", buyerMuId="mu-id")])
+        store.cache_entity_name("mu", "mu-id", "Example MU", NOW.isoformat(), "found")
+
+    monkeypatch.setattr(cli_module, "write_outputs",
+                        lambda *args, **kwargs: pytest.fail("mu summary wrote the normal report"))
+    monkeypatch.setattr(sys, "argv", [
+        "warera-marketguide", "--mu-summary", "example mu",
+        "--market-db", str(path), "--as-of", NOW.isoformat(), "--quiet",
+    ])
+
+    main()
+
+    output = capsys.readouterr().out
+    assert "Example MU - 7-day market summary" in output
+    assert "MU ID: mu-id" in output
+    assert "Total turnover: 12.000 BTC" in output
+
+
+def test_mu_summary_reports_ambiguous_cached_name(monkeypatch, tmp_path):
+    from test_participant_market_data import NOW
+
+    path = tmp_path / "market.db"
+    with MarketStore(path) as store:
+        store.cache_entity_name("mu", "one", "Shared MU Name", NOW.isoformat(), "found")
+        store.cache_entity_name("mu", "two", "Shared MU Name", NOW.isoformat(), "found")
+
+    monkeypatch.setattr(sys, "argv", [
+        "warera-marketguide", "--mu-summary", "shared mu name",
+        "--market-db", str(path), "--as-of", NOW.isoformat(), "--quiet",
+    ])
+
+    with pytest.raises(SystemExit, match="ambiguous") as exc:
+        main()
+    assert "one" in str(exc.value) and "two" in str(exc.value)
+
+
+def test_mu_summary_resolves_uncached_interface_name_live(monkeypatch, tmp_path, capsys):
+    from test_participant_market_data import NOW, fact, ingest
+    from warera_quant.market_models import DisplayIdentity
+
+    path = tmp_path / "market.db"
+    with MarketStore(path) as store:
+        facts = [fact("buy", -2, buyer="player", seller="target-seller", buyerMuId="live-mu-id")]
+        facts.extend(fact(f"higher-{index}", -2, buyer=f"higher-{index}",
+                          seller=f"seller-{index}", money=str(100 + index), buyerMuId=f"mu-{index}")
+                     for index in range(11))
+        ingest(store, facts)
+
+    class Api:
+        def __init__(self, _client):
+            pass
+
+        def search_mu(self, name):
+            assert name == "Interface MU Name"
+            return [DisplayIdentity("mu", "live-mu-id", "Interface MU Name")]
+
+    monkeypatch.setattr(cli_module, "WarEraApiClient", lambda: object())
+    monkeypatch.setattr(cli_module, "WarEraMarketApi", Api)
+    monkeypatch.setattr(sys, "argv", [
+        "warera-marketguide", "--mu-summary", "Interface MU Name",
+        "--market-db", str(path), "--as-of", NOW.isoformat(), "--quiet",
+    ])
+
+    main()
+
+    output = capsys.readouterr().out
+    assert "Interface MU Name - 7-day market summary" in output
+    assert "MU ID: live-mu-id" in output
+
+
+def test_country_summary_prints_one_country_without_writing_report(monkeypatch, tmp_path, capsys):
+    from test_participant_market_data import NOW, fact, ingest
+
+    path = tmp_path / "market.db"
+    with MarketStore(path) as store:
+        ingest(store, [fact("buy", -2, buyer="player", seller="seller", money="12", quantity="3", buyerCountryId="country-id")])
+        store.cache_entity_name("country", "country-id", "Example Country", NOW.isoformat(), "found")
+
+    monkeypatch.setattr(cli_module, "write_outputs",
+                        lambda *args, **kwargs: pytest.fail("country summary wrote the normal report"))
+    monkeypatch.setattr(sys, "argv", [
+        "warera-marketguide", "--country-summary", "example country",
+        "--market-db", str(path), "--as-of", NOW.isoformat(), "--quiet",
+    ])
+
+    main()
+
+    output = capsys.readouterr().out
+    assert "Example Country - 7-day market summary" in output
+    assert "Country ID: country-id" in output
+    assert "Total turnover: 12.000 BTC" in output
+
+
+def test_country_summary_reports_ambiguous_cached_name(monkeypatch, tmp_path):
+    from test_participant_market_data import NOW
+
+    path = tmp_path / "market.db"
+    with MarketStore(path) as store:
+        store.cache_entity_name("country", "one", "Shared Country Name", NOW.isoformat(), "found")
+        store.cache_entity_name("country", "two", "Shared Country Name", NOW.isoformat(), "found")
+
+    monkeypatch.setattr(sys, "argv", [
+        "warera-marketguide", "--country-summary", "shared country name",
+        "--market-db", str(path), "--as-of", NOW.isoformat(), "--quiet",
+    ])
+
+    with pytest.raises(SystemExit, match="ambiguous") as exc:
+        main()
+    assert "one" in str(exc.value) and "two" in str(exc.value)
+
+
+def test_country_summary_resolves_uncached_interface_name_live(monkeypatch, tmp_path, capsys):
+    from test_participant_market_data import NOW, fact, ingest
+    from warera_quant.market_models import DisplayIdentity
+
+    path = tmp_path / "market.db"
+    with MarketStore(path) as store:
+        facts = [fact("buy", -2, buyer="player", seller="target-seller", buyerCountryId="live-country-id")]
+        facts.extend(fact(f"higher-{index}", -2, buyer=f"higher-{index}",
+                          seller=f"seller-{index}", money=str(100 + index), buyerCountryId=f"country-{index}")
+                     for index in range(11))
+        ingest(store, facts)
+
+    class Api:
+        def __init__(self, _client):
+            pass
+
+        def search_country(self, name):
+            assert name == "Interface Country Name"
+            return [DisplayIdentity("country", "live-country-id", "Interface Country Name")]
+
+    monkeypatch.setattr(cli_module, "WarEraApiClient", lambda: object())
+    monkeypatch.setattr(cli_module, "WarEraMarketApi", Api)
+    monkeypatch.setattr(sys, "argv", [
+        "warera-marketguide", "--country-summary", "Interface Country Name",
+        "--market-db", str(path), "--as-of", NOW.isoformat(), "--quiet",
+    ])
+
+    main()
+
+    output = capsys.readouterr().out
+    assert "Interface Country Name - 7-day market summary" in output
+    assert "Country ID: live-country-id" in output
 
 
 def test_player_summary_distinguishes_known_inactive_player(monkeypatch, tmp_path):

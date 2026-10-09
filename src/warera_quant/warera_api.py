@@ -88,7 +88,7 @@ class WarEraMarketApi:
             citizenship = data.get("country")
             if citizenship is not None and (not isinstance(citizenship, str) or not citizenship):
                 raise WarEraApiError("Invalid MU citizenship country")
-        return DisplayIdentity(kind, entity_id, name, image_url or None, code, level, citizenship, prestige or False)
+        return DisplayIdentity(kind, entity_id, name, image_url or None, country_code=code, level=level, citizenship_id=citizenship, prestige=prestige or False)
 
     def search_users(self, name: str) -> list[DisplayIdentity]:
         """Return exact username matches from WarEra's public search."""
@@ -101,6 +101,51 @@ class WarEraMarketApi:
             if not isinstance(entity_id, str) or not entity_id:
                 continue
             identity = self.get_identity("user", entity_id)
+            if identity.name.casefold() == name.casefold():
+                matches.append(identity)
+        return matches
+
+    def search_mu(self, name: str) -> list[DisplayIdentity]:
+        """Return exact MU name matches from WarEra's paginated MU list."""
+        matches = []
+        payload = {"search": name, "limit": 100}
+        seen_cursors = set()
+        seen_ids = set()
+        while True:
+            data = _trpc_data(self.client.get_json(
+                "/mu.getManyPaginated", params=_input_params(payload)))
+            if not isinstance(data, dict) or not isinstance(data.get("items"), list):
+                raise WarEraApiError("MU search returned an invalid result")
+            for item in data["items"]:
+                if not isinstance(item, dict) or not isinstance(item.get("_id"), str):
+                    continue
+                entity_id = item["_id"]
+                if entity_id in seen_ids:
+                    continue
+                seen_ids.add(entity_id)
+                identity = self.get_identity("mu", entity_id)
+                if identity.name.casefold() == name.casefold():
+                    matches.append(identity)
+            cursor = data.get("nextCursor")
+            if cursor is None:
+                return matches
+            if not isinstance(cursor, str) or not cursor or cursor in seen_cursors:
+                raise WarEraApiError("MU search returned an invalid or repeated cursor")
+            seen_cursors.add(cursor)
+            payload["cursor"] = cursor
+
+    def search_country(self, name: str) -> list[DisplayIdentity]:
+        """Return exact country name matches from WarEra's country list."""
+        data = _trpc_data(self.client.get_json("/country.getAllCountries"))
+        if not isinstance(data, list):
+            raise WarEraApiError("Country list returned an invalid result")
+        matches = []
+        for item in data:
+            if not isinstance(item, dict) or not isinstance(item.get("_id"), str):
+                continue
+            if not isinstance(item.get("name"), str) or item["name"].casefold() != name.casefold():
+                continue
+            identity = self.get_identity("country", item["_id"])
             if identity.name.casefold() == name.casefold():
                 matches.append(identity)
         return matches

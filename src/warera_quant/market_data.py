@@ -1782,6 +1782,26 @@ def resolve_player_identity(store: MarketStore, value: str) -> tuple[str | None,
     return (candidates[0]["entity_id"] if len(candidates) == 1 else None), candidates
 
 
+def resolve_mu_identity(store: MarketStore, value: str) -> tuple[str | None, list[dict]]:
+    """Exact cached/referenced ID precedes exact NOCASE cached names; no analysis."""
+    value = value.strip()
+    exact = store.entity_name("mu", value)
+    if exact is not None or store.has_entity_reference("mu", value):
+        return value, [exact or {"entity_id": value, "name": None}]
+    candidates = store.find_mu(value)
+    return (candidates[0]["entity_id"] if len(candidates) == 1 else None), candidates
+
+
+def resolve_country_identity(store: MarketStore, value: str) -> tuple[str | None, list[dict]]:
+    """Exact cached/referenced ID precedes exact NOCASE cached names; no analysis."""
+    value = value.strip()
+    exact = store.entity_name("country", value)
+    if exact is not None or store.has_entity_reference("country", value):
+        return value, [exact or {"entity_id": value, "name": None}]
+    candidates = store.find_country(value)
+    return (candidates[0]["entity_id"] if len(candidates) == 1 else None), candidates
+
+
 def load_entity_activity(store: MarketStore, entity_kind: str, entity_id: str, *,
                          as_of: datetime | None = None, context: ReportContext | None = None,
                          accounting_mode: str | None = None, batch_size: int = 500,

@@ -233,8 +233,9 @@ def test_selected_html_target_console_and_complete_csvs(tmp_path, kind):
     assert "category-079" in detail and "category-080" not in detail
     target = calculate_entity_activity(trades, entity_kind=kind, entity_id="target", as_of=NOW)
     console = format_player_summary(target, target["entities"][0])
-    assert "80 of 100 categories covering 80.0%" in console
-    assert "category-079" in console and "category-080" not in console
+    # CLI output always shows all items, not the filtered selection
+    assert "100 categories" in console
+    assert "category-079" in console and "category-080" in console
     _write_participant_exports(tmp_path, report, [])
     def read(name):
         with (tmp_path/name).open(encoding='utf-8', newline='') as file:
@@ -261,7 +262,8 @@ def test_partial_detail_console_context_and_csv_retention(tmp_path):
     row = report["entities"][0]
     assert len(row["top_items"]) == 13
     console = format_player_summary(report, row)
-    assert "all categories; coverage unknown" in console and "category-12" in console
+    # CLI output always shows all items
+    assert "13 categories" in console and "category-12" in console
     assert "covering 80" not in console
     html = _participant_html(report)
     assert "Missing money keeps all detail rows with unknown coverage" in html

@@ -2665,6 +2665,8 @@ def format_player_summary(report: dict, player: dict) -> str:
 
     identity = player.get("identity") or {}
     name = identity.get("display_name") or player.get("name") or player["entity_id"]
+    entity_kind = player.get("entity_kind", report.get("entity_kind", "user"))
+    entity_label = {"user": "Player", "mu": "MU", "country": "Country"}[entity_kind]
     basis = "gross" if report["turnover_basis"] == "gross" else "source-money"
     trade_count = sum(category["trade_count"]
                       for categories in player["categories"].values()
@@ -2673,7 +2675,7 @@ def format_player_summary(report: dict, player: dict) -> str:
         f"{name} - 7-day market summary",
         f"Period: {report['window_start'].isoformat()} to "
         f"{report['as_of'].isoformat()} ({'end included' if report.get('context', {}).get('boundary_mode') == 'database-inclusive' else 'end excluded'})",
-        f"Player ID: {player['entity_id']}",
+        f"{entity_label} ID: {player['entity_id']}",
         f"Accounting: {report.get('accounting_mode')} ({report.get('accounting_status')})",
     ]
     if identity.get("citizenship_name"):
@@ -2691,16 +2693,13 @@ def format_player_summary(report: dict, player: dict) -> str:
         "",
     ])
     rows = []
-    selection = player.get("detail_selection")
-    if selection:
-        if selection["status"] == "partial":
-            lines.append("Item details: all categories; coverage unknown because money is missing.")
-        elif selection["status"] in ("empty", "zero-total"):
-            lines.append("Item details: no positive turnover to select.")
-        else:
-            lines.append(f"Item details: {selection['selected_count']} of {selection['total_row_count']} categories "
-                         f"covering {number(selection['selected_share'] * 100, places=1)}% of turnover.")
-    for item in player.get("top_items", player.get("item_categories", [])):
+    # CLI output always shows all items, not the filtered selection
+    all_items = player.get("item_categories", [])
+    if not all_items:
+        lines.append("Item details: no positive turnover to select.")
+    else:
+        lines.append(f"Item details: {len(all_items)} categories.")
+    for item in all_items:
         signature = item["category"]
         item_label = str(item.get("item_code") or "Unknown")
         if signature[0] == "equipment-v1":
