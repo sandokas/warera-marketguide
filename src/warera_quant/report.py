@@ -246,6 +246,7 @@ def _html_page(title: str, body: str) -> str:
     }}
     h3 {{ margin-bottom: 8px; font-size: 1rem; }}
     section {{ margin-top: 26px; }}
+    .table-section {{ width: min-content; max-width: none; }}
     section > .muted {{
       max-width: 65ch;
       margin-bottom: 11px;
@@ -939,7 +940,7 @@ def _price_guide_html(df: pd.DataFrame, display_count: int) -> str:
     if not rows:
         return ""
     return (
-        '<section><h2>Trading Guide</h2>'
+        '<section class="table-section"><h2>Trading Guide</h2>'
         + _compact_table_html(pd.DataFrame(rows), table_kind="trading-guide") + '</section>'
     )
 
@@ -1008,7 +1009,7 @@ def _activity_html(df: pd.DataFrame, display_count: int) -> str:
             '</tr>'
         )
     return (
-        '<section><h2>Activity Comparison</h2>'
+        '<section class="table-section"><h2>Activity Comparison</h2>'
         f'<p class="muted">Completed {ACTIVITY_WINDOW} turnover in BTC; PP-equivalent volume estimates production effort, not executable capacity or exit time.</p>'
         '<div class="table-wrap compact-table activity-table"><table class="report-table" data-report-table="activity-comparison">'
         '<thead><tr><th class="activity-item text">Item</th>'
@@ -1119,7 +1120,7 @@ def _order_book_html(df: pd.DataFrame, display_count: int) -> str:
     if not summaries:
         return ""
     return (
-        '<section><h2>Current Order Book</h2>'
+        '<section class="table-section"><h2>Current Order Book</h2>'
         '<p class="muted">Visible bids and asks, depth, walls, spread, and market pressure.</p>'
         '<div class="table-wrap compact-table book-summary"><table class="report-table" data-report-table="current-order-book">'
         '<thead><tr><th class="book-item text">Item</th><th class="book-price number">Best Bid</th>'

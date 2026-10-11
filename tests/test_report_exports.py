@@ -39,6 +39,32 @@ def test_current_assets_exclude_archives_and_tables_are_complete_pngs(tmp_path):
     assert json.loads((tmp_path/'asset_inventory.json').read_text()) == inventory
 
 
+def test_named_table_section_pngs_keep_headings_without_unused_width(tmp_path):
+    frame = pd.DataFrame([
+        {'item_code': 'bread', 'item_name': 'Bread', 'last_trade_price': 2,
+         'stable_fair_price_7d': 2, 'order_book': {'best_bid': 1.9, 'best_ask': 2.1}},
+        {'item_code': 'wood', 'item_name': 'Wood'},
+    ])
+    _, html = write_outputs(frame, tmp_path)
+    source = html.read_text(encoding='utf-8')
+    for title in ('Trading Guide', 'Current Order Book', 'Activity Comparison'):
+        assert f'<section class="table-section"><h2>{title}</h2>' in source
+    inventory = export_report_assets(html, tmp_path)
+    tables = [a for a in inventory if a['kind'] == 'table']
+    assert len(tables) == 3
+    for name, table in zip(('trading-guide', 'current-order-book', 'activity-comparison'), tables):
+        asset = next(a for a in inventory if a['kind'] == 'composite'
+                     and a['path'].endswith(f'-{name}.png'))
+        # Section captures keep the heading above the entire table, with the
+        # canvas ending at the table edge; descriptions wrap to that width.
+        assert asset['selector'].startswith('section >> nth=')
+        assert abs(asset['css_size']['width'] - table['css_size']['width']) <= 1
+        assert asset['css_size']['height'] > table['css_size']['height']
+        assert asset['css_size']['cellsOutside'] == 0
+        assert asset['css_size']['scrollWidth'] <= asset['css_size']['width'] + 2
+        assert asset['css_size']['width'] < 1280
+
+
 def test_participant_tables_complete_bounds_and_pngs(tmp_path):
     from test_participant_report import participant_fixture, frame, NOW
     _, html = write_outputs(frame(), tmp_path, participant_report=participant_fixture(), equipment_details=[], as_of=NOW)
