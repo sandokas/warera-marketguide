@@ -268,3 +268,30 @@ def test_admitted_item_cannot_drop_out_when_its_price_is_missing():
     assert result['component_count'] == 24
     assert result['latest_level'] is None
     assert result['observations'][2]['priced_count'] == 23
+
+
+def test_wooden_case_removal_links_we23_to_the_previous_close():
+    facts, _, end = fixture(115)
+    removal = pd.Timestamp('2026-11-18T00:00:00Z')
+    trade_day = int((removal - pd.Timedelta(days=1)).timestamp())
+    prior = int((BASE - pd.Timedelta(days=29)).timestamp())
+    facts.extend(dict(item_code=code, day_epoch=prior, quantity=10, turnover=100)
+                 for code in WE24_COMPONENTS)
+    facts = [row for row in facts if row['item_code'] != 'woodenCase' or row['day_epoch'] < trade_day]
+    for row in facts:
+        if row['item_code'] == 'steel' and row['day_epoch'] >= trade_day:
+            row['turnover'] *= 2
+
+    before = calc(facts, None, removal - pd.Timedelta(days=1))
+    result = calc(facts, None, end)
+    points = {point['as_of']: point for point in result['observations']}
+    transition = points[removal.isoformat()]
+    assert before['name'] == 'WE24 Market Index'
+    assert points[before['display_end']] == before['observations'][-1]
+    assert result['name'] == 'WE23 Market Index'
+    assert transition['component_count'] == transition['priced_count'] == 23
+    assert transition['level'] == pytest.approx(100 * (1 + 1 / 23))
+    assert 'woodenCase' not in transition['weights']
+    assert sum(transition['weights'].values()) == pytest.approx(1)
+    assert result['latest_level'] == pytest.approx(transition['level'])
+    assert result['change_7d_pct'] == pytest.approx(100 / 23)

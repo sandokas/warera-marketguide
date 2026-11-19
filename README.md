@@ -311,15 +311,17 @@ for PP fields.
 
 ## WE24 Market Index
 
-DB-backed reports publish WE24 in place of the retired inflation overview. It uses a fixed
-24-item universe (including `woodenCase`), daily completed-trade VWAPs, and preceding 28-day turnover weights updated
+DB-backed reports publish the market index using daily completed-trade VWAPs and preceding 28-day turnover weights updated
 on Mondays UTC. Holdings remain fixed between updates. Its fixed inception is
 2026-08-01 at 100; changing display days does not rebase it. The original 23-item
 basket supplies the history before Wooden Case is eligible. Wooden Case joins at the
 first Monday rebalance with a complete preceding 28-day observed turnover window
 and a valid daily price (or at inception if those inputs already exist). Admission
-preserves the index level; it does not fabricate pre-launch prices. Once admitted,
-all 24 constituents are required. Reports disclose pending admission, and the series
+preserves the index level. Wooden Case leaves the basket at the November 18, 2026 UTC
+observation, the first based on the November 17 trade day. The index continues as WE23.
+The removal redistributes the Wooden Case holding proportionally across the other 23
+holdings at the previous close. The removal's weights export has blank turnover reference
+dates because those weights come from holdings at the previous close. The series
 CSV records the active `component_count` for each day. The old `--we23-days` CLI
 option remains an alias for `--we24-days`.
 

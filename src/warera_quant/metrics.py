@@ -1801,7 +1801,10 @@ WE24_COMPONENTS = (
     'limestone', 'livestock', 'oil', 'paper', 'petroleum', 'scraps', 'steak',
     'steel', 'wood', 'woodenCase',
 )
-WE24_METHOD_VERSION = 'we24-daily-vwap-28d-weekly-v2'
+WE24_METHOD_VERSION = 'we24-daily-vwap-28d-weekly-v3'
+# The November 18 observation uses the first completed UTC trade day without
+# Wooden Case (November 17). Membership changes on that observation.
+WOODEN_CASE_REMOVAL_EPOCH = int(pd.Timestamp('2026-11-18T00:00:00Z').timestamp())
 
 
 def verified_window(intervals: Sequence[tuple[int, int]], start: int, end: int) -> bool:
@@ -1894,11 +1897,15 @@ def calculate_we24_market_index(
     holdings: dict[str, float] = {}
     last_weights: dict[str, float] = {}
     all_points = []
+    removal_rebalance_at = None
     chain_broken = False
     inception_reason = None
     for epoch in range(start_epoch, end_epoch + 1, day):
         is_monday = pd.Timestamp(epoch, unit='s', tz='UTC').weekday() == 0
-        if admission_at is None and (epoch == start_epoch or is_monday):
+        is_removal = epoch == WOODEN_CASE_REMOVAL_EPOCH and codes == WE24_COMPONENTS
+        if is_removal:
+            codes = legacy_codes
+        if admission_at is None and epoch < WOODEN_CASE_REMOVAL_EPOCH and (epoch == start_epoch or is_monday):
             candidate = facts.get(('woodenCase', epoch - day), {})
             if (verified_window(coverage.get('woodenCase', ()), epoch - weighting_days * day, epoch)
                     and _positive_finite(candidate.get('quantity'))
@@ -1909,8 +1916,9 @@ def calculate_we24_market_index(
         complete_prices = len(prices) == len(codes)
         reason = None
         level = None
-        is_rebalance = epoch == start_epoch or pd.Timestamp(epoch, unit='s', tz='UTC').weekday() == 0
-        weights, weight_reason = weights_at(epoch) if is_rebalance else ({}, None)
+        scheduled_rebalance = epoch == start_epoch or is_monday
+        is_rebalance = scheduled_rebalance or is_removal
+        weights, weight_reason = weights_at(epoch) if scheduled_rebalance else ({}, None)
         if epoch == start_epoch:
             if complete_prices and weights:
                 level = 100.0
@@ -1926,14 +1934,29 @@ def calculate_we24_market_index(
             reason = 'Missing complete daily constituent prices'
             if is_rebalance:
                 chain_broken = True
-        elif is_rebalance and not weights:
+        elif scheduled_rebalance and not weights:
             reason = weight_reason
             chain_broken = True
         else:
-            level = sum(amount * prices[code] for code, amount in holdings.items())
-            if is_rebalance:
-                holdings = {code: level * weights[code] / prices[code] for code in codes}
-                last_weights = weights
+            if is_removal:
+                # Redistribute the removed holding at the previous close, then
+                # apply the remaining basket's actual daily price movement.
+                prior_prices = prices_at(epoch - day)
+                prior_level = all_points[-1]['level']
+                if prior_level is None or len(prior_prices) != len(codes):
+                    reason = 'Missing previous close for Wooden Case removal'
+                    chain_broken = True
+                else:
+                    remaining_value = sum(holdings[code] * prior_prices[code] for code in codes)
+                    holdings = {code: holdings[code] * prior_level / remaining_value for code in codes}
+                    weights = {code: holdings[code] * prior_prices[code] / prior_level for code in codes}
+                    last_weights = weights
+                    removal_rebalance_at = pd.Timestamp(epoch, unit='s', tz='UTC').isoformat()
+            if not chain_broken:
+                level = sum(amount * prices[code] for code, amount in holdings.items())
+                if scheduled_rebalance:
+                    holdings = {code: level * weights[code] / prices[code] for code in codes}
+                    last_weights = weights
         all_points.append({
             'as_of': pd.Timestamp(epoch, unit='s', tz='UTC').isoformat(),
             'level': level, 'priced_count': len(prices), 'component_count': len(codes),
@@ -1957,9 +1980,16 @@ def calculate_we24_market_index(
             change_7d_pct = (latest['level'] / previous_week['level'] - 1) * 100
     weight_values = sorted(last_weights.values(), reverse=True)
     status = 'complete' if len(valid) == display_days else 'partial' if valid else 'unavailable'
+    removed = end_epoch >= WOODEN_CASE_REMOVAL_EPOCH
+    membership_note = None
+    if removed:
+        membership_note = 'Wooden Case removed from the November 18 UTC observation. WE23 continues the historical index series.'
+    elif admission_at is None:
+        membership_note = f'Wooden Case pending a complete {weighting_days}-day history and Monday rebalance; 23 active constituents.'
     return {
-        'name': 'WE24 Market Index', 'version': WE24_METHOD_VERSION,
-        'methodology': f'Daily completed-trade VWAP; preceding {weighting_days}-day turnover weights updated Monday UTC; fixed holdings between updates. Complete observed daily input windows required; Wooden Case joins at the first eligible Monday rebalance after a full turnover window.',
+        'name': 'WE23 Market Index' if removed else 'WE24 Market Index',
+        'version': WE24_METHOD_VERSION,
+        'methodology': f'Daily completed-trade VWAP; preceding {weighting_days}-day turnover weights updated Monday UTC; fixed holdings between updates. Wooden Case joins at the first eligible rebalance and is removed at the November 18, 2026 UTC observation.',
         'coverage_basis': 'Stored completed transactions; daily coverage is observed, not a certification of API completeness.',
         'observations': points, 'latest_level': latest['level'] if latest else None,
         'change_1d_pct': change_1d_pct,
@@ -1969,13 +1999,22 @@ def calculate_we24_market_index(
         'inception': start.isoformat(), 'inception_level': 100.0,
         'first_calculated_at': all_valid[0]['as_of'] if all_valid else None,
         'coverage_status': status, 'reason': inception_reason or (latest['reason'] if latest else 'As-of precedes inception'),
-        'weight_history': [{'effective_at': point['as_of'], 'reference_start': (pd.Timestamp(point['as_of']) - pd.Timedelta(days=weighting_days)).isoformat(), 'reference_end': point['as_of'], 'item_code': code, 'weight': weight} for point in all_points for code, weight in point['weights'].items()],
+        'weight_history': [
+            {
+                'effective_at': point['as_of'],
+                'reference_start': (pd.Timestamp(point['as_of']) - pd.Timedelta(days=weighting_days)).isoformat()
+                if point['as_of'] != removal_rebalance_at else None,
+                'reference_end': point['as_of'] if point['as_of'] != removal_rebalance_at else None,
+                'item_code': code, 'weight': weight,
+            }
+            for point in all_points for code, weight in point['weights'].items()
+        ],
         'weights': last_weights, 'top_weight_pct': 100 * weight_values[0] if weight_values else None,
         'top_three_weight_pct': 100 * sum(weight_values[:3]) if weight_values else None,
         'required_history_start': (start - pd.Timedelta(days=weighting_days)).isoformat(),
         'universe_count': len(WE24_COMPONENTS),
         'wooden_case_admitted_at': admission_at,
-        'membership_note': None if admission_at else f'Wooden Case pending a complete {weighting_days}-day history and Monday rebalance; 23 active constituents.',
+        'membership_note': membership_note,
         'component_count': len(codes), 'priced_count': latest['priced_count'] if latest else 0,
         'display_days': display_days, 'weighting_days': weighting_days,
         'display_start': pd.Timestamp(display_start, unit='s', tz='UTC').isoformat(),

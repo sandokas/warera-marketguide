@@ -1858,6 +1858,7 @@ def write_action_costs_csv(
 
 def _we24_html(index: dict | None, chart_path: str | Path | None, output_dir: Path) -> str:
     index = index or {}
+    name = escape(index.get('name', 'WE24 Market Index'))
     chart = _relative_chart_path(chart_path, output_dir)
     level = _number(index.get('latest_level'))
     change = _number(index.get('change_7d_pct'))
@@ -1874,13 +1875,13 @@ def _we24_html(index: dict | None, chart_path: str | Path | None, output_dir: Pa
     note = index.get('reason') if level is None else index.get('membership_note')
     detail = f'<p>{escape(str(note))}</p>' if note else ''
     badge = f'<span class="we24-status">&#9888; {warning}</span>' if warning else ""
-    return ('<section class="we24-section" aria-label="WE24 Market Index">'
+    return (f'<section class="we24-section" aria-label="{name}">'
             '<div data-report-asset="we24-summary" class="panel we24-summary">'
-            '<h2>WE24 Market Index</h2><div class="we24-stats">'
+            f'<h2>{name}</h2><div class="we24-stats">'
             f'<strong class="we24-value">{value}</strong>'
             f'<span class="we24-delta signed-{tone}" aria-label="7-day change">{symbol}{delta} <small>7D</small></span>'
             f'{badge}</div>{detail}</div>'
-            + (f'<img class="we24-chart" src="{escape(chart)}" alt="WE24 daily index history">' if chart else '')
+            + (f'<img class="we24-chart" src="{escape(chart)}" alt="{name} daily history">' if chart else '')
             + '</section>')
 
 
