@@ -713,3 +713,87 @@ def test_mixed_database_keeps_item_cards_tables_and_metrics_commodity_only(tmp_p
         assert store.item_codes(transaction_type="itemMarket") == ["bread", "rareWeapon"]
         assert len(store.transactions_for_window("rareWeapon", 0, transaction_type="itemMarket")) == 1
         assert store.transaction_details("equipment-rareWeapon")["stats"][0]["value_decimal"] == "999"
+
+@pytest.mark.parametrize("start_relation", ["earlier", "equal", "later"])
+def test_report_forecast_trade_history_reuse(tmp_path, monkeypatch, start_relation):
+    from warera_quant import market_data
+
+    cutoff = NOW + timedelta(microseconds=500000 if start_relation == "earlier" else 0)
+    monkeypatch.setattr(market_data, "DISPLAY_HISTORY_DAYS", 37)
+    report_start = cutoff - timedelta(days=37)
+    first_book = NOW - timedelta(days=30)
+    if start_relation == "earlier":
+        first_book += timedelta(microseconds=750000)
+    if start_relation == "later":
+        first_book += timedelta(seconds=1)
+
+    with _store(tmp_path) as store:
+        store.upsert_transactions(
+            "bread",
+            [
+                _transaction(str(index), (report_start + timedelta(microseconds=offset)).isoformat(),
+                             money=10 + index, quantity=1)
+                for index, offset in enumerate((-1, 0, 0, 1, 1_000_000))
+            ] + [_transaction("cutoff", cutoff.isoformat(), money=20, quantity=1)],
+            fetched_at=cutoff,
+        )
+        _insert_book(store, first_book, bid=10, ask=11, quantity=5)
+        _insert_book(store, first_book + timedelta(days=1), bid=12, ask=13, quantity=5)
+        read = store.transactions_for_window
+        reads = []
+
+        def record_read(item, start, *, end):
+            reads.append((start, end))
+            return read(item, start, end=end)
+
+        monkeypatch.setattr(store, "transactions_for_window", record_read)
+        context = store.resolve_report_context(cutoff)
+        optimized = load_market_rows(store, context=context, forecast_min_samples=1)
+        forecast_start = int(first_book.timestamp()) - 7 * 86400
+        expected = [(report_start.timestamp(), context.window_end_exclusive)]
+        if start_relation == "earlier":
+            expected.append((forecast_start, report_start))
+        assert reads == expected
+
+        evaluate = market_data._evaluate_item_forecast
+
+        def fetch_separately(*args, report_history, **kwargs):
+            shared = evaluate(*args, report_history=report_history, **kwargs)
+            separate = evaluate(*args, **kwargs)
+            assert shared == separate
+            return separate
+
+        monkeypatch.setattr(market_data, "_evaluate_item_forecast", fetch_separately)
+        assert load_market_rows(store, context=context, forecast_min_samples=1) == optimized
+
+def test_recent_backtests_use_trades_and_ignore_old_orders(tmp_path):
+    origin = NOW.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=2)
+    cutoff = origin + timedelta(days=2, hours=12)
+    sales = [
+        ("warmup", origin - timedelta(days=6), 8),
+        *[(f"before{i}", origin - timedelta(minutes=50 - i), 10) for i in range(3)],
+        *[(f"after{i}", origin + timedelta(days=1, minutes=i), 13) for i in range(3)],
+        ("cutoff", cutoff, 14),
+    ]
+    with _store(tmp_path) as store:
+        store.upsert_transactions(
+            "bread", [_transaction(key, at.isoformat(), money=price, quantity=1)
+                      for key, at, price in sales], fetched_at=cutoff,
+        )
+        arguments = dict(now=cutoff, requested_backtest_start=origin, forecast_min_samples=1)
+        no_orders = load_market_rows(store, **arguments)[0]
+        assert no_orders["trade_forecast_scored_samples"] == 1
+        assert no_orders["trade_forecast_accuracy_pct"] == 100
+        assert no_orders["trade_forecast_sparse_samples"] == 1
+        assert no_orders["trade_forecast_incomplete_samples"] == 1
+        old = origin - timedelta(days=31)
+        _insert_book(store, old, bid=9, ask=11, quantity=5)
+        old_only = load_market_rows(store, **arguments)[0]
+        assert datetime.fromisoformat(old_only["forecast_current_observed_at"]) == old
+        assert old_only["forecast_candidate_samples"] == 0
+        _insert_book(store, origin, bid=9, ask=11, quantity=5)
+        _insert_book(store, origin + timedelta(days=1), bid=13, ask=15, quantity=5)
+        recent = load_market_rows(store, **arguments)[0]
+        assert recent["forecast_candidate_samples"] == 1
+        trade_keys = [key for key in no_orders if key.startswith("trade_forecast_")]
+        assert all(recent[key] == old_only[key] == no_orders[key] for key in trade_keys)

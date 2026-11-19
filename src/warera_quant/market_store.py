@@ -1303,11 +1303,11 @@ class MarketStore:
             select id, item_code, observed_at, observed_at_epoch, best_bid, best_ask,
                    bid_depth, ask_depth, spread_abs, spread_pct
             from order_book_observations
-            where item_code = ? and observed_at_epoch >= ?
+            where item_code = ? and observed_at_epoch between ? and ?
               and source_timestamp_us(observed_at) >= ? and source_timestamp_us(observed_at) < ?
             order by source_timestamp_us(observed_at), id
             """,
-            (item_code, math.floor(since_epoch), start_us, end_us),
+            (item_code, math.floor(since_epoch), math.floor(end.timestamp()), start_us, end_us),
         ).fetchall()
         observations = [_dict_from_row(row) for row in rows]
         if not observations:
@@ -1321,7 +1321,7 @@ class MarketStore:
             from order_book_levels as levels
             join order_book_observations as observations
               on observations.id = levels.observation_id
-            where observations.item_code = ? and observations.observed_at_epoch >= ?
+            where observations.item_code = ? and observations.observed_at_epoch between ? and ?
               and source_timestamp_us(observations.observed_at) >= ?
               and source_timestamp_us(observations.observed_at) < ?
               and levels.price > 0 and levels.quantity > 0
@@ -1329,7 +1329,7 @@ class MarketStore:
                      case levels.side when 'bid' then 0 else 1 end,
                      levels.level_position
             """,
-            (item_code, math.floor(since_epoch), start_us, end_us),
+            (item_code, math.floor(since_epoch), math.floor(end.timestamp()), start_us, end_us),
         ).fetchall()
         levels_by_observation: dict[int, list[dict[str, Any]]] = {
             observation_id: [] for observation_id in observation_ids
@@ -1412,17 +1412,24 @@ class MarketStore:
         ).fetchall()
         return [_dict_from_row(row) for row in rows]
 
-    def latest_order_book_with_levels(self, item_code: str) -> dict[str, Any] | None:
+    def latest_order_book_with_levels(self, item_code: str, *, end: datetime | None = None) -> dict[str, Any] | None:
+        cutoff_sql = ""
+        params = (item_code,)
+        ordering = "observed_at_epoch desc, id desc"
+        if end is not None:
+            cutoff_sql = "and observed_at_epoch <= ? and source_timestamp_us(observed_at) < ?"
+            params = (item_code, math.floor(end.timestamp()), _datetime_us(end))
+            ordering = "observed_at_epoch desc, source_timestamp_us(observed_at) desc, id desc"
         row = self._connect().execute(
-            """
+            f"""
             select id, item_code, observed_at, observed_at_epoch, best_bid, best_ask,
                    bid_depth, ask_depth, spread_abs, spread_pct
             from order_book_observations
-            where item_code = ?
-            order by observed_at_epoch desc, id desc
+            where item_code = ? {cutoff_sql}
+            order by {ordering}
             limit 1
             """,
-            (item_code,),
+            params,
         ).fetchone()
         if row is None:
             return None

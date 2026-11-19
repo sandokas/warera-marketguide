@@ -65,6 +65,7 @@ DEFAULT_REPORT_WINDOWS = ("1D", "7D", "30D")
 DISPLAY_HISTORY_DAYS = 90
 # Backwards-compatible name for callers that still load highlighted chart history.
 HIGHLIGHT_HISTORY_DAYS = DISPLAY_HISTORY_DAYS
+FORECAST_BACKTEST_DAYS = 30
 FORECAST_TRAILING_SECONDS = 7 * 24 * 60 * 60
 DEFAULT_INFLATION_MIN_BASE_TRADE_COUNT = 1
 DEFAULT_INFLATION_MIN_BASE_TRADED_QUANTITY = 1e-12
@@ -742,6 +743,34 @@ def evaluate_item_forecast(
     min_tick: float = 0.001,
     progress: ProgressReporter | None = None,
 ) -> ForecastValidationResult:
+    return _evaluate_item_forecast(
+        store, item_code=item_code, context=context, horizon_hours=horizon_hours,
+        target_max_lag_hours=target_max_lag_hours, min_samples=min_samples,
+        quantity=quantity, min_tick=min_tick, progress=progress,
+    )
+
+
+def forecast_backtest_start(cutoff: datetime, requested: datetime | None = None) -> datetime:
+    if requested is not None and requested > cutoff:
+        raise ValueError("--forecast-backtest-start must be on or before the report cutoff.")
+    rolling_start = cutoff - timedelta(days=FORECAST_BACKTEST_DAYS)
+    return max(rolling_start, requested) if requested is not None else rolling_start
+
+
+def _evaluate_item_forecast(
+    store: MarketStore,
+    *,
+    item_code: str,
+    context: ReportContext | None = None,
+    horizon_hours: float = 24.0,
+    target_max_lag_hours: float = 6.0,
+    min_samples: int = 30,
+    quantity: float = 1.0,
+    min_tick: float = 0.001,
+    progress: ProgressReporter | None = None,
+    report_history: tuple[float, list[dict[str, Any]]] | None = None,
+    backtest_start: datetime | None = None,
+) -> ForecastValidationResult:
     if not math.isfinite(horizon_hours) or horizon_hours <= 0:
         raise ValueError("horizon_hours must be positive.")
     if not math.isfinite(target_max_lag_hours) or target_max_lag_hours < 0:
@@ -753,7 +782,22 @@ def evaluate_item_forecast(
 
     progress = progress or ProgressReporter()
     context = context or store.resolve_report_context()
-    observations = (progress.call(f"{item_code}: forecast order history", store.order_book_history_with_levels, item_code, end=context.window_end_exclusive) if context.analysis_as_of else [])
+    cutoff = context.analysis_as_of
+    observations = []
+    trade_end = context.window_end_exclusive
+    if cutoff is not None:
+        start = backtest_start or forecast_backtest_start(cutoff)
+        observations = progress.call(
+            f"{item_code}: forecast order history", store.order_book_history_with_levels,
+            item_code, start.timestamp(), end=context.window_end_exclusive,
+        )
+        if not observations:
+            latest = store.latest_order_book_with_levels(item_code, end=context.window_end_exclusive)
+            if latest is not None:
+                observations = [latest]
+                observed_at = _as_utc(datetime.fromisoformat(latest["observed_at"].replace("Z", "+00:00")))
+                trade_end = observed_at + timedelta(microseconds=1)
+                report_history = None
     if not observations:
         return summarize_forecast_evaluations(
             item_code=item_code,
@@ -763,7 +807,20 @@ def evaluate_item_forecast(
             min_samples=min_samples,
         )
     earliest_epoch = int(observations[0]["observed_at_epoch"]) - FORECAST_TRAILING_SECONDS
-    transactions = progress.call(f"{item_code}: forecast transaction history", store.transactions_for_window, item_code, earliest_epoch, end=context.window_end_exclusive)
+    if report_history is None:
+        transactions = progress.call(f"{item_code}: forecast transaction history", store.transactions_for_window, item_code, earliest_epoch, end=trade_end)
+    else:
+        report_start, transactions = report_history
+        if earliest_epoch < report_start:
+            older = progress.call(
+                f"{item_code}: forecast transaction history", store.transactions_for_window,
+                item_code, earliest_epoch, end=datetime.fromtimestamp(report_start, timezone.utc),
+            )
+            transactions = older + transactions
+        elif earliest_epoch > report_start:
+            # The forecast starts at a whole second and the report trades are chronological.
+            first = bisect_left(transactions, earliest_epoch, key=lambda trade: trade["created_at_epoch"])
+            transactions = transactions[first:]
     features = progress.call(f"{item_code}: forecast features", build_forecast_features, observations, transactions, progress=progress)
     progress.detail(f"{item_code}: evaluating {len(features):,} forecast features")
 
@@ -840,10 +897,8 @@ def build_forecast_features(
     ordered_observations = sorted(
         observations, key=lambda row: (_source_epoch(row, "observed_at", "observed_at_epoch"), int(row["observation_id"]))
     )
-    ordered_transactions = sorted(
-        transactions, key=lambda row: (_source_epoch(row, "created_at", "created_at_epoch"), str(row.get("id", "")))
-    )
-    transaction_epochs = [_source_epoch(row, "created_at", "created_at_epoch") for row in ordered_transactions]
+    ordered_transactions = _normalized_forecast_trades(transactions)
+    transaction_epochs = [trade[0] for trade in ordered_transactions]
     features: list[dict[str, Any]] = []
     for observation_number, observation in enumerate(ordered_observations, 1):
         if progress and (observation_number == 1 or observation_number % 100 == 0):
@@ -856,25 +911,7 @@ def build_forecast_features(
         start = bisect_left(transaction_epochs, feature_epoch - FORECAST_TRAILING_SECONDS)
         end = bisect_right(transaction_epochs, feature_epoch)
         trailing = ordered_transactions[start:end]
-        priced = [
-            (float(row["unit_price"]), _positive_float(row.get("quantity")))
-            for row in trailing
-            if _positive_float(row.get("unit_price")) is not None
-        ]
-        prices = [price for price, _ in priced]
-        vwap_quantity = sum(quantity for _, quantity in priced if quantity is not None)
-        vwap_value = sum(price * quantity for price, quantity in priced if quantity is not None)
-        vwap = vwap_value / vwap_quantity if vwap_quantity > 0 else None
-        median = _percentile(prices, 50)
-        p10 = _percentile(prices, 10)
-        p25 = _percentile(prices, 25)
-        p90 = _percentile(prices, 90)
-        rolling_average = sum(prices[-5:]) / len(prices[-5:]) if prices else None
-        fair_inputs = [
-            (value, weight) for value, weight in ((vwap, 0.5), (median, 0.3), (rolling_average, 0.2))
-            if value is not None
-        ]
-        fair = _weighted_average(fair_inputs, fallback=None)
+        prices, vwap, median, p10, p25, p90, fair = _forecast_trade_stats(trailing)
         midpoint = (best_bid + best_ask) / 2
         momentum = (prices[-1] - prices[0]) / prices[0] * 100 if len(prices) >= 2 and prices[0] > 0 else None
         fair_gap = (midpoint - fair) / fair * 100 if fair is not None and fair > 0 else None
@@ -895,13 +932,88 @@ def build_forecast_features(
             "trailing_p10": p10,
             "trailing_p25": p25,
             "trailing_p90": p90,
-            "trailing_volume": sum(_positive_float(row.get("quantity")) or 0.0 for row in trailing),
+            "trailing_volume": sum(quantity or 0.0 for _, _, _, quantity in trailing),
             "trailing_count": len(trailing),
             "momentum_pct": momentum,
             "stable_fair_price": fair,
             "fair_gap_pct": fair_gap,
         })
     return features
+
+
+def _normalized_forecast_trades(transactions):
+    return sorted(
+        (
+            (_source_epoch(row, "created_at", "created_at_epoch"), str(row.get("id", "")),
+             _positive_float(row.get("unit_price")), _positive_float(row.get("quantity")))
+            for row in transactions
+        ),
+        key=lambda trade: trade[:2],
+    )
+
+
+def _forecast_trade_stats(trailing):
+    priced = [(price, quantity) for _, _, price, quantity in trailing if price is not None]
+    prices = [price for price, _ in priced]
+    vwap_quantity = sum(quantity for _, quantity in priced if quantity is not None)
+    vwap_value = sum(price * quantity for price, quantity in priced if quantity is not None)
+    vwap = vwap_value / vwap_quantity if vwap_quantity > 0 else None
+    median, p10, p25, p90 = _price_percentiles(prices)
+    rolling_average = sum(prices[-5:]) / len(prices[-5:]) if prices else None
+    fair_inputs = [
+        (value, weight) for value, weight in ((vwap, 0.5), (median, 0.3), (rolling_average, 0.2))
+        if value is not None
+    ]
+    fair = _weighted_average(fair_inputs, fallback=None)
+    return prices, vwap, median, p10, p25, p90, fair
+
+
+def _trade_price_backtest(trades, start, cutoff, horizon_hours, min_tick):
+    day = start.replace(hour=0, minute=0, second=0, microsecond=0)
+    if day < start:
+        day += timedelta(days=1)
+    rows = _normalized_forecast_trades(
+        trade for trade in trades
+        if trade["created_at_epoch"] >= math.floor(start.timestamp()) - FORECAST_TRAILING_SECONDS
+    )
+    epochs = [row[0] for row in rows]
+    counts = dict.fromkeys(("scheduled", "incomplete", "sparse", "flat", "neutral", "scored", "correct"), 0)
+    while day <= cutoff:
+        origin = day.timestamp()
+        target = origin + horizon_hours * 3600
+        day += timedelta(days=1)
+        counts["scheduled"] += 1
+        if target + 3600 > cutoff.timestamp():
+            counts["incomplete"] += 1
+            continue
+        origin_end = bisect_left(epochs, origin)
+        before = rows[bisect_left(epochs, origin - 3600):origin_end]
+        after = rows[bisect_left(epochs, target):bisect_left(epochs, target + 3600)]
+        before_prices = sorted(row[2] for row in before if row[2] is not None)
+        after_prices = sorted(row[2] for row in after if row[2] is not None)
+        if min(len(before_prices), len(after_prices)) < 3:
+            counts["sparse"] += 1
+            continue
+        current = _percentile_from_sorted(before_prices, 50)
+        future = _percentile_from_sorted(after_prices, 50)
+        trailing = rows[bisect_left(epochs, origin - FORECAST_TRAILING_SECONDS):origin_end]
+        prices, _, _, _, _, _, fair = _forecast_trade_stats(trailing)
+        momentum = (prices[-1] - prices[0]) / prices[0] * 100 if len(prices) >= 2 else None
+        direction = calculate_direction_signal(
+            momentum_pct=momentum, fair_gap_pct=(current - fair) / fair * 100 if fair else None,
+        ).signal
+        outcome, _ = classify_future_bid_outcome(current_bid=current, future_bid=future, min_tick=min_tick)
+        if outcome == "Flat":
+            counts["flat"] += 1
+        if direction not in ("Up", "Down"):
+            counts["neutral"] += 1
+        elif outcome != "Flat":
+            counts["scored"] += 1
+            counts["correct"] += direction == outcome
+    return {
+        **{f"trade_forecast_{key}_samples": value for key, value in counts.items()},
+        "trade_forecast_accuracy_pct": 100 * counts["correct"] / counts["scored"] if counts["scored"] else None,
+    }
 
 
 def _realized_gross_flip_return(
@@ -995,6 +1107,7 @@ def load_market_rows(
     forecast_horizon_hours: float = 24.0,
     forecast_target_max_lag_hours: float = 6.0,
     forecast_min_samples: int = 30,
+    requested_backtest_start: datetime | None = None,
     forecast_quantity: float = 1.0,
     min_tick: float = 0.001,
     flip_assumptions: FlipAssumptions | None = None,
@@ -1009,6 +1122,7 @@ def load_market_rows(
     now = context.analysis_as_of
     if now is None:
         return []
+    backtest_start = forecast_backtest_start(now, requested_backtest_start)
     assumptions = flip_assumptions or FlipAssumptions(
         quantity=forecast_quantity,
         forecast_horizon_hours=forecast_horizon_hours,
@@ -1104,11 +1218,13 @@ def load_market_rows(
         row["trend_path_30d_end_epoch"] = now.timestamp() if "30D" in since_epochs else None
         _add_legacy_metric_fields(row, report_windows, window_stats)
         progress.detail(f"{item_code}: window statistics and trends completed")
-        forecast = progress.call(f"{item_code}: forecast", evaluate_item_forecast,
+        forecast = progress.call(f"{item_code}: forecast", _evaluate_item_forecast,
             store,
             progress=progress,
             context=context,
             item_code=item_code,
+            report_history=(earliest_since_epoch, trades),
+            backtest_start=backtest_start,
             horizon_hours=assumptions.forecast_horizon_hours,
             target_max_lag_hours=forecast_target_max_lag_hours,
             min_samples=forecast_min_samples,
@@ -1116,6 +1232,12 @@ def load_market_rows(
             min_tick=min_tick,
         )
         row.update({
+            **progress.call(
+                f"{item_code}: trade-price backtest", _trade_price_backtest,
+                trades, backtest_start, now, assumptions.forecast_horizon_hours, min_tick,
+            ),
+            "forecast_backtest_start": backtest_start.isoformat(),
+            "forecast_backtest_end": now.isoformat(),
             "forecast_model_version": forecast.model_version,
             "forecast_horizon_hours": forecast.horizon_hours,
             "forecast_candidate_samples": forecast.candidate_samples,
@@ -1443,10 +1565,7 @@ def _window_stats(
     average_price = (sum(trade_prices) / len(trade_prices)) if trade_prices else None
     current_price = last_trade_price
     rolling_average = _rolling_average(trade_prices, fallback=average_price)
-    median_price = _median(trade_prices)
-    price_p10 = _percentile(trade_prices, 10)
-    price_p25 = _percentile(trade_prices, 25)
-    price_p90 = _percentile(trade_prices, 90)
+    median_price, price_p10, price_p25, price_p90 = _price_percentiles(trade_prices)
     stable_range_pct = (
         (price_p90 - price_p10) / median_price * 100
         if price_p10 is not None and price_p90 is not None and median_price is not None and median_price > 0
@@ -1665,14 +1784,14 @@ def _rolling_average(values: list[float], *, fallback: float | None) -> float | 
     return sum(window) / len(window)
 
 
-def _median(values: list[float]) -> float | None:
-    return _percentile(values, 50)
-
-
-def _percentile(values: list[float], percentile: float) -> float | None:
+def _price_percentiles(values: list[float]) -> tuple[float | None, ...]:
     if not values:
-        return None
+        return None, None, None, None
     ordered = sorted(values)
+    return tuple(_percentile_from_sorted(ordered, percentile) for percentile in (50, 10, 25, 90))
+
+
+def _percentile_from_sorted(ordered: list[float], percentile: float) -> float:
     if len(ordered) == 1:
         return ordered[0]
     rank = (len(ordered) - 1) * percentile / 100

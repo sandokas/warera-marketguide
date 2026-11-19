@@ -1089,6 +1089,36 @@ def _depth_profile_html(book: dict[str, object]) -> str:
     )
 
 
+def _forecast_backtest_html(df: pd.DataFrame) -> str:
+    if df.empty or "forecast_backtest_start" not in df:
+        return ""
+    first = pd.to_datetime(df.iloc[0]["forecast_backtest_start"], utc=True)
+    last = pd.to_datetime(df.iloc[0]["forecast_backtest_end"], utc=True)
+    rows = []
+    for _, row in df.iterrows():
+        scores = []
+        for accuracy_key, count_key in (
+            ("forecast_accuracy_pct", "forecast_evaluable_samples"),
+            ("trade_forecast_accuracy_pct", "trade_forecast_scored_samples"),
+        ):
+            accuracy = _number(row.get(accuracy_key))
+            scores.append(f"{accuracy:.1f}%" if accuracy is not None else "Unavailable")
+            scores.append(str(int(_number(row.get(count_key)) or 0)))
+        cells = "".join(f'<td class="number">{escape(value)}</td>' for value in scores)
+        rows.append(f'<tr><td class="text">{escape(str(row["item_name"]))}</td>{cells}</tr>')
+    return (
+        '<section class="table-section"><h2>Forecast Backtests</h2>'
+        '<div class="table-wrap compact-table">'
+        '<table class="report-table" data-table-id="forecast-backtests">'
+        '<thead><tr><th class="text">Item</th><th class="number">Best-bid accuracy</th>'
+        '<th class="number">Scored</th><th class="number">Trade-price accuracy</th>'
+        '<th class="number">Scored</th></tr></thead><tbody>'
+        + "".join(rows)
+        + f'</tbody><tfoot><tr><td colspan="5">{first:%Y-%m-%d %H:%M} to {last:%Y-%m-%d %H:%M} UTC</td>'
+        '</tr></tfoot></table></div></section>'
+    )
+
+
 def _order_book_html(df: pd.DataFrame, display_count: int) -> str:
     summaries = []
     for _, row in df.head(display_count).iterrows():
@@ -1951,6 +1981,7 @@ def generate_html_report(
     blocks.append(_price_guide_html(df, display_count))
 
     blocks.append(_order_book_html(df, display_count))
+    blocks.append(_forecast_backtest_html(df))
     blocks.append(_activity_html(df, display_count))
     blocks.append(_participant_html(participant_report, verbose=verbose))
 

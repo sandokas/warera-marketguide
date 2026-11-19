@@ -133,6 +133,16 @@ def _parse_as_of(value: str) -> datetime:
         raise argparse.ArgumentTypeError("--as-of requires an ISO timestamp with UTC offset") from exc
 
 
+def _parse_backtest_start(value: str) -> datetime:
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d")
+        if parsed.date().isoformat() != value:
+            raise ValueError
+        return parsed.replace(tzinfo=timezone.utc)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("--forecast-backtest-start requires YYYY-MM-DD") from exc
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generate a WarEra Market Guide report.")
     parser.add_argument("--csv", default="data/sample_market.csv", help="Input CSV with market fields.")
@@ -296,6 +306,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print detailed importer progress for each global stream and transaction page.",
     )
+    parser.add_argument("--forecast-backtest-start", type=_parse_backtest_start,
+                        help="Earliest prediction date within the rolling 30-day backtest (UTC)")
     parser.add_argument("--as-of", type=_parse_as_of, help="Reproducible report boundary (ISO timestamp with timezone)")
     parser.add_argument("--refresh-identities", action="store_true", help="Refresh displayed profiles/assets; with --from-db, also generate the report")
     parser.add_argument("--identity-limit", type=int, default=100, help="Maximum profile attempts (0-100)")
@@ -306,7 +318,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(*, report_context: ReportContext | None = None) -> None:
     load_dotenv()
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
+    if args.forecast_backtest_start is not None and not (args.from_db or args.live):
+        parser.error("--forecast-backtest-start requires --from-db or --live")
     report_as_of = args.as_of
 
     summary_args = [(args.player_summary, "user"), (args.mu_summary, "mu"), (args.country_summary, "country")]
@@ -517,11 +532,15 @@ def prepare_db_report(store, args, assumptions, *, as_of: datetime | None = None
             store, population, verbose=args.verbose, progress=preparation)
     context = context or replace(store.resolve_report_context(as_of), accounting_mode=getattr(args, "participant_accounting", "window"))
     as_of = context.analysis_as_of
+    requested_start = getattr(args, "forecast_backtest_start", None)
+    if requested_start is not None and (as_of is None or requested_start > as_of):
+        raise SystemExit("--forecast-backtest-start must be on or before the report cutoff.")
     rows = preparation.call("Market rows", load_market_rows,
         store, progress=preparation, windows=("1D", "7D", "30D"), context=context,
         forecast_horizon_hours=args.forecast_horizon_hours,
         forecast_target_max_lag_hours=args.forecast_target_max_lag_hours,
         forecast_min_samples=args.forecast_min_samples, min_tick=args.min_tick,
+        requested_backtest_start=requested_start,
         flip_assumptions=assumptions)
     metadata = preparation.call("Sync metadata", store.market_sync_metadata)
     we24 = preparation.call("WE24 index", build_we24_market_index, store, context=context,
