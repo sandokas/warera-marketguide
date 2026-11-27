@@ -42,6 +42,7 @@ from .metrics import (
     calculate_we24_market_index,
     calculate_short_term_guidance,
     WE24_COMPONENTS,
+    WOODEN_CASE_REMOVAL_EPOCH,
 )
 
 
@@ -1097,6 +1098,14 @@ def parse_report_window(value: str) -> ReportWindow:
     return ReportWindow(label=normalized, days=365)
 
 
+def is_report_market_item(item: object, as_of: datetime) -> bool:
+    """Keep Wooden Case in historical reports up to its removal."""
+    return (
+        str(item).strip().casefold() not in {"woodencase", "wooden case"}
+        or _as_utc(as_of).timestamp() < WOODEN_CASE_REMOVAL_EPOCH
+    )
+
+
 def load_market_rows(
     store: MarketStore,
     *,
@@ -1140,7 +1149,10 @@ def load_market_rows(
     production_points = store.item_production_points()
 
     rows: list[dict[str, Any]] = []
-    codes = store.item_codes(transaction_type="trading")
+    codes = [
+        code for code in store.item_codes(transaction_type="trading")
+        if is_report_market_item(code, now)
+    ]
     for item_number, item_code in enumerate(codes, 1):
         progress.detail(f"{_display_name(item_code)}: item {item_number}/{len(codes)}; history since epoch {earliest_since_epoch}")
         trades = progress.call(f"{item_code}: transaction history", store.transactions_for_window, item_code, earliest_since_epoch, end=context.window_end_exclusive)

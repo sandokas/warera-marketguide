@@ -714,6 +714,21 @@ def test_mixed_database_keeps_item_cards_tables_and_metrics_commodity_only(tmp_p
         assert len(store.transactions_for_window("rareWeapon", 0, transaction_type="itemMarket")) == 1
         assert store.transaction_details("equipment-rareWeapon")["stats"][0]["value_decimal"] == "999"
 
+def test_market_rows_hide_wooden_case_from_removal_date(tmp_path):
+    removal = datetime(2026, 11, 18, tzinfo=timezone.utc)
+    with _store(tmp_path) as store:
+        for code in ("woodenCase", "case1"):
+            store.upsert_transactions(code, [
+                _transaction(code, "2026-11-17T11:00:00Z", money=2, quantity=1),
+            ])
+        store.insert_price_observations({"case1": 2}, removal)
+        assert {row["item_code"] for row in load_market_rows(
+            store, now=removal - timedelta(seconds=1),
+        )} == {"woodenCase", "case1"}
+        assert [row["item_code"] for row in load_market_rows(store, now=removal)] == ["case1"]
+        assert set(store.item_codes(transaction_type="trading")) == {"woodenCase", "case1"}
+
+
 @pytest.mark.parametrize("start_relation", ["earlier", "equal", "later"])
 def test_report_forecast_trade_history_reuse(tmp_path, monkeypatch, start_relation):
     from warera_quant import market_data

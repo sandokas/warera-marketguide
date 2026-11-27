@@ -21,6 +21,7 @@ from .csv_loader import load_market_csv
 from .json_loader import market_json_to_dataframe
 from .market_data import (
     build_we24_market_index,
+    is_report_market_item,
     load_action_cost_results,
     load_price_action_history,
     load_market_rows,
@@ -583,6 +584,13 @@ def generate_report(args, assumptions, prepared: ReportPreparation) -> None:
     if prepared.context is not None:
         (output_dir / "report_context.json").write_text(json.dumps(prepared.context.to_dict(), indent=2), encoding="utf-8")
     if not (args.live or args.from_db):
+        cutoff = report_as_of or generated_at
+        included_rows = [
+            is_report_market_item(row.get("item_code"), cutoff)
+            and is_report_market_item(row.get("item_name"), cutoff)
+            for row in df_in.to_dict("records")
+        ]
+        df_in = df_in.loc[included_rows].reset_index(drop=True)
         compatibility_defaults = {
             "forecast_model_version": "direction-v1",
             "forecast_horizon_hours": args.forecast_horizon_hours,
